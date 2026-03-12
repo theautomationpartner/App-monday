@@ -1,0 +1,15 @@
+# Dependencias
+node_modules/
+backend/node_modules/
+
+# Builds
+dist/
+.netlify/
+
+# Secretos
+.env
+backend/.env
+
+# Logs y varios
+*.log
+.DS_Store
