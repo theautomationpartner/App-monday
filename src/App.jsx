@@ -26,7 +26,7 @@ const IconCheck = () => (
 );
 
 const MENU_ITEMS = [
-  { id: "certificados", label: "Certificados AFIP", icon: <IconCert /> },
+  { id: "certificados", label: "Certificados ARCA", icon: <IconCert /> },
   { id: "datos", label: "Datos Fiscales", icon: <IconBuilding /> },
 ];
 
@@ -40,10 +40,13 @@ const App = () => {
   const [context, setContext] = useState(null);
   const [activeSection, setActiveSection] = useState("certificados");
   const [isLoading, setIsLoading] = useState(false);
+  const [isFetchingSavedData, setIsFetchingSavedData] = useState(false);
 
   // Certificados
   const [crtFile, setCrtFile] = useState(null);
   const [keyFile, setKeyFile] = useState(null);
+  const [hasSavedCertificates, setHasSavedCertificates] = useState(false);
+  const [certificatesLastUpdatedAt, setCertificatesLastUpdatedAt] = useState("");
 
   // Datos fiscales
   const [fiscal, setFiscal] = useState({
@@ -54,6 +57,7 @@ const App = () => {
     domicilio: "",
     condicionIva: "",
   });
+  const [hasSavedFiscalData, setHasSavedFiscalData] = useState(false);
 
   useEffect(() => {
     monday.listen("context", (res) => {
@@ -61,6 +65,47 @@ const App = () => {
       setContext(res.data);
     });
   }, []);
+
+  useEffect(() => {
+    const fetchSavedSetup = async () => {
+      if (!context?.account?.id) return;
+
+      setIsFetchingSavedData(true);
+      try {
+        const response = await axios.get(`${API_URL}/setup/${context.account.id}`);
+        const data = response.data;
+
+        if (data?.hasFiscalData && data?.fiscalData) {
+          setFiscal({
+            puntoVenta: data.fiscalData.default_point_of_sale?.toString() || "",
+            cuit: data.fiscalData.cuit || "",
+            fechaInicio: data.fiscalData.fecha_inicio
+              ? new Date(data.fiscalData.fecha_inicio).toISOString().split("T")[0]
+              : "",
+            razonSocial: data.fiscalData.business_name || "",
+            domicilio: data.fiscalData.domicilio || "",
+            condicionIva: data.fiscalData.iva_condition || "",
+          });
+          setHasSavedFiscalData(true);
+        }
+
+        if (data?.hasCertificates) {
+          setHasSavedCertificates(true);
+          setCertificatesLastUpdatedAt(
+            data?.certificates?.updated_at
+              ? new Date(data.certificates.updated_at).toLocaleDateString("es-AR")
+              : ""
+          );
+        }
+      } catch (err) {
+        console.error("No se pudieron recuperar datos guardados:", err);
+      } finally {
+        setIsFetchingSavedData(false);
+      }
+    };
+
+    fetchSavedSetup();
+  }, [context]);
 
   const handleFiscalChange = (field, value) => {
     setFiscal((prev) => ({ ...prev, [field]: value }));
@@ -74,8 +119,14 @@ const App = () => {
   };
 
   const handleSaveFiscal = async () => {
+    console.log("🚀 Iniciando guardado de datos fiscales...");
+    console.log("📦 Contexto actual:", context);
+
     if (!context || !context.account) {
-        monday.execute("notice", { message: "Error: No se detectó la cuenta de Monday", type: "error" });
+        const msg = "❌ Error: No se detectó la cuenta de Monday. Asegurate de estar dentro de un tablero.";
+        console.error(msg);
+        alert(msg);
+        monday.execute("notice", { message: msg, type: "error" });
         return;
     }
 
@@ -91,15 +142,23 @@ const App = () => {
             fecha_inicio: fiscal.fechaInicio
         };
 
-        await axios.post(`${API_URL}/companies`, payload);
+        console.log("📤 Enviando payload al backend:", `${API_URL}/companies`, payload);
+
+        const response = await axios.post(`${API_URL}/companies`, payload);
         
+        console.log("✅ Respuesta del servidor:", response.data);
+        setHasSavedFiscalData(true);
+        
+        alert("¡Éxito! Los datos se guardaron correctamente.");
         monday.execute("notice", {
             message: "Datos fiscales guardados con éxito en la base de datos",
             type: "success",
             duration: 5000
         });
     } catch (err) {
-        console.error("Error al guardar:", err);
+        console.error("❌ Error detallado de Axios:", err);
+        const errorMsg = err.response?.data?.error || err.message || "Error desconocido";
+        alert("Error al guardar: " + errorMsg);
         monday.execute("notice", {
             message: "Error al guardar los datos. Verificá la conexión con el backend.",
             type: "error"
@@ -110,12 +169,16 @@ const App = () => {
   };
 
   const handleUploadCertificates = async () => {
+    console.log("🚀 Iniciando subida de certificados...");
+
     if (!crtFile || !keyFile) {
+        alert("⚠️ Por favor, seleccioná ambos archivos (.crt y .key)");
         monday.execute("notice", { message: "Por favor, seleccioná ambos archivos (.crt y .key)", type: "error" });
         return;
     }
 
     if (!context || !context.account) {
+        alert("❌ Error: No se detectó la cuenta de Monday.");
         monday.execute("notice", { message: "Error: No se detectó la cuenta de Monday", type: "error" });
         return;
     }
@@ -127,9 +190,16 @@ const App = () => {
         formData.append("crt", crtFile);
         formData.append("key", keyFile);
 
-        await axios.post(`${API_URL}/certificates`, formData, {
+        console.log("📤 Subiendo archivos al backend:", `${API_URL}/certificates`);
+
+        const response = await axios.post(`${API_URL}/certificates`, formData, {
             headers: { "Content-Type": "multipart/form-data" }
         });
+
+        console.log("✅ Certificados subidos:", response.data);
+        setHasSavedCertificates(true);
+        setCertificatesLastUpdatedAt(new Date().toLocaleDateString("es-AR"));
+        alert("¡Certificados guardados correctamente!");
 
         monday.execute("notice", {
             message: "Certificados subidos y encriptados correctamente",
@@ -137,7 +207,9 @@ const App = () => {
             duration: 5000
         });
     } catch (err) {
-        console.error("Error al subir certificados:", err);
+        console.error("❌ Error al subir certificados:", err);
+        const errorMsg = err.response?.data?.error || err.message || "Error desconocido";
+        alert("Error al subir certificados: " + errorMsg);
         monday.execute("notice", {
             message: "Error al subir certificados. Verificá el servidor backend.",
             type: "error"
@@ -145,6 +217,27 @@ const App = () => {
     } finally {
         setIsLoading(false);
     }
+  };
+
+  const fiscalFormCompleted =
+    Boolean(fiscal.razonSocial?.trim()) &&
+    Boolean(fiscal.cuit?.trim()) &&
+    Boolean(fiscal.puntoVenta?.toString().trim()) &&
+    Boolean(fiscal.fechaInicio) &&
+    Boolean(fiscal.domicilio?.trim()) &&
+    Boolean(fiscal.condicionIva?.trim());
+
+  const fiscalStatus = hasSavedFiscalData || fiscalFormCompleted ? "complete" : "incomplete";
+  const certificateStatus = hasSavedCertificates || (crtFile && keyFile) ? "complete" : "incomplete";
+
+  const sectionStatus = {
+    certificados: certificateStatus,
+    datos: fiscalStatus,
+  };
+
+  const getStatusLabel = (status) => {
+    if (status === "complete") return "Completo";
+    return "Pendiente";
   };
 
   /* ─── RENDER ─── */
@@ -165,7 +258,12 @@ const App = () => {
               onClick={() => setActiveSection(item.id)}
             >
               <span className="sidebar-item-icon">{item.icon}</span>
-              {item.label}
+              <span className="sidebar-item-content">
+                <span>{item.label}</span>
+                <span className={`status-pill ${sectionStatus[item.id]}`}>
+                  {getStatusLabel(sectionStatus[item.id])}
+                </span>
+              </span>
             </button>
           ))}
         </nav>
@@ -197,6 +295,18 @@ const App = () => {
               <p className="section-subtitle">
                 Subí tus archivos de certificado y clave privada. Los archivos se encriptarán automáticamente antes de guardarse.
               </p>
+            </div>
+
+            <div className={`section-status-banner ${certificateStatus}`}>
+              {hasSavedCertificates ? (
+                <>
+                  <strong>Estado:</strong> Certificados ya cargados.
+                  {certificatesLastUpdatedAt ? ` Última actualización: ${certificatesLastUpdatedAt}.` : ""}
+                  {" "}Si querés, podés reemplazarlos con nuevos archivos.
+                </>
+              ) : (
+                <><strong>Estado:</strong> Todavía no hay certificados guardados para esta cuenta.</>
+              )}
             </div>
 
             <div className="cards-row">
@@ -282,6 +392,14 @@ const App = () => {
               </p>
             </div>
 
+            <div className={`section-status-banner ${fiscalStatus}`}>
+              {hasSavedFiscalData ? (
+                <><strong>Estado:</strong> Datos fiscales ya guardados. Revisalos y actualizalos si cambió algo.</>
+              ) : (
+                <><strong>Estado:</strong> Faltan completar datos fiscales para continuar.</>
+              )}
+            </div>
+
             <div className="form-grid">
               <div className="form-group">
                 <label className="form-label">Razón Social</label>
@@ -363,6 +481,10 @@ const App = () => {
                 {isLoading ? "Guardando..." : "Guardar Datos Fiscales"}
               </button>
             </div>
+
+            {isFetchingSavedData && (
+              <p className="fetching-text">Cargando datos guardados...</p>
+            )}
           </section>
         )}
       </main>
