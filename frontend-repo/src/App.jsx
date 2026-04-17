@@ -6,7 +6,7 @@ import "monday-ui-react-core/dist/main.css";
 import "./App.css";
 
 const monday = mondaySdk();
-const APP_BUILD_VERSION = "v21-2026-04-16-prod-serv-concepto";
+const APP_BUILD_VERSION = "v24-2026-04-17-iva-validation";
 // URL del backend. En monday code el frontend y backend comparten dominio,
 // así que usamos una ruta relativa "/api" que siempre resuelve a la versión actual.
 const configuredApiUrl = (import.meta.env.VITE_BACKEND_URL || "/api").trim();
@@ -44,9 +44,6 @@ const IconList = () => (
 const IconFile = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3v5h5"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></svg>
 );
-const IconSettings = () => (
-  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-);
 const IconUpload = () => (
   <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0073ea" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
 );
@@ -58,21 +55,8 @@ const MENU_ITEMS = [
   { id: "datos", label: "Datos Fiscales", icon: <IconBuilding /> },
   { id: "certificados", label: "Certificados ARCA", icon: <IconCert /> },
   { id: "mapping_v2", label: "Mapeo Visual", icon: <IconList /> },
-  { id: "board_setup", label: "Configurar Tablero", icon: <IconSettings /> },
 ];
 
-const BOARD_ITEM_REQUIRED_COLUMNS = [
-  { key: "client_document", label: "CUIT / DNI Receptor", aliases: ["cuit receptor", "dni receptor", "cuit / dni receptor", "cuit/dni receptor", "documento receptor", "documento cliente", "documento", "nro documento", "numero documento"], acceptedTypes: ["text", "numbers"] },
-  { key: "billing_status", label: "Estado Comprobante", aliases: ["estado comprobante", "estado facturacion", "estado factura", "facturacion"], acceptedTypes: ["status", "color", "dropdown"] },
-  { key: "invoice_pdf", label: "Comprobante PDF", aliases: ["comprobante pdf", "pdf comprobante", "pdf factura", "factura pdf"], acceptedTypes: ["file"] }
-];
-
-const BOARD_SUBITEM_REQUIRED_COLUMNS = [
-  { key: "concept", label: "Concepto (línea)", aliases: ["concepto", "detalle", "descripcion", "producto", "servicio", "nombre"], acceptedTypes: ["text", "long-text", "name"] },
-  { key: "quantity", label: "Cantidad (línea)", aliases: ["cantidad", "cant"], acceptedTypes: ["numbers"] },
-  { key: "unit_price", label: "Precio Unitario (línea)", aliases: ["precio unitario", "precio", "importe unitario"], acceptedTypes: ["numbers", "numeric", "money"] },
-  { key: "prod_serv", label: "Prod / Serv (línea)", aliases: ["prod / serv", "prod/serv", "producto servicio", "tipo producto", "tipo servicio", "prod serv"], acceptedTypes: ["dropdown", "status", "color"] }
-];
 
 const IVA_OPTIONS = [
   "Responsable Inscripto",
@@ -87,6 +71,30 @@ const COMPROBANTE_STATUS_FLOW = {
   error: "Error - Mirar Comentarios",
 };
 
+// IDs fijos de columnas de la plantilla del workspace.
+// Cuando un usuario instala la app y usa la plantilla, estos IDs son siempre iguales.
+const TEMPLATE_MAPPING = {
+  // Item-level
+  fecha_emision:        "date",
+  receptor_cuit:        "numeric_mm0yadnb",
+  condicion_venta:      "dropdown_mm2ged22",
+  fecha_servicio_desde: "date_mm2gyjvw",
+  fecha_servicio_hasta: "date_mm2g8n2n",
+  fecha_vto_pago:       "date_mm2gp00f",
+  // Subitem-level
+  concepto:             "name",
+  cantidad:             "numeric_mm1srkr2",
+  precio_unitario:      "numeric_mm1swnhz",
+  prod_serv:            "dropdown_mm2fyez4",
+  unidad_medida:        "dropdown_mm2gk2mv",
+  alicuota_iva:         "dropdown_mm2g198w",
+};
+// Column IDs de la plantilla que no son de mapeo visual pero sí de config
+const TEMPLATE_STATUS_COLUMN_ID = "status";
+// Todos los IDs de item para detectar si es tablero de plantilla
+const TEMPLATE_BOARD_COLUMN_IDS = ["date", "numeric_mm0yadnb", "dropdown_mm2ged22", "date_mm2gyjvw", "date_mm2g8n2n", "date_mm2gp00f"];
+const TEMPLATE_SUBITEM_COLUMN_IDS = ["numeric_mm1srkr2", "numeric_mm1swnhz", "dropdown_mm2fyez4", "dropdown_mm2gk2mv", "dropdown_mm2g198w"];
+
 const App = () => {
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
@@ -99,9 +107,6 @@ const App = () => {
   const [isFiscalLocked, setIsFiscalLocked] = useState(false);
   const [isCertificatesLocked, setIsCertificatesLocked] = useState(false);
   const [isMappingLocked, setIsMappingLocked] = useState(false);
-  const [isSavingBoardConfig, setIsSavingBoardConfig] = useState(false);
-
-  const [isGuideModalOpen, setIsGuideModalOpen] = useState(false);
   const [isEmittingFacturaC, setIsEmittingFacturaC] = useState(false);
   const [emitFacturaCResult, setEmitFacturaCResult] = useState(null);
 
@@ -139,8 +144,17 @@ const App = () => {
     itemId: "",
   });
   const requiredMappingFields = ["fecha_emision", "receptor_cuit", "concepto", "cantidad", "precio_unitario", "prod_serv"];
+  const optionalMappingFields = [
+    { id: "condicion_venta", label: "Condición de Venta", scope: "board" },
+    { id: "fecha_servicio_desde", label: "Fecha Servicio Desde", scope: "board" },
+    { id: "fecha_servicio_hasta", label: "Fecha Servicio Hasta", scope: "board" },
+    { id: "fecha_vto_pago", label: "Fecha Vto. Pago", scope: "board" },
+    { id: "alicuota_iva", label: "Alícuota IVA %", scope: "subitem" },
+    { id: "unidad_medida", label: "Unidad de Medida", scope: "subitem" },
+  ];
   const mappingCompleted = requiredMappingFields.every((field) => Boolean(mapping[field]));
   const mappedRequiredCount = requiredMappingFields.filter((field) => Boolean(mapping[field])).length;
+  const mappedOptionalCount = optionalMappingFields.filter((f) => Boolean(mapping[f.id])).length;
 
   const normalizeText = (value) =>
     (value || "")
@@ -153,45 +167,6 @@ const App = () => {
   const statusColumns = columns.filter((column) =>
     ["status", "color", "dropdown"].includes(column.type)
   );
-
-  const getRequiredColumnsStatus = (requiredColumns, availableColumns) => requiredColumns.map((requiredColumn) => {
-    const foundColumn = availableColumns.find((column) => {
-      const normalizedTitle = normalizeText(column.label);
-      const matchesAlias = requiredColumn.aliases.some((alias) =>
-        normalizedTitle.includes(normalizeText(alias))
-      );
-      if (!matchesAlias) return false;
-      return requiredColumn.acceptedTypes.includes(column.type);
-    });
-
-    const foundWithAnyType = availableColumns.find((column) => {
-      const normalizedTitle = normalizeText(column.label);
-      return requiredColumn.aliases.some((alias) =>
-        normalizedTitle.includes(normalizeText(alias))
-      );
-    });
-
-    if (foundColumn) {
-      return { ...requiredColumn, status: "ok", foundColumn };
-    }
-
-    if (foundWithAnyType) {
-      return { ...requiredColumn, status: "wrong_type", foundColumn: foundWithAnyType };
-    }
-
-    return { ...requiredColumn, status: "missing", foundColumn: null };
-  });
-
-  const requiredItemColumnsStatus = getRequiredColumnsStatus(BOARD_ITEM_REQUIRED_COLUMNS, columns);
-  const requiredSubitemColumnsStatus = getRequiredColumnsStatus(BOARD_SUBITEM_REQUIRED_COLUMNS, subitemColumns);
-  const requiredBoardColumnsStatus = [...requiredItemColumnsStatus, ...requiredSubitemColumnsStatus];
-  const hasSubitemsColumnInBoard = columns.some((column) => column.type === "subtasks");
-  const hasSubitemsStructureReady = hasSubitemsColumnInBoard && subitemColumns.length > 0;
-
-  const allRequiredItemColumnsReady = requiredItemColumnsStatus.every((column) => column.status === "ok");
-  const allRequiredSubitemColumnsReady = requiredSubitemColumnsStatus.every((column) => column.status === "ok");
-  const allRequiredBoardColumnsReady = allRequiredItemColumnsReady && allRequiredSubitemColumnsReady;
-  const hasAutomationConfig = Boolean(boardConfig.status_column_id);
 
   useEffect(() => {
     monday
@@ -454,6 +429,82 @@ const App = () => {
     fetchSavedSetup();
   }, [context, boardId, viewIdFromHref, appFeatureId, sessionToken]);
 
+  // Auto-mapeo por plantilla: si no hay mapeo guardado y las columnas coinciden
+  // con los IDs fijos de la plantilla, guardar el mapeo automáticamente en la DB.
+  useEffect(() => {
+    if (isFetchingSavedData) return;
+    if (columns.length === 0) return;
+    if (!context?.account?.id || !boardId) return;
+    // Solo auto-mapear si el mapping está vacío (no hay mapeo guardado)
+    const hasAnyMapping = Object.values(mapping).some(v => Boolean(v));
+    if (hasAnyMapping) return;
+
+    // Verificar si las columnas del tablero coinciden con los IDs de la plantilla
+    const columnIds = columns.map(c => c.value);
+    const isTemplateBoardMatch = TEMPLATE_BOARD_COLUMN_IDS.every(id => columnIds.includes(id));
+    if (!isTemplateBoardMatch) {
+      console.log("[auto-mapeo] No es tablero de plantilla, IDs no coinciden");
+      return;
+    }
+
+    // Verificar subitems si están cargados
+    const subitemIds = subitemColumns.map(c => c.value);
+    const isTemplateSubitemMatch = subitemColumns.length > 0 &&
+      TEMPLATE_SUBITEM_COLUMN_IDS.every(id => subitemIds.includes(id));
+
+    if (subitemColumns.length > 0 && !isTemplateSubitemMatch) {
+      console.log("[auto-mapeo] Subitems no coinciden con plantilla");
+      return;
+    }
+
+    // Si los subitems aún no cargaron, esperar
+    if (subitemColumns.length === 0) return;
+
+    // Tablero de plantilla detectado — usar mapeo fijo
+    console.log("[auto-mapeo] Tablero de plantilla detectado. Guardando mapeo automático...");
+    setMapping(TEMPLATE_MAPPING);
+    setIsMappingLocked(true);
+
+    // Guardar en la DB automáticamente
+    const autoSaveMapping = async () => {
+      try {
+        await api.post(`/mappings`, {
+          monday_account_id: context.account.id.toString(),
+          board_id: boardId,
+          view_id: viewIdFromHref,
+          app_feature_id: appFeatureId,
+          mapping: TEMPLATE_MAPPING,
+          is_locked: true,
+        });
+        console.log("[auto-mapeo] Mapeo de plantilla guardado en DB exitosamente");
+
+        // También guardar el board config con la columna de status
+        await api.post(`/board-config`, {
+          monday_account_id: context.account.id.toString(),
+          board_id: boardId,
+          view_id: viewIdFromHref,
+          app_feature_id: appFeatureId,
+          status_column_id: TEMPLATE_STATUS_COLUMN_ID,
+          trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
+          success_label: COMPROBANTE_STATUS_FLOW.success,
+          error_label: COMPROBANTE_STATUS_FLOW.error,
+          required_columns: [],
+        });
+        setBoardConfig(prev => ({ ...prev, status_column_id: TEMPLATE_STATUS_COLUMN_ID }));
+        console.log("[auto-mapeo] Board config de plantilla guardado en DB exitosamente");
+
+        monday.execute("notice", {
+          message: "Mapeo automático configurado para la plantilla de facturación",
+          type: "success",
+          duration: 4000,
+        });
+      } catch (err) {
+        console.error("[auto-mapeo] Error guardando mapeo automático:", err);
+      }
+    };
+    autoSaveMapping();
+  }, [columns, subitemColumns, isFetchingSavedData, context, boardId]);
+
   useEffect(() => {
     if (boardConfig.status_column_id || statusColumns.length === 0) return;
 
@@ -592,14 +643,10 @@ const App = () => {
   const fiscalStatus = hasSavedFiscalData || fiscalFormCompleted ? "complete" : "incomplete";
   const certificateStatus = hasSavedCertificates || (crtFile && keyFile) ? "complete" : "incomplete";
   const mappingStatus = isMappingLocked || mappingCompleted ? "complete" : "incomplete";
-  const boardSetupReady = hasSavedFiscalData && hasSavedCertificates && mappingCompleted && allRequiredBoardColumnsReady && hasAutomationConfig;
-  const boardSetupStatus = boardSetupReady ? "complete" : "incomplete";
-
   const sectionStatus = {
     datos: fiscalStatus,
     certificados: certificateStatus,
     mapping_v2: mappingStatus,
-    board_setup: boardSetupStatus,
   };
 
   const getStatusLabel = (status) => {
@@ -651,63 +698,6 @@ const App = () => {
       setIsLoading(false);
     }
   };
-
-  const handleSaveBoardConfig = async () => {
-    if (!context?.account?.id || !boardId) {
-      alert("No se pudo identificar cuenta/tablero para guardar la configuración.");
-      return;
-    }
-
-    if (!allRequiredBoardColumnsReady) {
-      alert("Faltan columnas requeridas o hay columnas con tipo incompatible.");
-      return;
-    }
-
-    if (!boardConfig.status_column_id) {
-      alert("Seleccioná la columna de estado que disparará la emisión.");
-      return;
-    }
-
-    setIsSavingBoardConfig(true);
-    try {
-      await api.post(`/board-config`, {
-        monday_account_id: context.account.id.toString(),
-        board_id: boardId,
-        view_id: viewIdFromHref,
-        app_feature_id: appFeatureId,
-        status_column_id: boardConfig.status_column_id,
-        trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-        success_label: COMPROBANTE_STATUS_FLOW.success,
-        error_label: COMPROBANTE_STATUS_FLOW.error,
-        required_columns: requiredBoardColumnsStatus.map((column) => ({
-          key: column.key,
-          expected_label: column.label,
-          scope: BOARD_ITEM_REQUIRED_COLUMNS.some((itemColumn) => itemColumn.key === column.key) ? "item" : "subitem",
-          resolved_column_id: column.foundColumn?.value || null,
-          resolved_column_title: column.foundColumn?.label || null,
-          resolved_column_type: column.foundColumn?.type || null,
-          status: column.status,
-        })),
-      });
-
-      monday.execute("notice", {
-        message: "Configuración de tablero guardada",
-        type: "success",
-        duration: 4000,
-      });
-    } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error al guardar configuración de tablero";
-      alert(errorMsg);
-      monday.execute("notice", {
-        message: errorMsg,
-        type: "error",
-        duration: 4000,
-      });
-    } finally {
-      setIsSavingBoardConfig(false);
-    }
-  };
-
 
   const updateItemStatusInMonday = async (itemId, statusLabel) => {
     if (!boardConfig.status_column_id || !boardId || !itemId) return;
@@ -1204,7 +1194,7 @@ const App = () => {
 
         {/* ═══ SECCIÓN: MAPEO VISUAL V2 ═══ */}
         {activeSection === "mapping_v2" && (
-          <section className="section" style={{maxWidth: "850px"}}>
+          <section className="section">
             <div className="section-header">
               <h1 className="section-title">Mapeo Visual de Factura</h1>
               <p className="section-subtitle">
@@ -1214,9 +1204,9 @@ const App = () => {
 
             <div className={`section-status-banner ${mappingStatus}`}>
               {isMappingLocked ? (
-                <><strong>Estado:</strong> Mapeo visual guardado y bloqueado para evitar cambios accidentales. Campos obligatorios mapeados: {mappedRequiredCount}/{requiredMappingFields.length}.</>
+                <><strong>Estado:</strong> Mapeo visual guardado y bloqueado. Obligatorios: {mappedRequiredCount}/{requiredMappingFields.length} · Opcionales: {mappedOptionalCount}/{optionalMappingFields.length}.</>
               ) : (
-                <><strong>Estado:</strong> Configurá el mapeo visual y guardalo para no repetirlo. Campos obligatorios mapeados: {mappedRequiredCount}/{requiredMappingFields.length}.</>
+                <><strong>Estado:</strong> Configurá el mapeo visual y guardalo. Obligatorios: {mappedRequiredCount}/{requiredMappingFields.length} · Opcionales: {mappedOptionalCount}/{optionalMappingFields.length} (necesarios para Factura A/B).</>
               )}
             </div>
 
@@ -1304,89 +1294,65 @@ const App = () => {
               </div>
             )}
 
-            <div className="invoice-preview-wrapper">
-              <div className="invoice-preview-container">
-                <div className="original-tag">Original</div>
-                
-                <div className="header-row">
-                    <div className="header-left">
-                        <div className="emisor-name">{fiscal.razonSocial || "TU EMPRESA S.A."}</div>
-                        <div className="emisor-details">
-                            <p className="line"><span className="label">Razón Social:</span> {fiscal.razonSocial || "Tu Empresa S.A."}</p>
-                            <p className="line"><span className="label">Domicilio Comercial:</span> {fiscal.domicilio || "-"}</p>
-                            <p className="line"><span className="label">Condición frente al IVA:</span> {fiscal.condicionIva}</p>
-                        </div>
-                    </div>
-
-                    <div className="header-center">
-                        <div className="invoice-type-box">
-                            <span className="letter">C</span>
-                            <span className="code">COD. 011</span>
-                        </div>
-                    </div>
-
-                    <div className="header-right">
-                        <div className="factura-title">Factura</div>
-                        <div className="line"><span className="label">Punto de Venta:</span> {fiscal.puntoVenta || "0001"} &nbsp;&nbsp; <span className="label">Comp. Nro:</span> 00000001</div>
-                        <div className="line"><span className="label">Fecha de Emisión:</span> {renderVisualSelect("fecha_emision", "Fecha Emisión")}</div>
-                        <div className="line"><span className="label">CUIT:</span> {fiscal.cuit || "20-12345678-9"}</div>
-                        <div className="line"><span className="label">Inicio Actividades:</span> {fiscal.fechaInicio || "-"}</div>
-                    </div>
+            {/* ── Mapeo de campos a nivel ITEM (cabecera) ── */}
+            <div className="mapping-group">
+              <h3 className="mapping-group-title">Columnas del Ítem (cabecera de factura)</h3>
+              <div className="mapping-grid">
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Fecha de Emisión <span className="req">*</span></span>
+                  {renderVisualSelect("fecha_emision", "Fecha Emisión")}
                 </div>
-
-                <div className="info-row">
-                  <div className="info-line">
-                    <div className="info-col-left"><span className="label">CUIT:</span> {renderVisualSelect("receptor_cuit", "CUIT")}</div>
-                    <div className="info-col-right"><span className="label">Razón Social:</span> Dato fijo (no mapeable)</div>
-                    </div>
-                  <div className="info-line">
-                    <div className="info-col-left"><span className="label">Condición IVA:</span> Dato fijo (no mapeable)</div>
-                    <div className="info-col-right"><span className="label">Domicilio:</span> Dato fijo (no mapeable)</div>
-                    </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">CUIT / DNI Receptor <span className="req">*</span></span>
+                  {renderVisualSelect("receptor_cuit", "CUIT Receptor")}
                 </div>
-
-                <div className="items-section">
-                    <table className="items-table">
-                        <thead>
-                            <tr>
-                                <th style={{width: "30%"}}>Producto / Servicio</th>
-                                <th style={{width: "15%"}}>Cantidad</th>
-                                <th style={{width: "15%"}}>Precio Unit.</th>
-                                <th style={{width: "20%"}}>Prod / Serv</th>
-                                <th style={{width: "20%"}}>Subtotal</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr>
-                                <td className="text-left">{renderVisualSelect("concepto", "Concepto/Detalle", "subitem")}</td>
-                                <td className="text-right">{renderVisualSelect("cantidad", "Cant.", "subitem")}</td>
-                                <td className="text-right">{renderVisualSelect("precio_unitario", "Precio", "subitem")}</td>
-                                <td className="text-center">{renderVisualSelect("prod_serv", "Prod / Serv", "subitem")}</td>
-                              <td className="text-right" style={{fontSize: "10px"}}>Calculado: Cantidad x Precio Unit.</td>
-                            </tr>
-                            <tr style={{height: "80px"}}>
-                                <td colSpan="5" style={{borderLeft: "none", borderRight: "none", borderBottom: "none"}}></td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Condición de Venta</span>
+                  {renderVisualSelect("condicion_venta", "Cond. Venta")}
                 </div>
-
-                <div className="totals-section">
-                    <table className="totals-table">
-                        <tbody>
-                            <tr>
-                                <td className="label">Importe Total: $</td>
-                                <td className="value">
-                                  Calculado automaticamente
-                                  <div style={{ fontSize: "10px", marginTop: "2px" }}>
-                                    Usa la suma de "Cantidad x Precio Unit." por cada subitem.
-                                  </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Fecha Servicio Desde</span>
+                  {renderVisualSelect("fecha_servicio_desde", "Serv. Desde")}
                 </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Fecha Servicio Hasta</span>
+                  {renderVisualSelect("fecha_servicio_hasta", "Serv. Hasta")}
+                </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Fecha Vto. Pago</span>
+                  {renderVisualSelect("fecha_vto_pago", "Vto. Pago")}
+                </div>
+              </div>
+            </div>
 
+            {/* ── Mapeo de campos a nivel SUBITEM (líneas de factura) ── */}
+            <div className="mapping-group">
+              <h3 className="mapping-group-title">Columnas del Subítem (líneas de factura)</h3>
+              <div className="mapping-grid">
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Concepto / Detalle <span className="req">*</span></span>
+                  {renderVisualSelect("concepto", "Concepto/Detalle", "subitem")}
+                </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Cantidad <span className="req">*</span></span>
+                  {renderVisualSelect("cantidad", "Cantidad", "subitem")}
+                </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Precio Unitario <span className="req">*</span></span>
+                  {renderVisualSelect("precio_unitario", "Precio Unitario", "subitem")}
+                </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Prod / Serv <span className="req">*</span></span>
+                  {renderVisualSelect("prod_serv", "Prod / Serv", "subitem")}
+                </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Unidad de Medida</span>
+                  {renderVisualSelect("unidad_medida", "U. Medida", "subitem")}
+                </div>
+                <div className="mapping-field">
+                  <span className="mapping-field-label">Alícuota IVA %</span>
+                  {renderVisualSelect("alicuota_iva", "IVA %", "subitem")}
+                </div>
               </div>
             </div>
 
@@ -1401,176 +1367,6 @@ const App = () => {
           </section>
         )}
 
-        {/* ═══ SECCIÓN: CONFIGURACIÓN DE TABLERO ═══ */}
-        {activeSection === "board_setup" && (
-          <section className="section board-setup-section">
-            <div className="section-header">
-              <h1 className="section-title">Configuración de Tablero</h1>
-              <p className="section-subtitle">
-                Verificá la estructura mínima del tablero para habilitar emisión automática sin errores.
-              </p>
-            </div>
-
-            <div className={`section-status-banner ${boardSetupStatus}`}>
-              {boardSetupReady ? (
-                <><strong>Estado:</strong> Tablero listo para emisión automática.</>
-              ) : (
-                <><strong>Estado:</strong> Faltan pasos de configuración para habilitar emisión automática.</>
-              )}
-            </div>
-
-            <div className="board-setup-card board-guide-card">
-              <div className="board-guide-header">
-                <h3 className="board-setup-card-title">Guía rápida de configuración</h3>
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setIsGuideModalOpen(true)}
-                >
-                  Abrir tutorial
-                </button>
-              </div>
-              <ol className="board-guide-list">
-                <li>Completá Datos Fiscales y Certificados AFIP.</li>
-                <li>En el tablero principal, creá o verificá la columna de subítems.</li>
-                <li>En cada subítem (línea de factura), asegurate de tener Concepto, Cantidad y Precio Unitario.</li>
-                <li>Volvé al Mapeo Visual y asigná columnas de cabecera (ítem) y líneas (subítem).</li>
-                <li>Guardá esta configuración para activar la emisión automática.</li>
-              </ol>
-            </div>
-
-            <div className="board-setup-card">
-              <h3 className="board-setup-card-title">Checklist de configuración</h3>
-              <ul className="board-setup-checklist">
-                <li className={hasSavedFiscalData ? "ok" : "pending"}>Datos fiscales guardados</li>
-                <li className={hasSavedCertificates ? "ok" : "pending"}>Certificados AFIP guardados</li>
-                <li className={mappingCompleted ? "ok" : "pending"}>Mapeo visual obligatorio completo</li>
-                <li className={hasSubitemsStructureReady ? "ok" : "pending"}>Estructura de subítems disponible para líneas</li>
-                <li className={allRequiredItemColumnsReady ? "ok" : "pending"}>Columnas de ítem (cabecera) detectadas</li>
-                <li className={allRequiredSubitemColumnsReady ? "ok" : "pending"}>Columnas de subítem (líneas) detectadas</li>
-                <li className={hasAutomationConfig ? "ok" : "pending"}>Reglas de automatización cargadas</li>
-              </ul>
-            </div>
-
-            <div className="board-setup-card">
-              <h3 className="board-setup-card-title">Columnas a nivel ítem (cabecera)</h3>
-              <div className="board-columns-table-wrapper">
-                <table className="board-columns-table">
-                  <thead>
-                    <tr>
-                      <th>Columna requerida</th>
-                      <th>Estado</th>
-                      <th>Columna detectada</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {requiredItemColumnsStatus.map((column) => (
-                      <tr key={column.key}>
-                        <td>{column.label}</td>
-                        <td>
-                          {column.status === "ok" && <span className="table-status ok">OK</span>}
-                          {column.status === "missing" && <span className="table-status missing">Falta</span>}
-                          {column.status === "wrong_type" && <span className="table-status wrong-type">Tipo incompatible</span>}
-                        </td>
-                        <td>{column.foundColumn ? `${column.foundColumn.label} (${column.foundColumn.type})` : "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="board-setup-card">
-              <h3 className="board-setup-card-title">Columnas a nivel subítem (líneas de factura)</h3>
-              <p className="board-setup-helper">
-                Estas columnas viven en el board de subítems y representan cada línea de la factura.
-              </p>
-              {!hasSubitemsColumnInBoard && (
-                <div className="board-setup-inline-warning">
-                  No se detecta columna de subítems en este tablero. Agregá subítems en monday para poder mapear líneas de factura.
-                </div>
-              )}
-              {hasSubitemsColumnInBoard && !hasSubitemsStructureReady && (
-                <div className="board-setup-inline-warning">
-                  Se detectó la columna de subítems, pero aún no se pudieron leer sus columnas internas. Creá al menos un subítem y recargá.
-                </div>
-              )}
-              <div className="board-columns-table-wrapper">
-                <table className="board-columns-table">
-                  <thead>
-                    <tr>
-                      <th>Columna requerida</th>
-                      <th>Estado</th>
-                      <th>Columna detectada</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {requiredSubitemColumnsStatus.map((column) => (
-                      <tr key={column.key}>
-                        <td>{column.label}</td>
-                        <td>
-                          {column.status === "ok" && <span className="table-status ok">OK</span>}
-                          {column.status === "missing" && <span className="table-status missing">Falta</span>}
-                          {column.status === "wrong_type" && <span className="table-status wrong-type">Tipo incompatible</span>}
-                        </td>
-                        <td>{column.foundColumn ? `${column.foundColumn.label} (${column.foundColumn.type})` : "-"}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-
-
-            {isGuideModalOpen && (
-              <div className="setup-guide-modal-overlay" role="dialog" aria-modal="true" aria-label="Tutorial configuración de tablero">
-                <div className="setup-guide-modal">
-                  <div className="setup-guide-modal-header">
-                    <h3>Tutorial: configurar tablero en 2 niveles</h3>
-                    <button
-                      type="button"
-                      className="btn-secondary"
-                      onClick={() => setIsGuideModalOpen(false)}
-                    >
-                      Cerrar
-                    </button>
-                  </div>
-
-                  <div className="setup-guide-modal-body">
-                    <p>
-                      Este flujo separa la factura en dos partes: ítem (cabecera) y subítem (líneas de detalle).
-                    </p>
-
-                    <h4>1) Configuración a nivel ítem (cabecera)</h4>
-                    <ul>
-                      <li>CUIT / DNI Receptor</li>
-                      <li>Estado Facturación (trigger de automatización)</li>
-                      <li>Comprobante PDF (archivo)</li>
-                    </ul>
-
-                    <h4>2) Configuración a nivel subítem (líneas)</h4>
-                    <ul>
-                      <li>Concepto o descripción del producto/servicio</li>
-                      <li>Cantidad</li>
-                      <li>Precio Unitario</li>
-                      <li>Prod / Serv (dropdown: Producto o Servicio)</li>
-                    </ul>
-
-                    <h4>3) Checklist recomendado</h4>
-                    <ol>
-                      <li>Crear al menos un subítem de prueba en monday.</li>
-                      <li>Volver a esta sección y validar que aparezcan columnas de subítem.</li>
-                      <li>Completar Mapeo Visual.</li>
-                      <li>Definir regla de automatización por estado.</li>
-                      <li>Guardar configuración.</li>
-                    </ol>
-                  </div>
-                </div>
-              </div>
-            )}
-          </section>
-        )}
 
 
       </main>

@@ -1,0 +1,10 @@
+{
+  "name": "afip-monday-app",
+  "version": "1.0.0",
+  "description": "Monday.com App - Facturación Electrónica AFIP",
+  "main": "backend-repo/src/server.js",
+  "scripts": {
+    "postinstall": "cd backend-repo && npm install",
+    "start": "cd backend-repo && node src/server.js"
+  }
+}

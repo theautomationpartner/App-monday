@@ -500,7 +500,7 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
     if (!config) throw new Error(`Tipo de factura no soportado: ${invoiceType}`);
 
     const endpoints = getAfipEndpoints();
-    const { cbteType, ivaRate } = config;
+    const { cbteType } = config;
     const lastVoucher = await afipGetLastVoucher({ token, sign, cuit, pointOfSale, cbteType });
     const nextVoucher = lastVoucher + 1;
 
@@ -528,33 +528,30 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
     console.log(`[emit] WSFE Concepto: ${conceptoAfip} (1=Prod, 2=Serv, 3=Ambos)`);
 
     // Fechas de servicio (obligatorias si Concepto = 2 o 3)
+    // Usar fechas mapeadas del draft si existen, sino la fecha de emisión como fallback
+    const toYYYYMMDD = (val) => {
+        if (!val) return dateYYYYMMDD;
+        return String(val).replace(/-/g, '').slice(0, 8) || dateYYYYMMDD;
+    };
     const fchServXml = (conceptoAfip === 2 || conceptoAfip === 3)
-        ? `<ar:FchServDesde>${dateYYYYMMDD}</ar:FchServDesde>
-            <ar:FchServHasta>${dateYYYYMMDD}</ar:FchServHasta>
-            <ar:FchVtoPago>${dateYYYYMMDD}</ar:FchVtoPago>`
+        ? `<ar:FchServDesde>${toYYYYMMDD(draft.fecha_servicio_desde)}</ar:FchServDesde>
+            <ar:FchServHasta>${toYYYYMMDD(draft.fecha_servicio_hasta)}</ar:FchServHasta>
+            <ar:FchVtoPago>${toYYYYMMDD(draft.fecha_vto_pago)}</ar:FchVtoPago>`
         : '';
 
     const totalAmount = Number(draft.importe_total || 0);
 
-    // Cálculo de IVA según tipo
-    let impNeto, impIva, impTotal;
-    if (ivaRate > 0) {
-        // A y B: el total incluye IVA → neto = total / (1 + ivaRate)
-        impNeto  = Number((totalAmount / (1 + ivaRate)).toFixed(2));
-        impIva   = Number((totalAmount - impNeto).toFixed(2));
-        impTotal = Number(totalAmount.toFixed(2));
-    } else {
-        // C: sin IVA
-        impNeto  = Number(totalAmount.toFixed(2));
-        impIva   = 0;
-        impTotal = Number(totalAmount.toFixed(2));
-    }
+    // Usar importes pre-calculados del draft (ya tienen la alícuota real aplicada)
+    const alicuotaIvaId = draft.alicuota_iva_id || 5; // Id AFIP (3=0%, 4=10.5%, 5=21%, 6=27%, 8=5%, 9=2.5%)
+    const impNeto  = Number((draft.importe_neto || totalAmount).toFixed(2));
+    const impIva   = Number((draft.importe_iva || 0).toFixed(2));
+    const impTotal = Number((draft.importe_total || totalAmount).toFixed(2));
 
-    // Alícuotas IVA (solo para A y B)
-    const alicuotasXml = ivaRate > 0
+    // Alícuotas IVA (solo para A y B con IVA > 0)
+    const alicuotasXml = (impIva > 0 && alicuotaIvaId !== 3)
         ? `<ar:Iva>
               <ar:AlicIva>
-                <ar:Id>5</ar:Id>
+                <ar:Id>${alicuotaIvaId}</ar:Id>
                 <ar:BaseImp>${impNeto.toFixed(2)}</ar:BaseImp>
                 <ar:Importe>${impIva.toFixed(2)}</ar:Importe>
               </ar:AlicIva>
@@ -1036,11 +1033,11 @@ async function generateFacturaCPdfBuffer({ company, draft, afipResult, itemId })
             const periodoY = y + 5;
             const thirdW = W / 3;
             doc.font('Helvetica-Bold').text('Período Facturado Desde: ', colLeft + 8, periodoY, { continued: true });
-            doc.font('Helvetica').text(fechaEmision);
+            doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_desde) || fechaEmision);
             doc.font('Helvetica-Bold').text('Hasta: ', colLeft + thirdW + 8, periodoY, { continued: true });
-            doc.font('Helvetica').text(fechaEmision);
+            doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_hasta) || fechaEmision);
             doc.font('Helvetica-Bold').text('Fecha de Vto. para el pago: ', colLeft + thirdW * 2 + 8, periodoY, { continued: true });
-            doc.font('Helvetica').text(fechaEmision);
+            doc.font('Helvetica').text(fmtDate(draft.fecha_vto_pago) || fechaEmision);
             y += periodoH;
 
             // ── RECEPTOR (2 columnas) ────────────────────────────
@@ -1063,7 +1060,7 @@ async function generateFacturaCPdfBuffer({ company, draft, afipResult, itemId })
             cy += 12;
             // Fila 3
             doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text('Contado');
+            doc.font('Helvetica').text(draft.condicion_venta || 'Contado');
             y += receptorH;
 
             // ── TABLA DE ITEMS ───────────────────────────────────
@@ -2502,6 +2499,16 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 throw new Error(formatMissingConfigError(readiness.missing));
             }
 
+            // ── 2c. Cambiar status a "Creando Comprobante" ────────────────────
+            const statusColumnId = readiness.boardConfig?.status_column_id;
+            if (statusColumnId) {
+                await updateMondayItemStatus({
+                    apiToken: mondayToken, boardId, itemId,
+                    statusColumnId,
+                    label: COMPROBANTE_STATUS_FLOW.processing,
+                });
+            }
+
             // ── 3. Idempotencia ────────────────────────────────────────────────
             const typeForIdempotency = resolvedType || 'AUTO';
             const existing = await db.query(
@@ -2557,6 +2564,10 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             const receptorCuitRaw = getColumnTextById(mainColumns, mapping.receptor_cuit) || null;
             const receptorNombre  = getColumnTextById(mainColumns, mapping.receptor_nombre) || null;
             const receptorDomicilio = getColumnTextById(mainColumns, mapping.receptor_domicilio) || null;
+            const condicionVenta     = mapping.condicion_venta ? (getColumnTextById(mainColumns, mapping.condicion_venta) || null) : null;
+            const fechaServDesdeRaw  = mapping.fecha_servicio_desde ? (getColumnTextById(mainColumns, mapping.fecha_servicio_desde) || null) : null;
+            const fechaServHastaRaw  = mapping.fecha_servicio_hasta ? (getColumnTextById(mainColumns, mapping.fecha_servicio_hasta) || null) : null;
+            const fechaVtoPagoRaw    = mapping.fecha_vto_pago ? (getColumnTextById(mainColumns, mapping.fecha_vto_pago) || null) : null;
 
             // ── 6. Consultar padrón: condición fiscal del EMISOR ──────────────
             console.log(`[emit] Consultando padrón para emisor CUIT: ${company.cuit}`);
@@ -2600,15 +2611,31 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
 
             // ── 9. Construir draft de la factura ──────────────────────────────
             const rawLines = subitems.map(sub => ({
+                subitem_name: sub.name || `Subitem #${sub.id}`,
                 concept:    getColumnTextById(sub.column_values, mapping.concepto) || sub.name || '',
                 quantity:   getColumnTextById(sub.column_values, mapping.cantidad),
                 unit_price: getColumnTextById(sub.column_values, mapping.precio_unitario),
                 prod_serv:  mapping.prod_serv ? (getColumnTextById(sub.column_values, mapping.prod_serv) || '').toLowerCase().trim() : '',
+                alicuota_iva: mapping.alicuota_iva ? (getColumnTextById(sub.column_values, mapping.alicuota_iva) || '') : '',
+                unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
             }));
             const validLines = rawLines.filter(l =>
                 l.concept && toNumberOrNull(l.quantity) !== null && toNumberOrNull(l.unit_price) !== null
             );
-            if (validLines.length === 0) throw new Error('No hay líneas válidas en subitems para emitir la factura');
+            if (validLines.length === 0) {
+                // Generar detalle de qué falta en cada subitem
+                const detalles = rawLines.map(l => {
+                    const faltantes = [];
+                    if (!l.concept) faltantes.push('Concepto');
+                    if (toNumberOrNull(l.quantity) === null) faltantes.push('Cantidad');
+                    if (toNumberOrNull(l.unit_price) === null) faltantes.push('Precio Unitario');
+                    return { name: l.subitem_name, faltantes };
+                });
+                const detalleStr = detalles
+                    .map(d => `• "${d.name}": falta ${d.faltantes.join(', ')}`)
+                    .join('\n');
+                throw new Error(`No hay líneas válidas en subitems para emitir la factura.\n${subitems.length === 0 ? 'El item no tiene subitems creados.' : `Subitems con problemas:\n${detalleStr}`}`);
+            }
 
             // Determinar Concepto AFIP: 1=Productos, 2=Servicios, 3=Ambos
             const hasProducto = validLines.some(l => l.prod_serv.includes('producto') || l.prod_serv.includes('prod'));
@@ -2627,14 +2654,80 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             }
             console.log(`[emit] Concepto AFIP: ${conceptoAfip} (Producto: ${hasProducto}, Servicio: ${hasServicio})`);
 
+            // Validar fechas de servicio obligatorias cuando hay servicios (concepto 2 o 3)
+            const fechaEmision = fechaEmisionRaw || new Date().toISOString().slice(0, 10);
+            if (conceptoAfip === 2 || conceptoAfip === 3) {
+                const faltanFechas = [];
+                if (!fechaServDesdeRaw) faltanFechas.push('Fecha Servicio Desde');
+                if (!fechaServHastaRaw) faltanFechas.push('Fecha Servicio Hasta');
+                if (faltanFechas.length > 0) {
+                    throw new Error(
+                        `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(' y ')}.\n` +
+                        `Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: ${conceptoAfip === 2 ? 'Servicios' : 'Productos y Servicios'}), ` +
+                        `AFIP exige las fechas del período facturado.`
+                    );
+                }
+            }
+
+            // ── Validar alícuota IVA uniforme en todos los subitems ──────────
+            const ALICUOTA_MAP = {
+                '0':    { id: 3, rate: 0 },
+                '2.5':  { id: 9, rate: 0.025 },
+                '5':    { id: 8, rate: 0.05 },
+                '10.5': { id: 4, rate: 0.105 },
+                '21':   { id: 5, rate: 0.21 },
+                '27':   { id: 6, rate: 0.27 },
+            };
+
+            // Extraer y normalizar alícuota de cada subitem
+            const alicuotasDetalle = validLines.map(l => {
+                const raw = String(l.alicuota_iva).replace(/[^0-9.,]/g, '').replace(',', '.').trim();
+                return { name: l.subitem_name, raw, normalized: raw || null };
+            });
+
+            // Verificar que todos tengan alícuota asignada
+            const sinAlicuota = alicuotasDetalle.filter(a => !a.normalized);
+            if (mapping.alicuota_iva && sinAlicuota.length > 0) {
+                const nombres = sinAlicuota.map(a => `"${a.name}"`).join(', ');
+                throw new Error(
+                    `Alícuota IVA faltante en subitems: ${nombres}.\n` +
+                    `Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).`
+                );
+            }
+
+            // Verificar que todas las alícuotas sean iguales
+            const alicuotasUnicas = [...new Set(alicuotasDetalle.map(a => a.normalized).filter(Boolean))];
+            if (alicuotasUnicas.length > 1) {
+                const detalle = alicuotasDetalle
+                    .map(a => `• "${a.name}": ${a.normalized}%`)
+                    .join('\n');
+                throw new Error(
+                    `Alícuotas IVA diferentes entre subitems.\n` +
+                    `Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas:\n${detalle}`
+                );
+            }
+
+            // Determinar alícuota a usar
+            const alicuotaElegida = alicuotasUnicas.length === 1 ? alicuotasUnicas[0] : '21';
+            const alicuotaConfig = ALICUOTA_MAP[alicuotaElegida];
+            if (!alicuotaConfig) {
+                throw new Error(
+                    `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
+                    `Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+                );
+            }
+            console.log(`[emit] Alícuota IVA: ${alicuotaElegida}% (Id AFIP: ${alicuotaConfig.id}, Tasa: ${alicuotaConfig.rate})`);
+
             const lineas = validLines.map(l => ({
-                concept:    l.concept,
-                quantity:   toNumberOrNull(l.quantity) || 0,
-                unit_price: toNumberOrNull(l.unit_price) || 0,
+                concept:       l.concept,
+                quantity:      toNumberOrNull(l.quantity) || 0,
+                unit_price:    toNumberOrNull(l.unit_price) || 0,
+                alicuota_iva:  l.alicuota_iva || '',
+                unidad_medida: l.unidad_medida || '',
             }));
 
             const importeNeto  = lineas.reduce((s, l) => s + l.quantity * l.unit_price, 0);
-            const ivaRate      = invoiceRules.getIvaRate(tipo);
+            const ivaRate      = discriminaIva ? alicuotaConfig.rate : 0;
             const importeIva   = discriminaIva ? Number((importeNeto * ivaRate).toFixed(2)) : 0;
             const importeTotal = Number((importeNeto + importeIva).toFixed(2));
 
@@ -2642,7 +2735,7 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 tipo_comprobante:    tipo,
                 cuit_emisor:         company.cuit,
                 punto_venta:         company.default_point_of_sale,
-                fecha_emision:       fechaEmisionRaw || new Date().toISOString().slice(0, 10),
+                fecha_emision:       fechaEmision,
                 receptor_cuit_o_dni: receptorInfo.cuitUsado || receptorCuitRaw,
                 receptor_nombre:     receptorInfo.nombre || receptorNombre,
                 receptor_domicilio:  receptorInfo.domicilio || receptorDomicilio || '-',
@@ -2652,6 +2745,12 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 docNro:              receptorInfo.docNro  ?? 0,
                 concepto_afip:       conceptoAfip,
                 discriminaIva,
+                condicion_venta:     condicionVenta || 'Contado',
+                fecha_servicio_desde: fechaServDesdeRaw || null,
+                fecha_servicio_hasta: fechaServHastaRaw || null,
+                fecha_vto_pago:       fechaVtoPagoRaw || null,
+                alicuota_iva_id:     alicuotaConfig.id,
+                alicuota_iva_pct:    alicuotaElegida,
                 importe_neto:        Number(importeNeto.toFixed(2)),
                 importe_iva:         importeIva,
                 importe_total:       importeTotal,
@@ -2754,6 +2853,15 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 ]
             );
 
+            // ── 14. Cambiar status a "Comprobante Creado" ──────────────────
+            if (statusColumnId && afipResult?.cae) {
+                await updateMondayItemStatus({
+                    apiToken: mondayToken, boardId, itemId,
+                    statusColumnId,
+                    label: COMPROBANTE_STATUS_FLOW.success,
+                });
+            }
+
             if (callbackUrl) {
                 await notifyCallback(callbackUrl, actionUuid, true, null, {
                     invoiceType:      tipo,
@@ -2767,12 +2875,24 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
         } catch (err) {
             console.error(`❌ [emit] Error factura:`, err.message);
 
-            // Publicar comentario en el item de Monday explicando el error
+            // Cambiar status a "Error - Mirar Comentarios"
             try {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
-                if (errToken && itemId) {
+                if (errToken && itemId && boardId) {
+                    // Primero publicar el comentario con el error
                     await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
+
+                    // Luego cambiar el status
+                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
+                    const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
+                    if (errStatusColId) {
+                        await updateMondayItemStatus({
+                            apiToken: errToken, boardId, itemId,
+                            statusColumnId: errStatusColId,
+                            label: COMPROBANTE_STATUS_FLOW.error,
+                        });
+                    }
                 }
             } catch (_) {}
 
@@ -2794,74 +2914,119 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
     });
 });
 
-// ─── Mapeo de errores → mensaje claro + cómo solucionarlo ────────────────────
+// ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
 function buildErrorComment(err) {
     const msg = err?.message || 'Error desconocido';
+
+    // Extraer detalle de subitems si viene en el mensaje (líneas con "•")
+    const lines = msg.split('\n');
+    const mainMsg = lines[0];
+    const subitemDetails = lines.filter(l => l.startsWith('•'));
 
     const KNOWN_ERRORS = [
         {
             match: /falta.*mapeo|falta.*configurar.*mapeo|falta.*mapping/i,
-            title: '⚙️ Falta configurar el mapeo de columnas',
+            title: 'Falta configurar el mapeo de columnas',
             detail: 'El tablero no tiene configurado qué columna corresponde a cada campo de la factura.',
-            solucion: 'Abrí la vista "Facturación Electrónica" → sección "Mapeo Visual" → seleccioná las columnas y guardá.',
+            solucion: 'Abrí la vista de la app → sección <b>Mapeo Visual</b> → seleccioná las columnas y guardá.',
         },
         {
             match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0/i,
-            title: '📋 No hay subitems con datos válidos',
-            detail: 'La factura necesita al menos un subitem con concepto, cantidad y precio unitario.',
-            solucion: 'Agregá subitems al item con las columnas: Concepto, Cantidad y Precio Unitario completos.',
+            title: 'Subitems incompletos o faltantes',
+            detail: subitemDetails.length > 0
+                ? 'Los siguientes subitems tienen campos vacíos o inválidos:<br/>' +
+                  subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
+                : 'No se encontraron subitems con Concepto, Cantidad y Precio Unitario completos.',
+            solucion: 'Revisá cada subitem del item y completá los campos obligatorios: <b>Concepto</b>, <b>Cantidad</b> (número) y <b>Precio Unitario</b> (número). Si no hay subitems, creá al menos uno.',
         },
         {
             match: /Configuración incompleta/i,
-            title: '⚙️ Configuración incompleta',
-            detail: msg,
-            solucion: 'Abrí la vista "Facturación Electrónica" → completá los pasos pendientes en "Mapeo Visual" y "Configurar Tablero". Asegurate de mapear todas las columnas obligatorias (incluida Prod/Serv en subitems).',
+            title: 'Configuración incompleta',
+            detail: mainMsg,
+            solucion: 'Abrí la vista de la app → completá los pasos pendientes en <b>Mapeo Visual</b>. Asegurate de mapear todas las columnas obligatorias.',
         },
         {
             match: /faltan certificados|certificados.*afip|falta.*crt|falta.*key/i,
-            title: '🔐 Faltan los certificados AFIP',
+            title: 'Faltan los certificados AFIP',
             detail: 'No se encontraron certificados digitales para autenticar con AFIP.',
-            solucion: 'Abrí la vista "Facturación Electrónica" → sección "Certificados ARCA" → cargá el CRT y la clave privada.',
+            solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → cargá el archivo .crt y la clave privada (.key).',
+        },
+        {
+            match: /certificados.*expirados|expir/i,
+            title: 'Certificados AFIP expirados',
+            detail: 'Los certificados digitales están vencidos y AFIP rechaza la autenticación.',
+            solucion: 'Generá nuevos certificados en AFIP/ARCA y subílos en la vista de la app → sección <b>Certificados ARCA</b>.',
         },
         {
             match: /tipo de factura incorrecto|factura.*incorrecto|corresponde.*[ABC]/i,
-            title: '🧾 Tipo de factura incorrecto',
-            detail: msg,
-            solucion: 'Verificá la condición IVA del emisor y receptor. El sistema determinará automáticamente el tipo correcto.',
+            title: 'Tipo de factura incorrecto',
+            detail: mainMsg,
+            solucion: 'Verificá la condición IVA del emisor y receptor. El sistema determina automáticamente si corresponde Factura A, B o C.',
         },
         {
-            match: /cuit.*inválido|cuit.*invalido/i,
-            title: '🔢 CUIT inválido',
-            detail: 'El CUIT del receptor no tiene el formato correcto (11 dígitos sin guiones).',
-            solucion: 'Verificá que la columna CUIT del receptor tenga exactamente 11 dígitos numéricos (ej: 20327446348).',
+            match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
+            title: 'CUIT / DNI del receptor inválido',
+            detail: 'El campo CUIT / DNI del receptor está vacío o no tiene el formato correcto.',
+            solucion: 'Completá la columna <b>CUIT / DNI Receptor</b> del item con exactamente 11 dígitos numéricos (ej: 20327446348). Sin guiones ni espacios.',
         },
         {
-            match: /padrón.*error|padron.*error/i,
-            title: '📡 Error consultando el Padrón AFIP',
-            detail: 'No se pudo verificar la condición IVA del CUIT en AFIP.',
-            solucion: 'Verificá que el CUIT sea correcto y que los certificados estén vigentes. Reintentá en unos minutos.',
+            match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
+            title: 'Error consultando el Padrón AFIP',
+            detail: 'No se pudo verificar la condición IVA del CUIT en los servidores de AFIP.',
+            solucion: 'Verificá que el CUIT del receptor sea correcto. Si es correcto, reintentá en unos minutos (puede ser caída temporal de AFIP).',
         },
         {
             match: /empresa no encontrada|no encontrada.*cuenta/i,
-            title: '🏢 Empresa no configurada',
-            detail: 'No se encontró una empresa asociada a esta cuenta de monday.',
-            solucion: 'Abrí la vista "Facturación Electrónica" → sección "Datos Fiscales" → completá y guardá los datos de la empresa.',
+            title: 'Empresa no configurada',
+            detail: 'No se encontraron los datos fiscales de la empresa emisora.',
+            solucion: 'Abrí la vista de la app → sección <b>Datos Fiscales</b> → completá Razón Social, CUIT, Punto de Venta y guardá.',
         },
         {
-            match: /wsfe|wsaa|soap|afip.*http|loginCms/i,
-            title: '🌐 Error de comunicación con AFIP',
-            detail: `Respuesta inesperada del servicio AFIP: ${msg.substring(0, 200)}`,
-            solucion: 'Los servidores de AFIP pueden tener mantenimiento. Reintentá en unos minutos. Si persiste, revisá los logs.',
+            match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
+            title: 'Error de comunicación con AFIP',
+            detail: `Los servidores de AFIP respondieron con un error: ${mainMsg.substring(0, 150)}`,
+            solucion: 'Los servidores de AFIP pueden tener mantenimiento. Reintentá en unos minutos. Si persiste, verificá que los certificados estén vigentes.',
+        },
+        {
+            match: /token.*monday|no hay token|sessionToken/i,
+            title: 'Error de autenticación con Monday',
+            detail: 'No se pudo obtener un token válido para acceder a los datos del tablero.',
+            solucion: 'Reintentá la operación. Si persiste, revisá que la app esté correctamente instalada en el workspace.',
+        },
+        {
+            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta/i,
+            title: 'Fechas de servicio obligatorias',
+            detail: mainMsg,
+            solucion: 'Completá las columnas <b>Fecha Servicio Desde</b> y <b>Fecha Servicio Hasta</b> en el item. Son obligatorias cuando los subitems incluyen servicios.',
+        },
+        {
+            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida/i,
+            title: 'Alícuota IVA inválida',
+            detail: subitemDetails.length > 0
+                ? 'Los subitems tienen alícuotas IVA diferentes:<br/>' +
+                  subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
+                : mainMsg,
+            solucion: 'Todos los subitems de una factura deben tener la <b>misma alícuota IVA</b>. Revisá la columna Alícuota IVA % y asegurate de que todos los subitems tengan el mismo valor (0, 2.5, 5, 10.5, 21 o 27).',
+        },
+        {
+            match: /idempotencia|ya emitida|ya completa/i,
+            title: 'Factura ya emitida',
+            detail: 'Este item ya tiene una factura emitida previamente.',
+            solucion: 'Si necesitás emitir otra factura para este item, contactá al administrador.',
         },
     ];
 
     const known = KNOWN_ERRORS.find(e => e.match.test(msg));
 
     if (known) {
-        return `❌ **Error al emitir factura**\n\n**Causa:** ${known.title}\n${known.detail}\n\n**Cómo solucionarlo:** ${known.solucion}`;
+        return `<b>Error al emitir factura</b><br/><br/>` +
+            `<b>Causa:</b> ${known.title}<br/>${known.detail}<br/><br/>` +
+            `<b>Cómo solucionarlo:</b> ${known.solucion}`;
     }
 
-    return `❌ **Error al emitir factura**\n\n**Causa:** ${msg}\n\n**Cómo solucionarlo:** Revisá los logs en el Developer Center → Aloja en monday → Registros para más detalles.`;
+    return `<b>Error al emitir factura</b><br/><br/>` +
+        `<b>Causa:</b> ${mainMsg}<br/><br/>` +
+        `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, revisá los logs en Developer Center → Registros.`;
 }
 
 /**
@@ -2933,6 +3098,38 @@ async function fetchMondayItem({ apiToken, itemId }) {
             id: s.id, name: s.name, column_values: s.column_values || []
         })),
     };
+}
+
+// Actualizar el estado de un item en Monday (columna de status).
+// Usa create_labels_if_missing para crear el label automáticamente si no existe.
+async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnId, label }) {
+    if (!apiToken || !boardId || !itemId || !statusColumnId || !label) return;
+    try {
+        // change_column_value espera value como JSON string: "{\"label\":\"...\"}""
+        const valueJson = JSON.stringify(JSON.stringify({ label }));
+        const mutation = `mutation {
+            change_column_value(
+                board_id: ${Number(boardId)},
+                item_id: ${Number(itemId)},
+                column_id: "${statusColumnId}",
+                value: ${valueJson},
+                create_labels_if_missing: true
+            ) { id }
+        }`;
+        const res = await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({ query: mutation }),
+        });
+        const data = await res.json();
+        if (data?.errors?.length) {
+            console.error(`[status] Error cambiando status a "${label}":`, data.errors[0].message);
+        } else {
+            console.log(`[status] Status cambiado a "${label}" OK`);
+        }
+    } catch (err) {
+        console.error(`[status] Exception cambiando status a "${label}":`, err.message);
+    }
 }
 
 // Servir frontend React desde public/
