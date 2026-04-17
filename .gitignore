@@ -1,15 +1,27 @@
 # Dependencias
 node_modules/
-backend/node_modules/
 
 # Builds
 dist/
-.netlify/
+*.tar.gz
+*.zip
 
-# Secretos
+# Secretos y certificados
 .env
-backend/.env
+.env.local
+*.crt
+*.csr
+*.key
 
-# Logs y varios
+# Logs
 *.log
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Uploads temporales
+uploads/
+
+# Claude sessions
+.claude/

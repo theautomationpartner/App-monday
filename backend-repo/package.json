@@ -8,13 +8,18 @@
     "dev": "nodemon src/server.js"
   },
   "dependencies": {
+    "@mondaycom/apps-sdk": "^3.3.2",
     "cors": "^2.8.6",
     "crypto-js": "^4.2.0",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
+    "form-data": "^4.0.5",
+    "jsonwebtoken": "^9.0.2",
     "multer": "^2.1.1",
-    "pg": "^8.13.3",
-    "serverless-http": "^4.0.0"
+    "node-forge": "^1.4.0",
+    "pdfkit": "^0.18.0",
+    "pdfmake": "^0.3.7",
+    "pg": "^8.13.3"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

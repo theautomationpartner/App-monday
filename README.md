@@ -1,147 +1,92 @@
 # Facturacion Electronica AFIP - Monday.com App
 
-Aplicacion nativa para Monday.com enfocada en configuracion fiscal y preparacion de facturacion electronica AFIP para empresas argentinas.
+Aplicacion nativa para Monday.com para configuracion fiscal y emision de facturacion electronica AFIP (Argentina). Se despliega sobre **Monday Code**.
 
-## Estado actual (abril 2026)
+## Estructura del workspace
 
-Estamos en una etapa intermedia entre infraestructura y operacion real:
+Este directorio es un workspace con dos proyectos independientes (cada uno con su propio `.git`, pensados para subir a repos separados en GitHub):
 
-- Frontend y backend ya estan conectados.
-- Los datos fiscales se guardan y se recuperan desde PostgreSQL.
-- La carga de certificados esta operativa con cifrado de clave privada.
-- Falta la emision AFIP productiva (WSAA/WSFE) en este monorepo principal.
+- [frontend-repo/](frontend-repo/) — React + Vite. Build estatico que sirve el backend.
+- [backend-repo/](backend-repo/) — Node.js + Express. Punto de entrada desplegado en Monday Code.
+- [legacy/](legacy/) — codigo y archivos viejos archivados (antigua version monorepo con Netlify, blueprints, logs, builds previos). No forma parte del runtime.
 
-## Lo que ya funciona
+## Target de deploy: Monday Code
 
-1. Frontend React + Vite
-- Navegacion lateral por secciones (Certificados y Datos Fiscales).
-- Integracion con Monday SDK para obtener contexto de cuenta/tablero.
-- Formulario fiscal completo con persistencia real.
-- Estado visual de avance por seccion (Pendiente/Completo).
+El backend corre como un proceso Node estandar (`node src/server.js`), no como serverless function. Usa `@mondaycom/apps-sdk` para leer `EnvironmentVariablesManager` y `SecretsManager`, y hace `app.listen(process.env.PORT)`.
 
-2. Integracion Frontend-Backend
-- Llamadas HTTP con Axios a la API.
-- Precarga de setup guardado al abrir la app.
-- Guardado de datos fiscales via endpoint dedicado.
-- Subida de archivos .crt y .key con multipart/form-data.
+El flujo actual es: el backend sirve los archivos estaticos del frontend desde [backend-repo/public/](backend-repo/public/). El build del frontend (`frontend-repo/dist/`) se copia alli antes de desplegar.
 
-3. Backend Node.js + Express (serverless-ready)
-- API montada en backend con soporte local y Netlify Functions.
-- Multer en memoria para procesar certificados en entornos serverless.
-- Cifrado AES (CryptoJS) para clave privada AFIP antes de persistir.
-- Conexion a Neon/PostgreSQL con SSL.
+## Lo que funciona hoy
 
-4. Deploy
-- Deploy principal en Netlify.
-- Redirect /api/* hacia function serverless.
-- Headers compatibles con uso embebido en iframe de Monday.
+### Frontend ([frontend-repo/](frontend-repo/))
 
-## Endpoints disponibles
+- React 18 + Vite, Monday UI Core (Vibe), Monday SDK, Axios.
+- Navegacion lateral por secciones (Certificados ARCA y Datos Fiscales).
+- Formulario fiscal con persistencia real.
+- Precarga de setup guardado por `monday_account_id`.
+- Subida de `.crt` y `.key` con `multipart/form-data`.
+
+### Backend ([backend-repo/](backend-repo/))
+
+- Express + Multer en memoria + `pg` (Neon PostgreSQL con SSL).
+- Cifrado AES (CryptoJS) para la clave privada AFIP antes de persistir.
+- Modulos de emision AFIP reales en [backend-repo/src/modules/](backend-repo/src/modules/):
+  - `afipAuth.js` — WSAA (token/sign).
+  - `afipPadron.js` — consulta de padron.
+  - `invoiceRules.js` — reglas de comprobantes.
+  - `pdfInvoice.js`, `pdfco.js` — generacion de PDF.
+- Sirve el frontend estatico desde `public/`.
+
+## Endpoints principales
 
 | Metodo | Ruta | Descripcion |
 | --- | --- | --- |
-| GET | /api/health | Verifica estado del backend y conexion DB |
-| GET | /api/setup/:mondayAccountId | Trae datos fiscales/certificados guardados |
-| POST | /api/companies | Crea o actualiza datos fiscales por monday_account_id |
-| POST | /api/certificates | Sube .crt/.key, cifra la clave y guarda credenciales |
+| GET | /api/health | Estado del backend y conexion DB |
+| GET | /api/setup/:mondayAccountId | Datos fiscales y certificados guardados |
+| POST | /api/companies | Alta/actualizacion de datos fiscales |
+| POST | /api/certificates | Sube `.crt`/`.key`, cifra la clave y guarda credenciales |
 
-## Arquitectura tecnica
-
-Frontend
-- React 18 + Vite
-- Monday UI React Core (Vibe)
-- Monday SDK + Axios
-
-Backend
-- Node.js + Express
-- Multer (memory storage)
-- CryptoJS (AES)
-- PostgreSQL (pg) en Neon
-- serverless-http para Netlify Functions
-
-## Estructura del repo
-
-- / : Frontend principal (Vite).
-- /backend : API principal de este flujo.
-- /netlify.toml : Build, redirects y functions del deploy principal.
-- /frontend-repo y /backend-repo : Variante desacoplada en evolucion (flujo alternativo).
+(El backend tiene endpoints adicionales para emision de comprobantes y webhooks de Monday — ver [backend-repo/src/server.js](backend-repo/src/server.js).)
 
 ## Variables de entorno
 
-Frontend (raiz)
-- No requiere variables obligatorias para el flujo base actual.
+En Monday Code se configuran desde `mapps` o el dashboard. En local, `.env` dentro de cada proyecto.
 
-Backend (/backend)
-- DATABASE_URL: string de conexion PostgreSQL (Neon).
-- ENCRYPTION_KEY: clave usada para cifrar la private key.
-- PORT: opcional para desarrollo local (default 3001).
+Backend:
+- `DATABASE_URL` — string de conexion PostgreSQL (Neon).
+- `ENCRYPTION_KEY` — clave simetrica para cifrar la private key AFIP. Se recomienda cargarla como **secret** (`SecretsManager`).
+- `MONDAY_CLIENT_SECRET` — para validar tokens de sesion Monday. Tambien como secret.
+- `PORT` — opcional, default 3001.
 
-## Como levantar en local
-
-1. Instalar dependencias del frontend (raiz)
+## Levantar en local
 
 ```bash
+# Backend
+cd backend-repo
 npm install
-```
+npm run dev
 
-2. Instalar dependencias del backend
-
-```bash
-cd backend
+# Frontend (otra terminal)
+cd frontend-repo
 npm install
-```
-
-3. Crear archivo .env en backend con al menos:
-
-```env
-DATABASE_URL=postgresql://...
-ENCRYPTION_KEY=tu_clave_segura
-PORT=3001
-```
-
-4. Iniciar backend (terminal 1)
-
-```bash
-cd backend
 npm run dev
 ```
 
-5. Iniciar frontend (terminal 2)
+En local, el frontend apunta al backend en `http://localhost:3001/api` cuando detecta hostname `localhost`.
 
-```bash
-npm run dev
-```
+## Build y deploy a Monday Code
 
-En local, el frontend usa automaticamente http://localhost:3001/api cuando detecta hostname localhost.
+1. Build del frontend:
+   ```bash
+   cd frontend-repo
+   npm run build
+   ```
+2. Copiar `frontend-repo/dist/*` a `backend-repo/public/`.
+3. Desde `backend-repo/`, desplegar con el CLI de Monday Code (`mapps code:push`).
 
-## Deploy en Netlify (monorepo principal)
+## Roadmap
 
-Configuracion esperada (ya incluida en netlify.toml):
-
-- Build command: npm run build
-- Publish directory: dist
-- Functions directory: backend/netlify/functions
-
-Variables de entorno minimas en Netlify:
-
-- DATABASE_URL
-- ENCRYPTION_KEY
-
-## Roadmap proximo
-
-1. Integracion AFIP real
-- WSAA para obtener token/sign.
-- WSFEv1 para autorizacion de comprobantes.
-
-2. Automatizacion con Monday
-- Disparar emision por cambio de estado/accion.
-- Escribir numero de comprobante y link PDF en columnas.
-
-3. PDF fiscal
-- Generar comprobante en PDF con plantilla y datos AFIP.
-
-4. Endurecimiento operativo
-- Validaciones de negocio adicionales.
-- Auditoria/logs y pruebas E2E.
-
-Desarrollado para equipos argentinos que operan en Monday y AFIP.
+1. Terminar integracion AFIP productiva (WSAA + WSFEv1) — los modulos ya existen en `backend-repo/src/modules/`, queda endurecerlos.
+2. Automatizaciones Monday: disparar emision por cambio de estado, escribir numero de comprobante y link PDF en columnas.
+3. Plantilla de PDF fiscal.
+4. Logs, auditoria y pruebas E2E.
