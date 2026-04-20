@@ -107,8 +107,6 @@ const App = () => {
   const [isFiscalLocked, setIsFiscalLocked] = useState(false);
   const [isCertificatesLocked, setIsCertificatesLocked] = useState(false);
   const [isMappingLocked, setIsMappingLocked] = useState(false);
-  const [isEmittingFacturaC, setIsEmittingFacturaC] = useState(false);
-  const [emitFacturaCResult, setEmitFacturaCResult] = useState(null);
 
   // Certificados
   const [crtFile, setCrtFile] = useState(null);
@@ -139,9 +137,6 @@ const App = () => {
     processing_label: COMPROBANTE_STATUS_FLOW.processing,
     success_label: COMPROBANTE_STATUS_FLOW.success,
     error_label: COMPROBANTE_STATUS_FLOW.error,
-  });
-  const [emitForm, setEmitForm] = useState({
-    itemId: "",
   });
   const requiredMappingFields = ["fecha_emision", "receptor_cuit", "concepto", "cantidad", "precio_unitario", "prod_serv"];
   const optionalMappingFields = [
@@ -217,7 +212,6 @@ const App = () => {
   }, []);
 
   const boardId = context?.boardId || context?.locationContext?.boardId || null;
-  const contextItemId = context?.itemId || context?.pulseId || context?.locationContext?.itemId || "";
   const appFeatureId = context?.appFeatureId || null;
   const viewIdFromHref = locationData?.href?.match(/\/views\/(\d+)/)?.[1] || null;
 
@@ -515,14 +509,6 @@ const App = () => {
   }, [boardConfig.status_column_id, statusColumns]);
 
   useEffect(() => {
-    if (!contextItemId) return;
-    setEmitForm((prev) => {
-      if (prev.itemId) return prev;
-      return { ...prev, itemId: String(contextItemId) };
-    });
-  }, [contextItemId]);
-
-  useEffect(() => {
     if (activeSection !== "datos" && hasSavedFiscalData) {
       setIsFiscalLocked(true);
     }
@@ -725,149 +711,6 @@ const App = () => {
     await monday.api(mutation);
   };
 
-  const handleEmitFacturaC = async () => {
-    if (!context?.account?.id || !boardId) {
-      alert("No se pudo identificar cuenta/tablero para emitir factura C.");
-      return;
-    }
-
-    if (!emitForm.itemId?.trim()) {
-      alert("Ingresá el ID del item a emitir.");
-      return;
-    }
-
-    setIsEmittingFacturaC(true);
-    setEmitFacturaCResult(null);
-    try {
-      const itemQuery = `query {
-        boards(ids: [${Number(boardId)}]) {
-          items(ids: [${Number(emitForm.itemId.trim())}]) {
-            id
-            name
-            column_values {
-              id
-              text
-              value
-            }
-            subitems {
-              id
-              name
-              column_values {
-                id
-                text
-                value
-              }
-            }
-          }
-        }
-      }`;
-
-      const itemResponse = await monday.api(itemQuery);
-      const mondayItem = itemResponse?.data?.boards?.[0]?.items?.[0];
-      if (!mondayItem) {
-        throw new Error("No se encontró el item en Monday para emitir Factura C");
-      }
-
-      try {
-        await updateItemStatusInMonday(emitForm.itemId.trim(), COMPROBANTE_STATUS_FLOW.processing);
-      } catch (statusErr) {
-        console.error("No se pudo setear estado en procesamiento:", statusErr);
-      }
-
-      const payload = {
-        monday_account_id: context.account.id.toString(),
-        board_id: boardId,
-        item_id: emitForm.itemId.trim(),
-        issue_in_afip: true,
-        item_snapshot: {
-          id: mondayItem.id,
-          name: mondayItem.name,
-          main_columns: mondayItem.column_values || [],
-          subitems: (mondayItem.subitems || []).map((subitem) => ({
-            id: subitem.id,
-            name: subitem.name,
-            column_values: subitem.column_values || [],
-          })),
-        },
-      };
-
-      const response = await api.post(`/invoices/emit-c`, payload);
-
-      if (response.data?.pdf_base64) {
-        const fileBytes = atob(response.data.pdf_base64);
-        const byteNumbers = new Array(fileBytes.length);
-        for (let i = 0; i < fileBytes.length; i += 1) {
-          byteNumbers[i] = fileBytes.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: "application/pdf" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `Factura-C-${emitForm.itemId.trim()}.pdf`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(link.href);
-      }
-
-      setEmitFacturaCResult({
-        ok: true,
-        message: response.data?.message || "Factura C procesada",
-        detail: JSON.stringify({
-          draft: response.data?.draft || null,
-          afip_result: response.data?.afip_result || null,
-          pdf_generado: Boolean(response.data?.pdf_base64),
-          monday_upload: response.data?.monday_upload || null,
-        }, null, 2),
-      });
-
-      try {
-        await updateItemStatusInMonday(emitForm.itemId.trim(), COMPROBANTE_STATUS_FLOW.success);
-        const afipResult = response.data?.afip_result;
-        if (afipResult?.cae) {
-          await createItemUpdateInMonday(
-            emitForm.itemId.trim(),
-            `Comprobante emitido correctamente. CAE: ${afipResult.cae}. Vencimiento CAE: ${afipResult.cae_vencimiento || "N/D"}. Número: ${afipResult.numero_comprobante || "N/D"}.`
-          );
-        }
-      } catch (statusErr) {
-        console.error("No se pudo actualizar estado/nota de éxito en Monday:", statusErr);
-      }
-
-      monday.execute("notice", {
-        message: response.data?.afip_result?.cae ? "Factura C emitida en AFIP" : "Factura C procesada en backend",
-        type: "success",
-        duration: 4000,
-      });
-    } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error al emitir Factura C";
-      const errorDetail = err?.response?.data?.details || "";
-
-      setEmitFacturaCResult({
-        ok: false,
-        message: errorMsg,
-        detail: errorDetail,
-      });
-
-      try {
-        await updateItemStatusInMonday(emitForm.itemId?.trim(), COMPROBANTE_STATUS_FLOW.error);
-        await createItemUpdateInMonday(
-          emitForm.itemId?.trim(),
-          `Error al emitir comprobante: ${errorMsg}${errorDetail ? `\nDetalle: ${errorDetail}` : ""}`
-        );
-      } catch (statusErr) {
-        console.error("No se pudo actualizar estado/nota de error en Monday:", statusErr);
-      }
-
-      monday.execute("notice", {
-        message: errorMsg,
-        type: "error",
-        duration: 5000,
-      });
-    } finally {
-      setIsEmittingFacturaC(false);
-    }
-  };
 
   const renderVisualSelect = (fieldId, placeholderText, scope = "board") => {
     const options = scope === "subitem" ? subitemColumns : columns;

@@ -13,7 +13,6 @@ require('dotenv').config();
 const afipAuthModule    = require('./modules/afipAuth');
 const afipPadron        = require('./modules/afipPadron');
 const invoiceRules      = require('./modules/invoiceRules');
-const pdfModule         = require('./modules/pdfInvoice');
 
 // Inicializar SDK de monday code para inyectar env vars y secrets en process.env
 try {
@@ -104,7 +103,13 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
         if (!mapping) {
             missing.push('mapeo_columnas');
         } else {
-            const requiredKeys = ['concepto', 'cantidad', 'precio_unitario', 'prod_serv'];
+            // Todas las columnas de la plantilla deben estar mapeadas (menos el nombre del item).
+            const requiredKeys = [
+                'fecha_emision', 'receptor_cuit', 'condicion_venta',
+                'fecha_servicio_desde', 'fecha_servicio_hasta', 'fecha_vto_pago',
+                'concepto', 'cantidad', 'precio_unitario', 'prod_serv',
+                'unidad_medida', 'alicuota_iva',
+            ];
             for (const k of requiredKeys) {
                 if (!mapping[k]) missing.push(`mapeo_columnas.${k}`);
             }
@@ -123,7 +128,11 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
         } else {
             if (!boardConfig.status_column_id) missing.push('board_config.status_column_id');
             const reqCols = boardConfig.required_columns_json || [];
-            const pendientes = reqCols.filter(c => c.status !== 'ok').map(c => c.key);
+            const pdfCol = reqCols.find(c => c?.key === 'invoice_pdf');
+            if (!pdfCol || !pdfCol.resolved_column_id) {
+                missing.push('board_config.invoice_pdf_column');
+            }
+            const pendientes = reqCols.filter(c => c.status && c.status !== 'ok').map(c => c.key);
             if (pendientes.length > 0) missing.push(`board_config.columnas_pendientes:${pendientes.join(',')}`);
         }
     }
@@ -140,13 +149,22 @@ function formatMissingConfigError(missing) {
         'datos_fiscales.punto_venta':       'Punto de venta',
         'certificados_afip':                'Certificados AFIP (.crt + .key)',
         'certificados_afip.expirados':      'Certificados AFIP vencidos',
-        'mapeo_columnas':                   'Mapeo visual de columnas del tablero',
-        'mapeo_columnas.concepto':          'Columna de concepto (subitem)',
-        'mapeo_columnas.cantidad':          'Columna de cantidad (subitem)',
-        'mapeo_columnas.precio_unitario':   'Columna de precio unitario (subitem)',
-        'mapeo_columnas.prod_serv':         'Columna de Prod/Serv (subitem)',
-        'board_config':                     'Configuración de automatización del tablero',
-        'board_config.status_column_id':    'Columna de estado del tablero',
+        'mapeo_columnas':                        'Mapeo visual de columnas del tablero',
+        'mapeo_columnas.fecha_emision':          'Columna Fecha de Emisión (item)',
+        'mapeo_columnas.receptor_cuit':          'Columna CUIT/DNI Receptor (item)',
+        'mapeo_columnas.condicion_venta':        'Columna Condición de Venta (item)',
+        'mapeo_columnas.fecha_servicio_desde':   'Columna Fecha Servicio Desde (item)',
+        'mapeo_columnas.fecha_servicio_hasta':   'Columna Fecha Servicio Hasta (item)',
+        'mapeo_columnas.fecha_vto_pago':         'Columna Fecha Vto. Pago (item)',
+        'mapeo_columnas.concepto':               'Columna Concepto / nombre (subitem)',
+        'mapeo_columnas.cantidad':               'Columna Cantidad (subitem)',
+        'mapeo_columnas.precio_unitario':        'Columna Precio Unitario (subitem)',
+        'mapeo_columnas.prod_serv':              'Columna Prod/Serv (subitem)',
+        'mapeo_columnas.unidad_medida':          'Columna Unidad de Medida (subitem)',
+        'mapeo_columnas.alicuota_iva':           'Columna Alícuota IVA % (subitem)',
+        'board_config':                          'Configuración de automatización del tablero',
+        'board_config.status_column_id':         'Columna de estado del tablero',
+        'board_config.invoice_pdf_column':       'Columna Comprobante PDF (tipo Archivo, item)',
     };
     const list = missing.map(k => {
         if (k.startsWith('board_config.columnas_pendientes:')) {
@@ -155,6 +173,83 @@ function formatMissingConfigError(missing) {
         return labels[k] || k;
     });
     return `Configuración incompleta. Falta: ${list.join(' · ')}`;
+}
+
+/**
+ * Valida que todas las celdas requeridas del item tengan valores válidos antes
+ * de llamar a AFIP. Se corre DESPUÉS de validateEmissionReadiness (que chequea
+ * que las columnas estén mapeadas en la config) y ANTES de la primera llamada
+ * externa. Si algo falla, tira un error con el detalle exacto de qué corregir.
+ */
+function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
+    const errors = [];
+    const VALID_ALICUOTAS = new Set(['0', '2.5', '5', '10.5', '21', '27']);
+    const VALID_PROD_SERV = new Set(['servicio', 'producto']);
+
+    const fechaEmision = getColumnTextById(mainColumns, mapping.fecha_emision);
+    if (!fechaEmision) errors.push('Item: falta "Fecha de Emisión"');
+
+    const condicionVenta = getColumnTextById(mainColumns, mapping.condicion_venta);
+    if (!condicionVenta) errors.push('Item: falta "Condición de Venta"');
+
+    if (!subitems || subitems.length === 0) {
+        errors.push('El item no tiene subitems (al menos uno es obligatorio)');
+        return { ok: false, errors };
+    }
+
+    let hayServicio = false;
+    subitems.forEach(sub => {
+        const name = sub.name || `#${sub.id}`;
+
+        if (!sub.name || !String(sub.name).trim()) {
+            errors.push(`Subitem "${name}": falta nombre (concepto)`);
+        }
+
+        const unidadMedida = getColumnTextById(sub.column_values, mapping.unidad_medida);
+        if (!unidadMedida) errors.push(`Subitem "${name}": falta "Unidad de Medida"`);
+
+        const cantNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.cantidad));
+        if (cantNum === null || cantNum <= 0) {
+            errors.push(`Subitem "${name}": "Cantidad" inválida (debe ser número > 0)`);
+        }
+
+        const precioNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.precio_unitario));
+        if (precioNum === null || precioNum <= 0) {
+            errors.push(`Subitem "${name}": "Precio Unitario" inválido (debe ser número > 0)`);
+        }
+
+        const prodServRaw = getColumnTextById(sub.column_values, mapping.prod_serv) || '';
+        const prodServ = prodServRaw.toLowerCase().trim();
+        if (!prodServ) {
+            errors.push(`Subitem "${name}": falta "Prod/Serv"`);
+        } else if (!VALID_PROD_SERV.has(prodServ)) {
+            errors.push(`Subitem "${name}": "Prod/Serv" debe ser "servicio" o "producto" (actual: "${prodServRaw}")`);
+        } else if (prodServ === 'servicio') {
+            hayServicio = true;
+        }
+
+        const alicuotaRaw = getColumnTextById(sub.column_values, mapping.alicuota_iva) || '';
+        const alicuotaNorm = String(alicuotaRaw).replace(/[^0-9.,]/g, '').replace(',', '.').trim();
+        if (!alicuotaNorm) {
+            errors.push(`Subitem "${name}": falta "Alícuota IVA %"`);
+        } else if (!VALID_ALICUOTAS.has(alicuotaNorm)) {
+            errors.push(`Subitem "${name}": "Alícuota IVA" inválida. Permitidas: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`);
+        }
+    });
+
+    if (hayServicio) {
+        if (!getColumnTextById(mainColumns, mapping.fecha_servicio_desde)) {
+            errors.push('Item: falta "Fecha Servicio Desde" (hay subitems de servicio)');
+        }
+        if (!getColumnTextById(mainColumns, mapping.fecha_servicio_hasta)) {
+            errors.push('Item: falta "Fecha Servicio Hasta" (hay subitems de servicio)');
+        }
+        if (!getColumnTextById(mainColumns, mapping.fecha_vto_pago)) {
+            errors.push('Item: falta "Fecha Vto. Pago" (hay subitems de servicio)');
+        }
+    }
+
+    return { ok: errors.length === 0, errors };
 }
 
 function isMissingTableError(err) {
@@ -375,46 +470,6 @@ function getAfipEndpoints() {
     };
 }
 
-function buildLoginTicketRequest(serviceName) {
-    const now = new Date();
-    const generationTime = new Date(now.getTime() - 60 * 1000).toISOString();
-    const expirationTime = new Date(now.getTime() + 10 * 60 * 1000).toISOString();
-    const uniqueId = Math.floor(now.getTime() / 1000);
-
-    return `<?xml version="1.0" encoding="UTF-8"?>\n<loginTicketRequest version="1.0">\n  <header>\n    <uniqueId>${uniqueId}</uniqueId>\n    <generationTime>${generationTime}</generationTime>\n    <expirationTime>${expirationTime}</expirationTime>\n  </header>\n  <service>${serviceName}</service>\n</loginTicketRequest>`;
-}
-
-function signTraCmsBase64(traXml, certPem, keyPem) {
-    const certificate = forge.pki.certificateFromPem(certPem);
-    const privateKey = forge.pki.privateKeyFromPem(keyPem);
-
-    const p7 = forge.pkcs7.createSignedData();
-    p7.content = forge.util.createBuffer(traXml, 'utf8');
-    p7.addCertificate(certificate);
-    p7.addSigner({
-        key: privateKey,
-        certificate,
-        digestAlgorithm: forge.pki.oids.sha256,
-        authenticatedAttributes: [
-            {
-                type: forge.pki.oids.contentType,
-                value: forge.pki.oids.data,
-            },
-            {
-                type: forge.pki.oids.messageDigest,
-            },
-            {
-                type: forge.pki.oids.signingTime,
-                value: new Date(),
-            },
-        ],
-    });
-    p7.sign({ detached: true });
-
-    const der = forge.asn1.toDer(p7.toAsn1()).getBytes();
-    return forge.util.encode64(der);
-}
-
 function xmlEscape(value) {
     return String(value)
         .replace(/&/g, '&amp;')
@@ -428,38 +483,6 @@ function extractXmlTag(xml, tagName) {
     const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
     const match = String(xml || '').match(regex);
     return match?.[1]?.trim() || '';
-}
-
-async function afipLoginCms(certPem, keyPem) {
-    const endpoints = getAfipEndpoints();
-    const tra = buildLoginTicketRequest('wsfe');
-    const cms = signTraCmsBase64(tra, certPem, keyPem);
-
-    const soapBody = `<?xml version="1.0" encoding="UTF-8"?>\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ar="http://wsaa.view.sua.dvadac.desein.afip.gov">\n  <soapenv:Header/>\n  <soapenv:Body>\n    <ar:loginCms>\n      <ar:in0>${cms}</ar:in0>\n    </ar:loginCms>\n  </soapenv:Body>\n</soapenv:Envelope>`;
-
-    const response = await fetch(endpoints.wsaa, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'text/xml; charset=utf-8',
-            SOAPAction: '',
-        },
-        body: soapBody,
-    });
-
-    const xml = await response.text();
-    if (!response.ok) {
-        throw new Error(`WSAA HTTP ${response.status}: ${xml.slice(0, 500)}`);
-    }
-
-    const loginCmsReturn = extractXmlTag(xml, 'loginCmsReturn');
-    const token = extractXmlTag(loginCmsReturn, 'token');
-    const sign = extractXmlTag(loginCmsReturn, 'sign');
-
-    if (!token || !sign) {
-        throw new Error(`WSAA sin token/sign válido: ${xml.slice(0, 500)}`);
-    }
-
-    return { token, sign };
 }
 
 async function afipGetLastVoucher({ token, sign, cuit, pointOfSale, cbteType }) {
@@ -600,16 +623,32 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-    const response = await fetch(endpoints.wsfe, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'text/xml; charset=utf-8',
-            SOAPAction: 'http://ar.gov.afip.dif.FEV1/FECAESolicitar',
-        },
-        body: soapBody,
-    });
+    async function callWsfe(attempt) {
+        try {
+            const resp = await fetch(endpoints.wsfe, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'text/xml; charset=utf-8',
+                    SOAPAction: 'http://ar.gov.afip.dif.FEV1/FECAESolicitar',
+                },
+                body: soapBody,
+                signal: AbortSignal.timeout(30000),
+            });
+            const txt = await resp.text();
+            return { resp, txt };
+        } catch (err) {
+            const cause = err.cause || {};
+            const causeInfo = [cause.code, cause.errno, cause.message].filter(Boolean).join(' | ');
+            console.warn(`[wsfe] FECAESolicitar attempt ${attempt} failed: ${err.message} | cause: ${causeInfo || 'n/a'}`);
+            if (attempt < 2) {
+                await new Promise(r => setTimeout(r, 2000));
+                return callWsfe(attempt + 1);
+            }
+            throw new Error(`WSFE FECAESolicitar falló tras 2 intentos: ${err.message}${causeInfo ? ` (${causeInfo})` : ''}`);
+        }
+    }
 
-    const xml = await response.text();
+    const { resp: response, txt: xml } = await callWsfe(1);
     if (!response.ok) {
         throw new Error(`FECAESolicitar HTTP ${response.status}: ${xml.slice(0, 500)}`);
     }
@@ -632,11 +671,6 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
     };
 }
 
-// Alias para compatibilidad con código existente
-async function afipIssueFacturaC({ token, sign, cuit, pointOfSale, draft }) {
-    return afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoiceType: 'C' });
-}
-
 function toNumberOrNull(value) {
     if (value === null || value === undefined || value === '') return null;
     const normalized = String(value).trim().replace(',', '.');
@@ -648,14 +682,6 @@ function getColumnTextById(columnValues, columnId) {
     if (!columnId) return '';
     const found = (columnValues || []).find((column) => column.id === columnId);
     return found?.text || '';
-}
-
-function sumLineTotals(lines) {
-    return lines.reduce((acc, line) => {
-        const quantity = toNumberOrNull(line.quantity) || 0;
-        const unitPrice = toNumberOrNull(line.unit_price) || 0;
-        return acc + (quantity * unitPrice);
-    }, 0);
 }
 
 async function ensureInvoiceEmissionsTable() {
@@ -985,13 +1011,13 @@ async function generateFacturaCPdfBuffer({ company, draft, afipResult, itemId })
             ey += 22;
             doc.fontSize(8).font('Helvetica');
             doc.font('Helvetica-Bold').text('Razón Social: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text(company.business_name || '');
+            doc.font('Helvetica').text((company.business_name || '').toUpperCase());
             ey += 12;
             doc.font('Helvetica-Bold').text('Domicilio Comercial: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text(company.address || '-');
+            doc.font('Helvetica').text((company.address || '-').toUpperCase());
             ey += 12;
             doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text(condicionLabel(draft.emisorCondicion || ''));
+            doc.font('Helvetica').text(condicionLabel(draft.emisorCondicion || '').toUpperCase());
 
             // Centro — caja con letra C
             const centerX = colLeft + leftW;
@@ -1050,17 +1076,17 @@ async function generateFacturaCPdfBuffer({ company, draft, afipResult, itemId })
             doc.font('Helvetica-Bold').text('CUIT: ', colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text(fmtCuit(draft.receptor_cuit_o_dni));
             doc.font('Helvetica-Bold').text('Apellido y Nombre / Razón Social: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text(draft.receptor_nombre || '-');
+            doc.font('Helvetica').text((draft.receptor_nombre || '-').toUpperCase());
             cy += 12;
             // Fila 2
             doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(condicionLabel(draft.receptorCondicion || ''));
+            doc.font('Helvetica').text(condicionLabel(draft.receptorCondicion || '').toUpperCase());
             doc.font('Helvetica-Bold').text('Domicilio: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text(draft.receptor_domicilio || '-');
+            doc.font('Helvetica').text((draft.receptor_domicilio || '-').toUpperCase());
             cy += 12;
             // Fila 3
             doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(draft.condicion_venta || 'Contado');
+            doc.font('Helvetica').text((draft.condicion_venta || 'Contado').toUpperCase());
             y += receptorH;
 
             // ── TABLA DE ITEMS ───────────────────────────────────
@@ -1430,9 +1456,14 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
             return res.status(404).json({ error: 'Empresa no encontrada' });
         }
 
+        // Match sólo por company + board. view_id / app_feature_id cambian cada
+        // vez que se publica una versión nueva de la app; incluirlos en el WHERE
+        // hacía que cada deploy insertara una fila nueva con config vacía.
         const updateResult = await db.query(
             `UPDATE board_automation_configs
-             SET status_column_id = $5,
+             SET status_column_id = $3,
+                 view_id = $4,
+                 app_feature_id = $5,
                  trigger_label = $6,
                  success_label = $7,
                  error_label = $8,
@@ -1440,15 +1471,13 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
                  updated_at = CURRENT_TIMESTAMP
              WHERE company_id = $1
                AND board_id = $2
-               AND COALESCE(view_id, '') = COALESCE($3, '')
-               AND COALESCE(app_feature_id, '') = COALESCE($4, '')
              RETURNING *`,
             [
                 company.id,
                 String(board_id),
+                String(status_column_id),
                 view_id || null,
                 app_feature_id || null,
-                String(status_column_id),
                 COMPROBANTE_STATUS_FLOW.trigger,
                 COMPROBANTE_STATUS_FLOW.success,
                 COMPROBANTE_STATUS_FLOW.error,
@@ -1806,22 +1835,31 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
         const crtContent = files['crt'][0].buffer.toString('utf8');
         const keyContent = files['key'][0].buffer.toString('utf8');
 
+        // Extraer la fecha de vencimiento real desde el certificado
+        let expirationDate;
+        try {
+            const cert = forge.pki.certificateFromPem(crtContent);
+            expirationDate = cert.validity.notAfter;
+        } catch (parseErr) {
+            return res.status(400).json({
+                error: 'El archivo .crt no es un certificado X.509 válido',
+                details: parseErr.message,
+            });
+        }
+
         // Encriptamos la clave privada
         const encryptedKey = CryptoJS.AES.encrypt(keyContent, process.env.ENCRYPTION_KEY).toString();
 
         const query = `
             INSERT INTO afip_credentials (company_id, crt_file_url, encrypted_private_key, expiration_date)
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT (company_id) 
-            DO UPDATE SET 
+            ON CONFLICT (company_id)
+            DO UPDATE SET
                 crt_file_url = EXCLUDED.crt_file_url,
                 encrypted_private_key = EXCLUDED.encrypted_private_key,
                 expiration_date = EXCLUDED.expiration_date
             RETURNING *;
         `;
-        
-        const expirationDate = new Date();
-        expirationDate.setFullYear(expirationDate.getFullYear() + 1);
 
         // Guardamos el CONTENIDO del CRT directamente en el campo que antes era para la URL
         await db.query(query, [companyId, crtContent, encryptedKey, expirationDate]);
@@ -1837,268 +1875,6 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
     }
 });
 
-app.post('/api/invoices/emit-c', requireMondaySession, async (req, res) => {
-    const {
-        monday_account_id,
-        board_id,
-        item_id,
-        item_snapshot,
-        issue_in_afip
-    } = req.body;
-
-    const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
-    const boardId = String(board_id || '').trim();
-    const itemId = String(item_id || '').trim();
-
-    if (!accountId || !boardId || !itemId) {
-        return res.status(400).json({ error: 'monday_account_id, board_id e item_id son obligatorios' });
-    }
-
-    if (!item_snapshot || !Array.isArray(item_snapshot.main_columns) || !Array.isArray(item_snapshot.subitems)) {
-        return res.status(400).json({
-            error: 'Falta item_snapshot con columnas de item y subitems para procesar Factura C'
-        });
-    }
-
-    if (!ensureAccountMatch(req, res, accountId)) return;
-
-    try {
-        const company = await getCompanyByMondayAccountId(accountId);
-        if (!company) {
-            return res.status(404).json({ error: 'Empresa no encontrada para la cuenta monday' });
-        }
-
-        await ensureInvoiceEmissionsTable();
-
-        const existingEmission = await db.query(
-            `SELECT id, status, afip_result_json, pdf_base64, updated_at
-             FROM invoice_emissions
-             WHERE company_id = $1
-               AND board_id = $2
-               AND item_id = $3
-               AND invoice_type = 'C'
-             LIMIT 1`,
-            [company.id, boardId, itemId]
-        );
-
-        if (existingEmission.rows.length > 0 && existingEmission.rows[0].status === 'success') {
-            return res.status(409).json({
-                error: 'Este item ya fue emitido como Factura C',
-                emission: existingEmission.rows[0],
-            });
-        }
-
-        await db.query(
-            `INSERT INTO invoice_emissions (company_id, board_id, item_id, invoice_type, status, request_json)
-             VALUES ($1, $2, $3, 'C', 'processing', $4)
-             ON CONFLICT (company_id, board_id, item_id, invoice_type)
-             DO UPDATE SET
-               status = 'processing',
-               request_json = EXCLUDED.request_json,
-               error_message = NULL,
-               updated_at = CURRENT_TIMESTAMP`,
-            [company.id, boardId, itemId, JSON.stringify(req.body || {})]
-        );
-
-        const certResult = await db.query(
-            'SELECT id, crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id = $1 LIMIT 1',
-            [company.id]
-        );
-        if (certResult.rows.length === 0) {
-            return res.status(400).json({ error: 'Faltan certificados AFIP para emitir comprobante' });
-        }
-
-        const mappingResult = await db.query(
-            `SELECT mapping_json
-             FROM visual_mappings
-             WHERE company_id = $1
-               AND board_id = $2
-             ORDER BY updated_at DESC
-             LIMIT 1`,
-            [company.id, boardId]
-        );
-
-        if (mappingResult.rows.length === 0 || !mappingResult.rows[0].mapping_json) {
-            return res.status(400).json({ error: 'Falta mapeo visual guardado para este tablero' });
-        }
-
-        const mapping = mappingResult.rows[0].mapping_json;
-
-        const mainColumns = item_snapshot.main_columns || [];
-        const subitems = item_snapshot.subitems || [];
-
-        const fechaEmisionRaw = getColumnTextById(mainColumns, mapping.fecha_emision);
-        const receptorCuit = getColumnTextById(mainColumns, mapping.receptor_cuit) || null;
-
-        const rawLines = subitems.map((subitem) => ({
-            subitem_id: Number(subitem.id || 0),
-            concept: getColumnTextById(subitem.column_values, mapping.concepto) || subitem.name || '',
-            quantity: getColumnTextById(subitem.column_values, mapping.cantidad),
-            unit_price: getColumnTextById(subitem.column_values, mapping.precio_unitario),
-        }));
-
-        const validLines = rawLines.filter((line) => (
-            line.concept &&
-            toNumberOrNull(line.quantity) !== null &&
-            toNumberOrNull(line.unit_price) !== null
-        ));
-
-        if (validLines.length === 0) {
-            return res.status(400).json({ error: 'No hay subitems válidos para emitir Factura C' });
-        }
-
-        const totalAmount = sumLineTotals(validLines);
-
-        const facturaCDraft = {
-            tipo_comprobante: 'C',
-            cuit_emisor: company.cuit,
-            punto_venta: company.default_point_of_sale,
-            fecha_emision: fechaEmisionRaw || new Date().toISOString().slice(0, 10),
-            receptor_cuit_o_dni: receptorCuit,
-            importe_total: Number(totalAmount.toFixed(2)),
-            lineas: validLines.map((line) => {
-                const quantity = toNumberOrNull(line.quantity) || 0;
-                const unitPrice = toNumberOrNull(line.unit_price) || 0;
-                return {
-                    descripcion: line.concept,
-                    cantidad: Number(quantity.toFixed(2)),
-                    precio_unitario: Number(unitPrice.toFixed(2)),
-                    subtotal: Number((quantity * unitPrice).toFixed(2)),
-                };
-            }),
-        };
-
-        let afipResult = null;
-        let pdfBase64 = null;
-        let pdfBuffer = null;
-        let mondayUpload = null;
-        const shouldIssueInAfip = issue_in_afip !== false;
-        if (shouldIssueInAfip) {
-            const certRow = certResult.rows[0];
-            const certPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
-            const decryptedPrivateKey = CryptoJS.AES.decrypt(
-                certRow.encrypted_private_key,
-                process.env.ENCRYPTION_KEY
-            ).toString(CryptoJS.enc.Utf8);
-            const keyPem = normalizePem(decryptedPrivateKey, 'PRIVATE KEY');
-
-            if (!certPem || !keyPem) {
-                throw new Error('No se pudieron leer certificados para autenticación AFIP');
-            }
-
-            const { token, sign } = await afipLoginCms(certPem, keyPem);
-            afipResult = await afipIssueFacturaC({
-                token,
-                sign,
-                cuit: company.cuit,
-                pointOfSale: company.default_point_of_sale,
-                draft: facturaCDraft,
-            });
-
-            if (afipResult?.cae) {
-                pdfBuffer = await generateFacturaCPdfBuffer({
-                    company,
-                    draft: facturaCDraft,
-                    afipResult,
-                    itemId,
-                });
-                pdfBase64 = pdfBuffer.toString('base64');
-            }
-        }
-
-        if (pdfBuffer) {
-            const mondayUserToken = await getStoredMondayUserApiToken({
-                mondayAccountId: accountId,
-            });
-            const invoicePdfColumnId = await getInvoicePdfColumnId({
-                companyId: company.id,
-                boardId,
-            });
-
-            if (mondayUserToken && invoicePdfColumnId) {
-                try {
-                    mondayUpload = await uploadPdfToMondayFileColumn({
-                        apiToken: mondayUserToken,
-                        itemId,
-                        fileColumnId: invoicePdfColumnId,
-                        pdfBuffer,
-                        filename: `Factura-C-${itemId}.pdf`,
-                    });
-                } catch (uploadErr) {
-                    mondayUpload = {
-                        uploaded: false,
-                        reason: 'upload_failed',
-                        details: uploadErr.message,
-                    };
-                }
-            } else {
-                mondayUpload = {
-                    uploaded: false,
-                    reason: !mondayUserToken ? 'missing_user_api_token' : 'missing_invoice_pdf_column',
-                };
-            }
-        }
-
-        await db.query(
-            `UPDATE invoice_emissions
-             SET status = $5,
-                 draft_json = $6,
-                 afip_result_json = $7,
-                 pdf_base64 = $8,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE company_id = $1
-               AND board_id = $2
-               AND item_id = $3
-               AND invoice_type = 'C'`,
-            [
-                company.id,
-                boardId,
-                itemId,
-                afipResult?.cae ? 'success' : 'prepared',
-                JSON.stringify(facturaCDraft),
-                JSON.stringify(afipResult || null),
-                pdfBase64,
-            ]
-        );
-
-        return res.status(202).json({
-            message: afipResult ? 'Factura C emitida en AFIP desde backend' : 'Factura C preparada en backend',
-            item_id: Number(itemId),
-            board_id: Number(boardId),
-            draft: facturaCDraft,
-            status_flow: COMPROBANTE_STATUS_FLOW,
-            afip_result: afipResult,
-            pdf_base64: pdfBase64,
-            monday_upload: mondayUpload,
-        });
-    } catch (err) {
-        console.error('❌ Error al preparar Factura C en backend:', err);
-        try {
-            const company = await getCompanyByMondayAccountId(accountId);
-            if (company) {
-                await ensureInvoiceEmissionsTable();
-                await db.query(
-                    `UPDATE invoice_emissions
-                     SET status = 'error',
-                         error_message = $4,
-                         updated_at = CURRENT_TIMESTAMP
-                     WHERE company_id = $1
-                       AND board_id = $2
-                       AND item_id = $3
-                       AND invoice_type = 'C'`,
-                    [company.id, boardId, itemId, err.message]
-                );
-            }
-        } catch (persistErr) {
-            console.error('❌ Error guardando estado de error en invoice_emissions:', persistErr);
-        }
-
-        return res.status(500).json({
-            error: 'Error al preparar Factura C',
-            details: err.message,
-        });
-    }
-});
 
 // ─── Custom Trigger: subscribe / unsubscribe / webhook ───────────────────────
 // Cuando Monday activa una receta con nuestro custom trigger, llama a subscribe.
@@ -2491,12 +2267,26 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             if (!boardId) boardId = itemData.boardId;
             if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
 
-            // ── 2b. Pre-flight: bloquear si falta configuración ────────────────
+            // ── 2b. Pre-flight 1: bloquear si falta configuración ──────────────
             console.log(`[emit] Emitiendo factura para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
             const readiness = await validateEmissionReadiness({ mondayAccountId: accountId, boardId });
             if (!readiness.ready) {
                 console.warn(`[emit] Pre-flight falló:`, readiness.missing);
                 throw new Error(formatMissingConfigError(readiness.missing));
+            }
+
+            // ── 2b-bis. Pre-flight 2: bloquear si faltan valores en celdas ─────
+            const dataCheck = validateItemDataCompleteness({
+                mainColumns,
+                subitems,
+                mapping: readiness.mapping,
+            });
+            if (!dataCheck.ok) {
+                console.warn(`[emit] Validación de datos falló:`, dataCheck.errors);
+                throw new Error(
+                    'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
+                    dataCheck.errors.map(e => `• ${e}`).join('\n')
+                );
             }
 
             // ── 2c. Cambiar status a "Creando Comprobante" ────────────────────
@@ -2660,11 +2450,12 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 const faltanFechas = [];
                 if (!fechaServDesdeRaw) faltanFechas.push('Fecha Servicio Desde');
                 if (!fechaServHastaRaw) faltanFechas.push('Fecha Servicio Hasta');
+                if (!fechaVtoPagoRaw)   faltanFechas.push('Fecha Vto. Pago');
                 if (faltanFechas.length > 0) {
                     throw new Error(
-                        `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(' y ')}.\n` +
+                        `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(', ')}.\n` +
                         `Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: ${conceptoAfip === 2 ? 'Servicios' : 'Productos y Servicios'}), ` +
-                        `AFIP exige las fechas del período facturado.`
+                        `AFIP exige las fechas del período facturado y el vencimiento de pago.`
                     );
                 }
             }
@@ -2717,6 +2508,16 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 );
             }
             console.log(`[emit] Alícuota IVA: ${alicuotaElegida}% (Id AFIP: ${alicuotaConfig.id}, Tasa: ${alicuotaConfig.rate})`);
+
+            // Factura C no lleva IVA: si el usuario configuró una alícuota distinta de 0%, es un error de carga.
+            if (tipo === 'C' && alicuotaElegida !== '0') {
+                throw new Error(
+                    `Alícuota IVA incompatible con Factura C.\n` +
+                    `Configuraste ${alicuotaElegida}% pero las Facturas C no llevan IVA ` +
+                    `(emisor ${emisorInfo.condicion}).\n` +
+                    `Cambiá la alícuota de los subítems a 0% antes de emitir.`
+                );
+            }
 
             const lineas = validLines.map(l => ({
                 concept:       l.concept,
@@ -2816,11 +2617,12 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                     console.log('[emit] invoicePdfColumnId:', invoicePdfColumnId);
                     if (invoicePdfColumnId) {
                         console.log('[emit] Subiendo PDF a Monday…');
+                        const nroCompPadded = String(afipResult?.numero_comprobante || '').padStart(8, '0');
                         mondayUpload = await uploadPdfToMondayFileColumn({
                             apiToken: mondayToken, itemId,
                             fileColumnId: invoicePdfColumnId,
                             pdfBuffer,
-                            filename: `Factura-${tipo}-${String(company.cuit)}-${itemId}.pdf`,
+                            filename: `Factura_${tipo}_Nro_${nroCompPadded}.pdf`,
                         });
                         console.log('[emit] PDF subido:', JSON.stringify(mondayUpload).slice(0, 300));
                     } else {

@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "copy-frontend": "node -e \"const fs=require('fs');const path=require('path');const src=path.join(__dirname,'..','frontend-repo','dist');const dst=path.join(__dirname,'public');function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cp(sp,dp):fs.copyFileSync(sp,dp)}}if(fs.existsSync(src)){cp(src,dst);console.log('Frontend copied to public/')}else{console.log('No dist found, skipping')}\""
+    "copy-frontend": "node -e \"const fs=require('fs');const path=require('path');const src=path.join(__dirname,'..','frontend-repo','dist');const dst=path.join(__dirname,'public');if(fs.existsSync(dst))fs.rmSync(dst,{recursive:true,force:true});function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cp(sp,dp):fs.copyFileSync(sp,dp)}}if(fs.existsSync(src)){cp(src,dst);console.log('Frontend copied to public/')}else{console.log('No dist found, skipping')}\""
   },
   "dependencies": {
     "@mondaycom/apps-sdk": "^3.3.2",
@@ -19,7 +19,6 @@
     "multer": "^2.1.1",
     "node-forge": "^1.4.0",
     "pdfkit": "^0.18.0",
-    "pdfmake": "^0.3.7",
     "pg": "^8.13.3"
   },
   "devDependencies": {

@@ -223,8 +223,12 @@ function parseCondicionFiscal(xml) {
 
 /** Extrae domicilio fiscal del XML de getPersona_v2 */
 function parseDomicilio(xml) {
-    // Buscar bloque <domicilio> con tipoDomicilio=FISCAL (o el primero que haya)
-    const domBlocks = xml.match(/<domicilio>([\s\S]*?)<\/domicilio>/gi) || [];
+    // El padrón devuelve el domicilio en <domicilioFiscal> (v2 actual).
+    // Mantenemos <domicilio> como fallback por compatibilidad.
+    const domBlocks = [
+        ...(xml.match(/<domicilioFiscal>([\s\S]*?)<\/domicilioFiscal>/gi) || []),
+        ...(xml.match(/<domicilio>([\s\S]*?)<\/domicilio>/gi) || []),
+    ];
     let fiscal = null;
     let primero = null;
     for (const block of domBlocks) {
@@ -232,7 +236,7 @@ function parseDomicilio(xml) {
         const dir  = xmlTag(block, 'direccion') || '';
         const loc  = xmlTag(block, 'localidad') || '';
         const prov = xmlTag(block, 'descripcionProvincia') || xmlTag(block, 'idProvincia') || '';
-        const full = [dir, loc, prov].filter(Boolean).join(', ');
+        const full = [dir, loc, prov].filter(Boolean).join(', ').toUpperCase();
         if (!primero && full) primero = full;
         if (tipo === 'FISCAL AFIP' || tipo === 'FISCAL' || tipo.includes('FISCAL')) {
             fiscal = full;

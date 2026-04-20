@@ -34,7 +34,7 @@ El flujo actual es: el backend sirve los archivos estaticos del frontend desde [
   - `afipAuth.js` — WSAA (token/sign).
   - `afipPadron.js` — consulta de padron.
   - `invoiceRules.js` — reglas de comprobantes.
-  - `pdfInvoice.js`, `pdfco.js` — generacion de PDF.
+- Generacion de PDF con `pdfkit` (inline en [backend-repo/src/server.js](backend-repo/src/server.js), funcion `generateFacturaCPdfBuffer`).
 - Sirve el frontend estatico desde `public/`.
 
 ## Endpoints principales

@@ -134,16 +134,34 @@ async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false
   </soapenv:Body>
 </soapenv:Envelope>`;
 
-    const response = await fetch(config.endpoints.wsaa, {
-        method:  'POST',
-        headers: {
-            'Content-Type': 'text/xml; charset=utf-8',
-            SOAPAction:     'http://wsaa.view.sua.dvadac.desein.afip.gov/loginCms',
-        },
-        body: soapBody,
-    });
+    // WSAA a veces tira "fetch failed" transitorios (ECONNRESET / socket closed).
+    // Hacemos hasta 2 intentos con 2s de espera y log de la causa real.
+    async function callWsaa(attempt) {
+        try {
+            const resp = await fetch(config.endpoints.wsaa, {
+                method:  'POST',
+                headers: {
+                    'Content-Type': 'text/xml; charset=utf-8',
+                    SOAPAction:     'http://wsaa.view.sua.dvadac.desein.afip.gov/loginCms',
+                },
+                body: soapBody,
+                signal: AbortSignal.timeout(30000),
+            });
+            const txt = await resp.text();
+            return { resp, txt };
+        } catch (err) {
+            const cause = err.cause || {};
+            const causeInfo = [cause.code, cause.errno, cause.message].filter(Boolean).join(' | ');
+            console.warn(`[wsaa] fetch attempt ${attempt} failed: ${err.message} | cause: ${causeInfo || 'n/a'} | endpoint: ${config.endpoints.wsaa}`);
+            if (attempt < 2) {
+                await new Promise(r => setTimeout(r, 2000));
+                return callWsaa(attempt + 1);
+            }
+            throw new Error(`WSAA fetch falló tras 2 intentos: ${err.message}${causeInfo ? ` (${causeInfo})` : ''}`);
+        }
+    }
 
-    const xmlText = await response.text();
+    const { resp: response, txt: xmlText } = await callWsaa(1);
     if (!response.ok) {
         // Extraer faultstring o mensaje del SOAP fault, que es lo que realmente explica el error
         const faultMatch = xmlText.match(/<faultstring[^>]*>([\s\S]*?)<\/faultstring>/i);

@@ -7,9 +7,8 @@
  *   AFIP_ENV=homologation|production
  *   ENCRYPTION_KEY=...
  *   MONDAY_CLIENT_SECRET=...
- *   PDF_CO_API_KEY=martinmeliendrez@gmail.com_ZXHPiUXxPU0bsG0MaiU8yAOgSOH88OtIOuMMpxB7d8p3K9cXHRxIq4p7Nz9jLchS
- *   PADRON_CUIT=20327446348       ← CUIT habilitado para consultar el padrón (Martín)
- *   PADRON_COMPANY_ID=...         ← ID en tabla companies de la cuenta de Martín
+ *   PADRON_CUIT=...              ← CUIT habilitado para consultar el padrón
+ *   PADRON_COMPANY_ID=...        ← ID en tabla companies de la cuenta del padrón
  */
 
 'use strict';
