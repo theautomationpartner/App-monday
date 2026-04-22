@@ -4,7 +4,6 @@ const multer = require('multer');
 const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 const forge = require('node-forge');
-const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 const FormDataNode = require('form-data');
 const db = require('./db');
@@ -811,107 +810,6 @@ async function ensureTriggerSubscriptionsTable() {
     );
 }
 
-// ─── Certificados AFIP: columnas nuevas para el flujo guiado ────────────────
-// La tabla afip_credentials ya existe. Este ensure es idempotente: agrega solo
-// las columnas que faltan (status/alias/csr_pem/updated_at) para soportar el
-// flujo de "generar CSR, subir solo CRT después".
-async function ensureAfipCredentialsColumns() {
-    await db.query(`
-        ALTER TABLE afip_credentials
-            ADD COLUMN IF NOT EXISTS status VARCHAR(20) NOT NULL DEFAULT 'active',
-            ADD COLUMN IF NOT EXISTS alias VARCHAR(100),
-            ADD COLUMN IF NOT EXISTS csr_pem TEXT,
-            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-    `);
-
-    // Para el flujo nuevo: cuando hay un CSR pendiente, crt_file_url y
-    // expiration_date quedan NULL. Aseguramos que sean nullable.
-    await db.query(`
-        ALTER TABLE afip_credentials
-            ALTER COLUMN crt_file_url DROP NOT NULL,
-            ALTER COLUMN expiration_date DROP NOT NULL
-    `).catch(() => { /* ya eran nullable */ });
-}
-
-// ─── Helpers de certificados ────────────────────────────────────────────────
-/**
- * Valida que una clave privada y un certificado sean pareja (misma clave pública).
- * Tira Error con mensaje claro si el CRT es inválido o no matchea la KEY.
- */
-function assertKeyMatchesCrt(crtPem, keyPem) {
-    let cert, priv;
-    try {
-        cert = forge.pki.certificateFromPem(crtPem);
-    } catch (err) {
-        const e = new Error('El archivo .crt no es un certificado X.509 válido');
-        e.code = 'INVALID_CRT';
-        throw e;
-    }
-    try {
-        priv = forge.pki.privateKeyFromPem(keyPem);
-    } catch (err) {
-        const e = new Error('El archivo .key no es una clave privada válida');
-        e.code = 'INVALID_KEY';
-        throw e;
-    }
-    // Para claves RSA, el par matchea si (n, e) son iguales entre public y private.
-    const matches =
-        cert.publicKey?.n && priv?.n &&
-        cert.publicKey.n.equals(priv.n) &&
-        cert.publicKey.e.equals(priv.e);
-    if (!matches) {
-        const e = new Error('El certificado y la clave privada no coinciden (no son pareja)');
-        e.code = 'KEY_CRT_MISMATCH';
-        throw e;
-    }
-    return { cert, priv };
-}
-
-/** Genera un par RSA 2048 de forma async (usa el thread pool de libuv). */
-function generateRsaKeyPairAsync() {
-    return new Promise((resolve, reject) => {
-        crypto.generateKeyPair('rsa', {
-            modulusLength: 2048,
-            publicKeyEncoding:  { type: 'spki',  format: 'pem' },
-            privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
-        }, (err, publicKey, privateKey) => {
-            if (err) reject(err);
-            else resolve({ publicKey, privateKey });
-        });
-    });
-}
-
-/**
- * Genera un CSR (PKCS#10) firmado con SHA-256 listo para subir a ARCA.
- * Subject del CSR: CN=<alias>, O=<razón social>, serialNumber="CUIT XX-XXXXXXXX-X".
- * El serialNumber con el CUIT formateado es lo que valida ARCA en el alta del alias.
- */
-async function generateCsrAndKey({ alias, cuit, businessName }) {
-    const { publicKey: pubPem, privateKey: keyPem } = await generateRsaKeyPairAsync();
-
-    const pubKeyForge  = forge.pki.publicKeyFromPem(pubPem);
-    const privKeyForge = forge.pki.privateKeyFromPem(keyPem);
-
-    const cuitDigits = String(cuit || '').replace(/\D/g, '');
-    const cuitSerial = cuitDigits.length === 11
-        ? `CUIT ${cuitDigits.slice(0, 2)}-${cuitDigits.slice(2, 10)}-${cuitDigits.slice(10)}`
-        : `CUIT ${cuitDigits}`;
-
-    const csr = forge.pki.createCertificationRequest();
-    csr.publicKey = pubKeyForge;
-    csr.setSubject([
-        { name: 'commonName',       value: String(alias || '').trim() },
-        { name: 'organizationName', value: String(businessName || '').trim() },
-        { name: 'serialNumber',     value: cuitSerial }
-    ]);
-    csr.sign(privKeyForge, forge.md.sha256.create());
-
-    return {
-        csrPem: forge.pki.certificationRequestToPem(csr),
-        keyPem
-    };
-}
-
 async function getStoredMondayUserApiToken({ mondayAccountId }) {
     if (!mondayAccountId) return null;
 
@@ -1063,7 +961,6 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
             return res.json({
                 hasFiscalData: false,
                 hasCertificates: false,
-                certificateStatus: 'no_cert',
                 fiscalData: null,
                 certificates: null,
                 visualMapping: null,
@@ -1077,19 +974,10 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
             });
         }
 
-        await ensureAfipCredentialsColumns();
         const certResult = await db.query(
-            `SELECT expiration_date, status, alias, updated_at,
-                    (csr_pem IS NOT NULL) AS has_csr
-             FROM afip_credentials
-             WHERE company_id = $1
-             LIMIT 1`,
+            'SELECT expiration_date FROM afip_credentials WHERE company_id = $1 LIMIT 1',
             [company.id]
         );
-        const certRow = certResult.rows[0] || null;
-        const certificateStatus = certRow
-            ? (certRow.status === 'pending_crt' ? 'pending_crt' : 'active')
-            : 'no_cert';
 
         let visualMapping = null;
         if (board_id) {
@@ -1148,8 +1036,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
 
         res.json({
             hasFiscalData: true,
-            hasCertificates: certificateStatus === 'active',
-            certificateStatus, // 'no_cert' | 'pending_crt' | 'active'
+            hasCertificates: certResult.rows.length > 0,
             fiscalData: {
                 business_name: company.business_name || '',
                 cuit: company.cuit || '',
@@ -1157,15 +1044,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                 domicilio: company.address || '',
                 fecha_inicio: company.start_date || ''
             },
-            certificates: certRow
-                ? {
-                    expiration_date: certRow.expiration_date,
-                    status: certRow.status,
-                    alias: certRow.alias,
-                    updated_at: certRow.updated_at,
-                    has_csr: certRow.has_csr
-                  }
-                : null,
+            certificates: certResult.rows[0] || null,
             visualMapping,
             boardConfig,
             identifiers: {
@@ -1646,10 +1525,6 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
     }
 });
 
-// ─── Flujo manual: el usuario ya tiene su .crt y .key ───────────────────────
-// El usuario sube ambos archivos. Se valida que sean pareja (misma clave
-// pública) antes de guardarlos, así evitamos el caso clásico de "subir un crt
-// nuevo pero pegarle la key vieja" que recién explota al emitir la factura.
 app.post('/api/certificates', requireMondaySession, upload.fields([
     { name: 'crt', maxCount: 1 },
     { name: 'key', maxCount: 1 }
@@ -1670,242 +1545,52 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
     }
 
     try {
-        await ensureAfipCredentialsColumns();
-
         const companyRes = await db.query('SELECT id FROM companies WHERE monday_account_id = $1', [accountId]);
         if (companyRes.rows.length === 0) return res.status(404).json({ error: 'Empresa no encontrada' });
-
+        
         const companyId = companyRes.rows[0].id;
 
+        // Leemos el contenido desde la MEMORIA
         const crtContent = files['crt'][0].buffer.toString('utf8');
         const keyContent = files['key'][0].buffer.toString('utf8');
 
-        // Validamos que crt y key sean pareja y que el crt sea X.509 válido.
-        let cert;
+        // Extraer la fecha de vencimiento real desde el certificado
+        let expirationDate;
         try {
-            ({ cert } = assertKeyMatchesCrt(crtContent, keyContent));
-        } catch (validationErr) {
+            const cert = forge.pki.certificateFromPem(crtContent);
+            expirationDate = cert.validity.notAfter;
+        } catch (parseErr) {
             return res.status(400).json({
-                error: validationErr.message,
-                code: validationErr.code || 'VALIDATION_FAILED'
+                error: 'El archivo .crt no es un certificado X.509 válido',
+                details: parseErr.message,
             });
         }
 
-        const expirationDate = cert.validity.notAfter;
-        if (expirationDate && expirationDate < new Date()) {
-            return res.status(400).json({
-                error: `El certificado ya venció el ${expirationDate.toLocaleDateString('es-AR')}. Generá uno nuevo en ARCA.`,
-                code: 'CRT_EXPIRED'
-            });
-        }
-
+        // Encriptamos la clave privada
         const encryptedKey = CryptoJS.AES.encrypt(keyContent, process.env.ENCRYPTION_KEY).toString();
 
-        // Al subir manual, marcamos como 'active' y borramos cualquier CSR/alias
-        // que hubiera quedado de un flujo guiado interrumpido.
-        await db.query(`
-            INSERT INTO afip_credentials (company_id, crt_file_url, encrypted_private_key, expiration_date, status, alias, csr_pem, updated_at)
-            VALUES ($1, $2, $3, $4, 'active', NULL, NULL, NOW())
-            ON CONFLICT (company_id) DO UPDATE SET
+        const query = `
+            INSERT INTO afip_credentials (company_id, crt_file_url, encrypted_private_key, expiration_date)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (company_id)
+            DO UPDATE SET
                 crt_file_url = EXCLUDED.crt_file_url,
                 encrypted_private_key = EXCLUDED.encrypted_private_key,
-                expiration_date = EXCLUDED.expiration_date,
-                status = 'active',
-                alias = NULL,
-                csr_pem = NULL,
-                updated_at = NOW()
-        `, [companyId, crtContent, encryptedKey, expirationDate]);
+                expiration_date = EXCLUDED.expiration_date
+            RETURNING *;
+        `;
 
-        res.json({
-            message: 'Certificados guardados correctamente',
-            expirationDate: expirationDate?.toISOString() || null
-        });
+        // Guardamos el CONTENIDO del CRT directamente en el campo que antes era para la URL
+        await db.query(query, [companyId, crtContent, encryptedKey, expirationDate]);
+
+        res.json({ message: 'Certificados guardados en DB y clave encriptada correctamente' });
     } catch (err) {
         console.error("❌ Error al procesar certificados:", err);
-        res.status(500).json({
+        res.status(500).json({ 
             error: 'Error al procesar certificados',
             details: err.message,
             code: err.code
         });
-    }
-});
-
-// ─── Flujo guiado paso 1: generar CSR (y guardar key cifrada) ───────────────
-// Genera un par RSA 2048 en el servidor, guarda la private key cifrada con AES
-// en afip_credentials y devuelve el CSR al frontend para que el usuario lo
-// descargue y lo suba al portal de ARCA. Status queda en 'pending_crt' hasta
-// que el usuario vuelva con el .crt.
-app.post('/api/certificates/csr/generate', requireMondaySession, async (req, res) => {
-    const { monday_account_id, alias } = req.body || {};
-    const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
-
-    if (!accountId) {
-        return res.status(400).json({ error: 'monday_account_id es obligatorio' });
-    }
-    if (!ensureAccountMatch(req, res, accountId)) return;
-
-    try {
-        await ensureAfipCredentialsColumns();
-
-        const company = await getCompanyByMondayAccountId(accountId);
-        if (!company) {
-            return res.status(400).json({
-                error: 'Primero cargá los datos fiscales de tu empresa',
-                code: 'MISSING_FISCAL_DATA'
-            });
-        }
-        if (!company.cuit || !company.business_name) {
-            return res.status(400).json({
-                error: 'Faltan datos fiscales obligatorios (CUIT o razón social)',
-                code: 'MISSING_FISCAL_DATA'
-            });
-        }
-
-        const finalAlias = (alias && String(alias).trim()) || 'monday-facturacion';
-
-        const { csrPem, keyPem } = await generateCsrAndKey({
-            alias: finalAlias,
-            cuit: company.cuit,
-            businessName: company.business_name
-        });
-
-        const encryptedKey = CryptoJS.AES.encrypt(keyPem, process.env.ENCRYPTION_KEY).toString();
-
-        await db.query(`
-            INSERT INTO afip_credentials (company_id, encrypted_private_key, csr_pem, alias, status, crt_file_url, expiration_date, updated_at)
-            VALUES ($1, $2, $3, $4, 'pending_crt', NULL, NULL, NOW())
-            ON CONFLICT (company_id) DO UPDATE SET
-                encrypted_private_key = EXCLUDED.encrypted_private_key,
-                csr_pem = EXCLUDED.csr_pem,
-                alias = EXCLUDED.alias,
-                status = 'pending_crt',
-                crt_file_url = NULL,
-                expiration_date = NULL,
-                updated_at = NOW()
-        `, [company.id, encryptedKey, csrPem, finalAlias]);
-
-        res.json({
-            csrPem,
-            alias: finalAlias,
-            message: 'Solicitud generada correctamente'
-        });
-    } catch (err) {
-        console.error('❌ [csr/generate] error:', err);
-        res.status(500).json({
-            error: 'Error generando la solicitud (CSR)',
-            details: err.message
-        });
-    }
-});
-
-// ─── Flujo guiado: re-descargar CSR pendiente ───────────────────────────────
-// Para el caso en que el usuario generó el CSR, cerró la ventana y volvió
-// después. Devuelve el CSR guardado como archivo descargable.
-app.get('/api/certificates/csr/download', requireMondaySession, async (req, res) => {
-    const accountId = String(req.query.monday_account_id || req.mondayIdentity.accountId || '');
-    if (!accountId) return res.status(400).json({ error: 'monday_account_id es obligatorio' });
-    if (!ensureAccountMatch(req, res, accountId)) return;
-
-    try {
-        await ensureAfipCredentialsColumns();
-
-        const company = await getCompanyByMondayAccountId(accountId);
-        if (!company) return res.status(404).json({ error: 'Empresa no encontrada' });
-
-        const result = await db.query(
-            `SELECT csr_pem, alias, status FROM afip_credentials WHERE company_id = $1 LIMIT 1`,
-            [company.id]
-        );
-        const row = result.rows[0];
-        if (!row || !row.csr_pem) {
-            return res.status(404).json({ error: 'No hay una solicitud (CSR) pendiente para esta cuenta' });
-        }
-
-        const aliasSafe = String(row.alias || 'monday-facturacion').replace(/[^a-zA-Z0-9_-]/g, '_');
-        res.setHeader('Content-Type', 'application/x-pem-file');
-        res.setHeader('Content-Disposition', `attachment; filename="${aliasSafe}.csr"`);
-        res.send(row.csr_pem);
-    } catch (err) {
-        console.error('❌ [csr/download] error:', err);
-        res.status(500).json({ error: 'Error descargando la solicitud', details: err.message });
-    }
-});
-
-// ─── Flujo guiado paso final: subir solo el .crt ────────────────────────────
-// El usuario vuelve con el .crt que ARCA le generó a partir del CSR. Validamos
-// que matchee la private key que guardamos en el paso 1 y marcamos el
-// certificado como activo.
-app.post('/api/certificates/csr/finalize', requireMondaySession, upload.single('crt'), async (req, res) => {
-    const { monday_account_id } = req.body;
-    const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
-
-    if (!accountId) return res.status(400).json({ error: 'monday_account_id es obligatorio' });
-    if (!ensureAccountMatch(req, res, accountId)) return;
-
-    const crtFile = req.file;
-    if (!crtFile) return res.status(400).json({ error: 'Falta el archivo .crt' });
-
-    try {
-        await ensureAfipCredentialsColumns();
-
-        const company = await getCompanyByMondayAccountId(accountId);
-        if (!company) return res.status(404).json({ error: 'Empresa no encontrada' });
-
-        const existing = await db.query(
-            `SELECT encrypted_private_key, status, alias FROM afip_credentials WHERE company_id = $1 LIMIT 1`,
-            [company.id]
-        );
-        const credRow = existing.rows[0];
-        if (!credRow || !credRow.encrypted_private_key) {
-            return res.status(400).json({
-                error: 'No hay una solicitud (CSR) pendiente. Generá primero la solicitud desde el paso 1.',
-                code: 'NO_PENDING_CSR'
-            });
-        }
-
-        const keyPem = CryptoJS.AES.decrypt(credRow.encrypted_private_key, process.env.ENCRYPTION_KEY)
-            .toString(CryptoJS.enc.Utf8);
-        if (!keyPem) {
-            return res.status(500).json({ error: 'No se pudo descifrar la clave privada guardada' });
-        }
-
-        const crtContent = crtFile.buffer.toString('utf8');
-
-        let cert;
-        try {
-            ({ cert } = assertKeyMatchesCrt(crtContent, keyPem));
-        } catch (validationErr) {
-            const msg = validationErr.code === 'KEY_CRT_MISMATCH'
-                ? 'Este certificado no corresponde a la solicitud que generaste. Verificá que hayas descargado el .crt del alias correcto en ARCA.'
-                : validationErr.message;
-            return res.status(400).json({ error: msg, code: validationErr.code || 'VALIDATION_FAILED' });
-        }
-
-        const expirationDate = cert.validity.notAfter;
-        if (expirationDate && expirationDate < new Date()) {
-            return res.status(400).json({
-                error: `El certificado ya venció el ${expirationDate.toLocaleDateString('es-AR')}.`,
-                code: 'CRT_EXPIRED'
-            });
-        }
-
-        await db.query(`
-            UPDATE afip_credentials
-               SET crt_file_url = $1,
-                   expiration_date = $2,
-                   status = 'active',
-                   updated_at = NOW()
-             WHERE company_id = $3
-        `, [crtContent, expirationDate, company.id]);
-
-        res.json({
-            message: 'Certificado activado correctamente',
-            expirationDate: expirationDate?.toISOString() || null,
-            alias: credRow.alias || null
-        });
-    } catch (err) {
-        console.error('❌ [csr/finalize] error:', err);
-        res.status(500).json({ error: 'Error finalizando la carga del certificado', details: err.message });
     }
 });
 
@@ -3019,12 +2704,6 @@ async function runStartupMigrations() {
         console.log('[migrations] companies.iva_condition dropped (o no existía)');
     } catch (err) {
         console.error('[migrations] error:', err.message);
-    }
-    try {
-        await ensureAfipCredentialsColumns();
-        console.log('[migrations] afip_credentials columnas aseguradas');
-    } catch (err) {
-        console.error('[migrations] afip_credentials error:', err.message);
     }
 }
 
