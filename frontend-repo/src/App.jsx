@@ -58,11 +58,6 @@ const MENU_ITEMS = [
 ];
 
 
-const IVA_OPTIONS = [
-  "Responsable Inscripto",
-  "Monotributista",
-  "Exento",
-];
 
 const COMPROBANTE_STATUS_FLOW = {
   trigger: "Crear Comprobante",
@@ -99,6 +94,13 @@ const App = () => {
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
   const [activeSection, setActiveSection] = useState("datos");
+  const [toast, setToast] = useState(null);
+
+  const showToast = (type, message) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 3500);
+  };
+
   const [isLoading, setIsLoading] = useState(false);
   const [isFetchingSavedData, setIsFetchingSavedData] = useState(false);
   const [apiStatus, setApiStatus] = useState("checking");
@@ -121,7 +123,6 @@ const App = () => {
     fechaInicio: "",
     razonSocial: "",
     domicilio: "",
-    condicionIva: "Responsable Inscripto",
   });
   const [hasSavedFiscalData, setHasSavedFiscalData] = useState(false);
 
@@ -377,7 +378,6 @@ const App = () => {
               : "",
             razonSocial: data.fiscalData.business_name || "",
             domicilio: data.fiscalData.domicilio || "",
-            condicionIva: data.fiscalData.iva_condition || "Responsable Inscripto",
           });
           setHasSavedFiscalData(true);
           setIsFiscalLocked(true);
@@ -544,32 +544,19 @@ const App = () => {
         app_feature_id: appFeatureId,
         business_name: fiscal.razonSocial,
         cuit: fiscal.cuit,
-        iva_condition: fiscal.condicionIva,
         default_point_of_sale: parseInt(fiscal.puntoVenta) || 0,
         domicilio: fiscal.domicilio,
         fecha_inicio: fiscal.fechaInicio
       };
 
       const response = await api.post(`/companies`, payload);
-      alert("¡Éxito! Datos fiscales guardados.");
+      showToast("success", "Datos fiscales guardados correctamente");
       setHasSavedFiscalData(true);
       setIsFiscalLocked(true);
       setApiStatus("ok");
-      
-      monday.execute("notice", {
-          message: "Datos fiscales guardados con éxito",
-          type: "success",
-          duration: 5000
-      });
     } catch (err) {
       const errorMsg = err.response?.data?.error || err.message;
-      const detailed = err.response?.data?.details ? `\n\nDetalle: ${err.response.data.details}` : "";
-      alert("Error: " + errorMsg + detailed);
-
-      monday.execute("notice", {
-          message: "Error al guardar: " + errorMsg,
-          type: "error"
-      });
+      showToast("error", "Error al guardar: " + errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -577,10 +564,10 @@ const App = () => {
 
   const handleUploadCertificates = async () => {
     if (!crtFile || !keyFile || !context) {
-        monday.execute("notice", { message: "Por favor, seleccioná ambos archivos (.crt y .key)", type: "error" });
+        showToast("error", "Seleccioná ambos archivos (.crt y .key)");
         return;
     }
-    
+
     setIsLoading(true);
     const formData = new FormData();
     formData.append("crt", crtFile);
@@ -594,25 +581,17 @@ const App = () => {
         await api.post(`/certificates`, formData, {
           headers: { "Content-Type": "multipart/form-data" }
         });
-      alert("Certificados subidos correctamente.");
+      showToast("success", "Certificados subidos correctamente");
       setHasSavedCertificates(true);
       setIsCertificatesLocked(true);
       setCrtFile(null);
       setKeyFile(null);
       setApiStatus("ok");
-      monday.execute("notice", {
-          message: "Certificados subidos y encriptados correctamente",
-          type: "success",
-          duration: 5000
-      });
     } catch (err) {
-      alert("Error al subir certificados.");
-        setApiStatus("error");
-        setApiError(err?.response?.data?.error || err?.message || "Error al subir certificados");
-      monday.execute("notice", {
-          message: "Error al subir certificados. Verificá el servidor backend.",
-          type: "error"
-      });
+      const errorMsg = err?.response?.data?.error || err?.message || "Error al subir certificados";
+      showToast("error", "Error al subir certificados: " + errorMsg);
+      setApiStatus("error");
+      setApiError(errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -623,8 +602,7 @@ const App = () => {
     Boolean(fiscal.cuit?.trim()) &&
     Boolean(fiscal.puntoVenta?.toString().trim()) &&
     Boolean(fiscal.fechaInicio) &&
-    Boolean(fiscal.domicilio?.trim()) &&
-    Boolean(fiscal.condicionIva?.trim());
+    Boolean(fiscal.domicilio?.trim());
 
   const fiscalStatus = hasSavedFiscalData || fiscalFormCompleted ? "complete" : "incomplete";
   const certificateStatus = hasSavedCertificates || (crtFile && keyFile) ? "complete" : "incomplete";
@@ -651,7 +629,7 @@ const App = () => {
     setMissingMappingFields([]);
 
     if (!context?.account?.id || !boardId) {
-      alert("No se pudo identificar cuenta/tablero para guardar el mapeo.");
+      showToast("error", "No se pudo identificar cuenta/tablero para guardar el mapeo");
       return;
     }
 
@@ -667,19 +645,10 @@ const App = () => {
       });
 
       setIsMappingLocked(true);
-      monday.execute("notice", {
-        message: "Mapeo visual guardado correctamente",
-        type: "success",
-        duration: 4000,
-      });
+      showToast("success", "Mapeo visual guardado correctamente");
     } catch (err) {
       const errorMsg = err?.response?.data?.error || err?.message || "Error al guardar mapeo visual";
-      alert(errorMsg);
-      monday.execute("notice", {
-        message: errorMsg,
-        type: "error",
-        duration: 4000,
-      });
+      showToast("error", errorMsg);
     } finally {
       setIsLoading(false);
     }
@@ -744,6 +713,18 @@ const App = () => {
 
   return (
     <div className="app-container">
+      {toast && (
+        <div className={`toast toast-${toast.type}`} role="status">
+          <span className="toast-icon">
+            {toast.type === "success" ? (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            ) : (
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="8" x2="12" y2="13"/><line x1="12" y1="16" x2="12.01" y2="16"/><circle cx="12" cy="12" r="10"/></svg>
+            )}
+          </span>
+          <span className="toast-message">{toast.message}</span>
+        </div>
+      )}
       <aside className="sidebar">
         <div className="sidebar-header">
           <div className="sidebar-logo">FE</div>
@@ -882,26 +863,9 @@ const App = () => {
                 />
               </div>
 
-              <div className="form-group full-width">
-                <label className="form-label">Condición frente al IVA</label>
-                <div className="radio-group">
-                  {IVA_OPTIONS.map((option) => (
-                    <label key={option} className={`radio-card ${fiscal.condicionIva === option ? "selected" : ""}`}>
-                      <input
-                        type="radio"
-                        name="condicionIva"
-                        value={option}
-                        checked={fiscal.condicionIva === option}
-                        onChange={(e) => handleFiscalChange("condicionIva", e.target.value)}
-                        hidden
-                      />
-                      <span className="radio-dot" />
-                      <span className="radio-label">{option}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
             </div>
+
+            </fieldset>
 
             <div className="form-actions">
               {hasSavedFiscalData && (
@@ -913,7 +877,6 @@ const App = () => {
                 {isLoading ? "Guardando..." : "Guardar Datos Fiscales"}
               </button>
             </div>
-            </fieldset>
 
             {isFetchingSavedData && (
               <p className="fetching-text">Cargando datos guardados...</p>

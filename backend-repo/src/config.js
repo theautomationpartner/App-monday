@@ -2,13 +2,14 @@
  * config.js — Configuración centralizada del sistema de facturación.
  *
  * Todas las variables sensibles se leen desde process.env.
- * Agregar en el Developer Center (Secrets) o en el archivo .env:
+ * Agregar en el Developer Center (Secrets / Environment Variables):
  *
  *   AFIP_ENV=homologation|production
- *   ENCRYPTION_KEY=...
- *   MONDAY_CLIENT_SECRET=...
- *   PADRON_CUIT=...              ← CUIT habilitado para consultar el padrón
- *   PADRON_COMPANY_ID=...        ← ID en tabla companies de la cuenta del padrón
+ *   ENCRYPTION_KEY=...            ← SECRET — cifra private keys de tenants en DB
+ *   MONDAY_CLIENT_SECRET=...      ← SECRET — valida tokens de Monday
+ *   PADRON_CUIT=...               ← ENV VAR — CUIT de Martín (para WSAA del padrón)
+ *   PADRON_CRT=...                ← ENV VAR — contenido del .crt de Martín
+ *   PADRON_KEY=...                ← SECRET — contenido del .key de Martín
  */
 
 'use strict';
@@ -39,8 +40,11 @@ module.exports = {
     /** CUIT habilitado para consultar el padrón (certificado de Martín) */
     get padronCuit()   { return process.env.PADRON_CUIT || '20327446348'; },
 
-    /** ID de la company de Martín en la tabla companies */
-    get padronCompanyId() { return process.env.PADRON_COMPANY_ID || null; },
+    /** Contenido PEM del .crt de Martín (env var) */
+    get padronCrt()    { return process.env.PADRON_CRT || null; },
+
+    /** Contenido PEM del .key de Martín (secret) */
+    get padronKey()    { return process.env.PADRON_KEY || null; },
 
     /** Clave de cifrado para private keys en la DB */
     get encryptionKey() { return process.env.ENCRYPTION_KEY || ''; },

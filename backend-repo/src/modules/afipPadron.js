@@ -5,17 +5,17 @@
  * Endpoint: PadronA5Service
  *
  * Permite saber si un CUIT es RI, Monotributista, Exento o CF.
- * Los certificados para consultar son los de Martín (configurados en DB).
+ * Los certificados para consultar son los de Martín, cargados como env var/secret
+ * en Monday Code (PADRON_CRT y PADRON_KEY).
  *
  * Uso:
  *   const { getCondicionFiscal } = require('./afipPadron');
- *   const info = await getCondicionFiscal({ cuitAConsultar: '20XXXXXXXXX', db });
+ *   const info = await getCondicionFiscal({ cuitAConsultar: '20XXXXXXXXX' });
  *   // info.condicion === 'RESPONSABLE_INSCRIPTO' | 'MONOTRIBUTO' | 'EXENTO' | 'CONSUMIDOR_FINAL'
  */
 
 'use strict';
 
-const CryptoJS = require('crypto-js');
 const { getToken, invalidateToken } = require('./afipAuth');
 const config = require('../config');
 
@@ -33,42 +33,33 @@ function normalizePem(raw, type) {
     return `-----BEGIN ${type}-----\n${lines.join('\n')}\n-----END ${type}-----`;
 }
 
-// ─── Obtener certificados de la DB ───────────────────────────────────────────
+// ─── Cargar certificados de entorno ──────────────────────────────────────────
 
 /**
- * Carga certPem y keyPem desde la DB usando el company_id de Martín.
- * Si no se pasa db, devuelve null (el caller debe proveer los certs directamente).
+ * Carga certPem y keyPem desde env var (PADRON_CRT) y secret (PADRON_KEY).
+ * El .crt de Martín es público; el .key es sensible y va como secret.
  */
-async function loadPadronCredentials(db) {
-    if (!db) throw new Error('Se requiere conexión a la DB para cargar credenciales del padrón');
+function loadPadronCredentials() {
+    const crtRaw = config.padronCrt;
+    const keyRaw = config.padronKey;
 
-    const companyId = config.padronCompanyId;
-    if (!companyId) {
+    if (!crtRaw) {
         throw new Error(
-            'Falta PADRON_COMPANY_ID en variables de entorno. ' +
-            'Configurá el ID de la empresa de Martín en el Developer Center.'
+            'Falta PADRON_CRT en variables de entorno. ' +
+            'Cargá el contenido del .crt de Martín en el Developer Center de Monday Code.'
+        );
+    }
+    if (!keyRaw) {
+        throw new Error(
+            'Falta PADRON_KEY en secrets. ' +
+            'Cargá el contenido del .key de Martín como secret en el Developer Center de Monday Code.'
         );
     }
 
-    const result = await db.query(
-        'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id = $1 LIMIT 1',
-        [companyId]
-    );
-
-    if (result.rows.length === 0) {
-        throw new Error(`No se encontraron certificados AFIP para company_id=${companyId} (cuenta de Martín)`);
-    }
-
-    const row = result.rows[0];
-    const certPem = normalizePem(row.crt_file_url, 'CERTIFICATE');
-
-    const encKey = config.encryptionKey;
-    if (!encKey) throw new Error('Falta ENCRYPTION_KEY para descifrar la clave privada');
-
-    const decryptedKey = CryptoJS.AES.decrypt(row.encrypted_private_key, encKey).toString(CryptoJS.enc.Utf8);
-    const keyPem = normalizePem(decryptedKey, 'PRIVATE KEY');
-
-    return { certPem, keyPem };
+    return {
+        certPem: normalizePem(crtRaw, 'CERTIFICATE'),
+        keyPem:  normalizePem(keyRaw, 'PRIVATE KEY'),
+    };
 }
 
 // ─── SOAP: consultar padrón ───────────────────────────────────────────────────
@@ -253,8 +244,7 @@ function parseDomicilio(xml) {
  *
  * @param {object} opts
  * @param {string}  opts.cuitAConsultar - CUIT a consultar (emisor o receptor)
- * @param {object}  opts.db             - Conexión a la DB (para cargar certificados de Martín)
- * @param {string}  [opts.certPem]      - Certificado PEM (override; si no se pasa, se carga de DB)
+ * @param {string}  [opts.certPem]      - Certificado PEM (override; si no se pasa, se carga de env)
  * @param {string}  [opts.keyPem]       - Clave privada PEM (override)
  *
  * @returns {Promise<{
@@ -264,7 +254,7 @@ function parseDomicilio(xml) {
  *   raw: string
  * }>}
  */
-async function getCondicionFiscal({ cuitAConsultar, db, certPem, keyPem }) {
+async function getCondicionFiscal({ cuitAConsultar, certPem, keyPem }) {
     const cuit = String(cuitAConsultar).replace(/\D/g, '');
     if (!cuit || cuit.length < 11) {
         throw new Error(`CUIT inválido para consultar padrón: "${cuitAConsultar}"`);
@@ -272,7 +262,7 @@ async function getCondicionFiscal({ cuitAConsultar, db, certPem, keyPem }) {
 
     // Cargar certs si no se proveyeron directamente
     if (!certPem || !keyPem) {
-        const creds = await loadPadronCredentials(db);
+        const creds = loadPadronCredentials();
         certPem = creds.certPem;
         keyPem  = creds.keyPem;
     }
@@ -362,12 +352,12 @@ function dniToPossibleCuits(dni) {
  * Dado un DNI o CUIT, intenta obtener la condición fiscal.
  * Si es DNI, prueba cada CUIT posible contra el padrón hasta encontrar uno válido.
  */
-async function getCondicionFiscalByDoc({ documento, db, certPem, keyPem }) {
+async function getCondicionFiscalByDoc({ documento, certPem, keyPem }) {
     const doc = String(documento).replace(/\D/g, '');
 
     // Si es CUIT directo (11 dígitos), consultar directamente
     if (doc.length === 11) {
-        const result = await getCondicionFiscal({ cuitAConsultar: doc, db, certPem, keyPem });
+        const result = await getCondicionFiscal({ cuitAConsultar: doc, certPem, keyPem });
         return { ...result, docTipo: 80, docNro: doc, cuitUsado: doc };
     }
 
@@ -375,7 +365,7 @@ async function getCondicionFiscalByDoc({ documento, db, certPem, keyPem }) {
     const posibles = dniToPossibleCuits(doc);
     for (const cuit of posibles) {
         try {
-            const result = await getCondicionFiscal({ cuitAConsultar: cuit, db, certPem, keyPem });
+            const result = await getCondicionFiscal({ cuitAConsultar: cuit, certPem, keyPem });
             console.log(`[padron] DNI ${doc} → CUIT ${cuit} encontrado: ${result.nombre}`);
             return { ...result, docTipo: 80, docNro: cuit, cuitUsado: cuit };
         } catch {

@@ -6,16 +6,16 @@
  * │ EMISOR             │ RECEPTOR             │ TIPO │ IVA                │
  * ├────────────────────┼──────────────────────┼──────┼────────────────────┤
  * │ RI                 │ RI                   │ A    │ DISCRIMINA IVA     │
- * │ RI                 │ EXENTO               │ A    │ DISCRIMINA IVA     │
- * │ RI                 │ MONOTRIBUTO          │ B    │ NO DISCRIMINA IVA  │
+ * │ RI                 │ MONOTRIBUTO          │ A    │ DISCRIMINA IVA     │
+ * │ RI                 │ EXENTO               │ B    │ NO DISCRIMINA IVA  │
  * │ RI                 │ CF / DESCONOCIDO     │ B    │ NO DISCRIMINA IVA  │
  * │ MONOTRIBUTO        │ CUALQUIERA           │ C    │ NO LLEVA IVA       │
  * │ EXENTO             │ CUALQUIERA           │ C    │ NO LLEVA IVA       │
  * └────────────────────┴──────────────────────┴──────┴────────────────────┘
  *
- * Nota: RI → Exento → Factura A (receptor tiene CUIT activo y está inscripto).
- *       Algunas contabilidades usan Factura B para RI → Exento.
- *       Acá usamos A (más común), pero está documentado para ajustar.
+ * Nota: RI → Exento se factura como B porque el receptor Exento típico no
+ *       está adherido al régimen de Factura A (RG 3749/2015). AFIP rechaza
+ *       (cbteType=1, CondicionIVAReceptorId=4) con error 10243.
  */
 
 'use strict';
@@ -48,14 +48,16 @@ function determineInvoiceType(emisorCondicion, receptorCondicion) {
 
     // RI → tipo depende del receptor
     if (emisorCondicion === RI) {
-        if (receptorCondicion === RI || receptorCondicion === EXENTO) {
+        if (receptorCondicion === RI || receptorCondicion === MONOTRIBUTO) {
             return {
                 tipo:          'A',
                 discriminaIva: true,
                 descripcion:   `RI → ${receptorCondicion} → Factura A (discrimina IVA)`,
             };
         }
-        // CF, Monotributo, Desconocido → B
+        // EXENTO, CF, No Alcanzado, Desconocido → B
+        // Exento no va por A salvo que esté adherido al régimen RG 3749/2015,
+        // y AFIP rechaza el combo (A, CondIvaReceptor=4) con error 10243.
         return {
             tipo:          'B',
             discriminaIva: false,
@@ -142,18 +144,21 @@ function getIvaRate(tipo) {
 }
 
 /**
- * Texto legible de la condición IVA para mostrar en el PDF
+ * Etiquetas oficiales AFIP/ARCA — Tabla de Tipos de Responsables
+ * (TABLA-TIPO-RESPONSABLES-V.0-06022025.xls). Aplican igual al emisor
+ * y al receptor del comprobante. Mostradas en mayúsculas por preferencia
+ * del emisor.
  */
 function condicionLabel(condicion) {
     const labels = {
-        [RI]:           'Responsable Inscripto',
-        [MONOTRIBUTO]:  'Monotributista',
-        [EXENTO]:       'Exento',
-        [CF]:           'Consumidor Final',
-        [NO_ALCANZADO]: 'No Alcanzado',
-        [UNKNOWN]:      'No Categorizado',
+        [RI]:           'IVA RESPONSABLE INSCRIPTO',
+        [MONOTRIBUTO]:  'RESPONSABLE MONOTRIBUTO',
+        [EXENTO]:       'IVA SUJETO EXENTO',
+        [CF]:           'CONSUMIDOR FINAL',
+        [NO_ALCANZADO]: 'IVA NO ALCANZADO',
+        [UNKNOWN]:      'SUJETO NO CATEGORIZADO',
     };
-    return labels[condicion] || condicion;
+    return labels[condicion] || String(condicion || '').toUpperCase();
 }
 
 module.exports = {

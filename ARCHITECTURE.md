@@ -359,7 +359,7 @@ sequenceDiagram
 - `server.js` y `App.jsx` son archivos gigantes. No es por gusto: el MVP
   se priorizó sobre la modularización. Si vas a tocar algo grande conviene
   dividirlos. Ver sección 9. En particular, la generación de PDF vive hoy
-  inline en `server.js` (`generateFacturaCPdfBuffer`, usa `pdfkit`) y es un
+  inline en `server.js` (`generateFacturaPdfBuffer`, usa `pdfkit`) y es un
   candidato natural a extraer a `modules/pdfInvoice.js`.
 
 ---
@@ -445,7 +445,7 @@ conviene tener en el radar:
    (`invoiceRules.js`) es un buen primer candidato para unit tests.
 4. **PDF fiscal**: la plantilla actual es funcional pero minimalista. No
    tiene código QR AFIP ni el detalle de vencimiento del CAE prolijo.
-5. **PDF generado inline en `server.js`**. `generateFacturaCPdfBuffer` usa
+5. **PDF generado inline en `server.js`**. `generateFacturaPdfBuffer` usa
    `pdfkit` y vive dentro del archivo grande. Conviene extraerlo a
    `modules/pdfInvoice.js` cuando se haga la división del monolito.
 6. **Padrón habilitado para un solo CUIT**. AFIP solo autorizó consultas

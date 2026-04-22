@@ -13,13 +13,14 @@ require('dotenv').config();
 const afipAuthModule    = require('./modules/afipAuth');
 const afipPadron        = require('./modules/afipPadron');
 const invoiceRules      = require('./modules/invoiceRules');
+const { generateFacturaPdfBuffer } = require('./modules/invoicePdf');
 
 // Inicializar SDK de monday code para inyectar env vars y secrets en process.env
 try {
     const { EnvironmentVariablesManager, SecretsManager } = require('@mondaycom/apps-sdk');
     const envManager = new EnvironmentVariablesManager({ updateProcessEnv: true });
     const secretsManager = new SecretsManager();
-    const secretKeys = ['MONDAY_CLIENT_SECRET', 'MONDAY_SIGNING_SECRET', 'MONDAY_OAUTH_SECRET', 'ENCRYPTION_KEY'];
+    const secretKeys = ['MONDAY_CLIENT_SECRET', 'MONDAY_SIGNING_SECRET', 'MONDAY_OAUTH_SECRET', 'ENCRYPTION_KEY', 'PADRON_KEY', 'PADRON_CRT'];
     for (const key of secretKeys) {
         if (!process.env[key]) {
             const val = secretsManager.get(key);
@@ -47,7 +48,7 @@ const upload = multer({ storage });
 
 async function getCompanyByMondayAccountId(mondayAccountId) {
     const companyQuery = `
-        SELECT id, monday_account_id, business_name, cuit, iva_condition, default_point_of_sale, address, start_date
+        SELECT id, monday_account_id, business_name, cuit, default_point_of_sale, address, start_date
         FROM companies
         WHERE monday_account_id::text = $1
         LIMIT 1;
@@ -74,7 +75,6 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
     // Datos fiscales mínimos
     if (!company.business_name) missing.push('datos_fiscales.business_name');
     if (!company.cuit)          missing.push('datos_fiscales.cuit');
-    if (!company.iva_condition) missing.push('datos_fiscales.iva_condition');
     if (!company.default_point_of_sale) missing.push('datos_fiscales.punto_venta');
 
     // Certificados AFIP
@@ -145,7 +145,6 @@ function formatMissingConfigError(missing) {
         'datos_fiscales':                  'Datos fiscales de la empresa',
         'datos_fiscales.business_name':    'Razón social',
         'datos_fiscales.cuit':              'CUIT del emisor',
-        'datos_fiscales.iva_condition':     'Condición IVA',
         'datos_fiscales.punto_venta':       'Punto de venta',
         'certificados_afip':                'Certificados AFIP (.crt + .key)',
         'certificados_afip.expirados':      'Certificados AFIP vencidos',
@@ -656,7 +655,33 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
     const result = extractXmlTag(xml, 'Resultado');
     const cae = extractXmlTag(xml, 'CAE');
     const caeExpiration = extractXmlTag(xml, 'CAEFchVto');
-    const observation = extractXmlTag(xml, 'Msg') || extractXmlTag(xml, 'Obs') || '';
+
+    // Extraer mensajes de error y observaciones de AFIP.
+    // <Errors><Err><Code>X</Code><Msg>...</Msg></Err></Errors>
+    // <Observaciones><Obs><Code>X</Code><Msg>...</Msg></Obs></Observaciones>
+    const extractMsgsFromBlock = (blockTag) => {
+        const block = xml.match(new RegExp(`<${blockTag}[^>]*>([\\s\\S]*?)<\\/${blockTag}>`, 'i'));
+        if (!block) return [];
+        const items = block[1].match(/<(Err|Obs)[^>]*>[\s\S]*?<\/(Err|Obs)>/gi) || [];
+        return items.map((it) => {
+            const code = extractXmlTag(it, 'Code') || '';
+            const msg  = extractXmlTag(it, 'Msg')  || '';
+            return code ? `[${code}] ${msg}` : msg;
+        }).filter(Boolean);
+    };
+
+    const errors = extractMsgsFromBlock('Errors');
+    const observations = extractMsgsFromBlock('Observaciones');
+    const observation = [...errors, ...observations].join(' | ') || null;
+
+    // Si AFIP rechazó (sin CAE o Resultado != 'A'), tirar error para que el handler
+    // lo marque como "Error - Mirar Comentarios" en Monday en vez de quedar colgado.
+    if (!cae || (result && result.toUpperCase() !== 'A')) {
+        console.error(`[wsfe] AFIP rechazó — Resultado: ${result || 'N/D'} | Errors: ${errors.join(' | ') || 'ninguno'} | Obs: ${observations.join(' | ') || 'ninguna'}`);
+        console.error(`[wsfe] XML raw (primeros 2000 chars): ${xml.slice(0, 2000)}`);
+        const detalle = observation || `Resultado=${result || 'N/D'}, sin CAE`;
+        throw new Error(`AFIP rechazó la factura: ${detalle}`);
+    }
 
     return {
         resultado: result || 'N/D',
@@ -666,7 +691,7 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
         tipo_comprobante: invoiceType,
         imp_neto: impNeto,
         imp_iva: impIva,
-        observacion: observation || null,
+        observacion: observation,
         raw_xml: xml.slice(0, 2000),
     };
 }
@@ -902,312 +927,7 @@ async function uploadPdfToMondayFileColumn({ apiToken, itemId, fileColumnId, pdf
     });
 }
 
-/**
- * Genera un PDF de Factura C replicando el diseño oficial de ARCA.
- * Estructura: Original tag → Header (emisor | C | comprobante) → Período →
- * Receptor → Tabla items → Totales → Footer (ARCA + CAE).
- */
-async function generateFacturaCPdfBuffer({ company, draft, afipResult, itemId }) {
-    // ── Fetch QR code image ─────────────────────────────────────────
-    let qrImageBuffer = null;
-    try {
-        const qrData = {
-            ver: 1,
-            fecha: draft.fecha_emision || new Date().toISOString().slice(0, 10),
-            cuit: Number(String(company.cuit).replace(/\D/g, '')),
-            ptoVta: Number(draft.punto_venta),
-            tipoCmp: 11, // Factura C
-            nroCmp: Number(afipResult?.numero_comprobante || 0),
-            importe: Number(draft.importe_total || 0),
-            moneda: 'PES',
-            ctz: 1,
-            tipoDocRec: Number(draft.docTipo ?? 99),
-            nroDocRec: Number(draft.docNro ?? 0),
-            tipoCodAut: 'E',
-            codAut: Number(afipResult?.cae || 0),
-        };
-        const base64Payload = Buffer.from(JSON.stringify(qrData)).toString('base64');
-        const arcaUrl = `https://www.afip.gob.ar/fe/qr/?p=${base64Payload}`;
-        const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=${encodeURIComponent(arcaUrl)}`;
-        const qrResp = await fetch(qrApiUrl);
-        if (qrResp.ok) {
-            qrImageBuffer = Buffer.from(await qrResp.arrayBuffer());
-        }
-    } catch (qrErr) {
-        console.warn('[pdf] No se pudo generar QR:', qrErr.message);
-    }
-
-    return new Promise((resolve, reject) => {
-        try {
-            const { condicionLabel } = invoiceRules;
-            const M = 28;
-            const doc = new PDFDocument({ size: 'A4', margin: M });
-            const buffers = [];
-            doc.on('data', (chunk) => buffers.push(chunk));
-            doc.on('end', () => resolve(Buffer.concat(buffers)));
-            doc.on('error', reject);
-
-            const W = 595.28 - M * 2;
-            const colLeft = M;
-            const colRight = M + W;
-
-            // ── Helpers ──────────────────────────────────────────
-            function fmtCuit(c) {
-                const s = String(c || '').replace(/\D/g, '');
-                return s.length === 11 ? `${s.slice(0,2)}-${s.slice(2,10)}-${s.slice(10)}` : (c || '');
-            }
-            function fmtMoney(n) {
-                return Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            }
-            function padNum(n, len) { return String(n || '').padStart(len, '0'); }
-
-            /** Formatea fechas: YYYY-MM-DD → DD/MM/YYYY, YYYYMMDD → DD/MM/YYYY, ya DD/MM/YYYY lo deja */
-            function fmtDate(d) {
-                if (!d || d === '-') return '-';
-                // Si es un objeto Date, formatearlo directamente
-                if (d instanceof Date) {
-                    const dd = String(d.getDate()).padStart(2, '0');
-                    const mm = String(d.getMonth() + 1).padStart(2, '0');
-                    const yyyy = d.getFullYear();
-                    return `${dd}/${mm}/${yyyy}`;
-                }
-                const s = String(d).trim();
-                // YYYY-MM-DD
-                if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10).split('-').reverse().join('/');
-                // YYYYMMDD
-                if (/^\d{8}$/.test(s)) return `${s.slice(6,8)}/${s.slice(4,6)}/${s.slice(0,4)}`;
-                return s;
-            }
-
-            const pv = padNum(draft.punto_venta, 5);
-            const nroComp = padNum(afipResult?.numero_comprobante, 8);
-            const fechaEmision = fmtDate(draft.fecha_emision) || new Date().toLocaleDateString('es-AR');
-            const caeVto = fmtDate(afipResult?.cae_vencimiento);
-            const startDate = fmtDate(company.start_date);
-
-            // ── Borde exterior ───────────────────────────────────
-            const boxTop = M;
-            const boxH = 700;
-            doc.rect(colLeft, boxTop, W, boxH).stroke('#000');
-
-            // ── ORIGINAL tag ─────────────────────────────────────
-            let y = boxTop;
-            doc.rect(colLeft, y, W, 16).stroke('#000');
-            doc.fontSize(8).font('Helvetica-Bold')
-               .text('O R I G I N A L', colLeft, y + 4, { width: W, align: 'center', characterSpacing: 3 });
-            y += 16;
-
-            // ── HEADER ROW ───────────────────────────────────────
-            const headerH = 110;
-            doc.rect(colLeft, y, W, headerH).stroke('#000');
-
-            const leftW = W * 0.46;
-            const centerW = W * 0.08;
-
-            // Emisor (izquierda)
-            let ey = y + 12;
-            doc.fontSize(12).font('Helvetica-Bold')
-               .text((company.business_name || '').toUpperCase(), colLeft + 8, ey, { width: leftW - 16, align: 'center' });
-            ey += 22;
-            doc.fontSize(8).font('Helvetica');
-            doc.font('Helvetica-Bold').text('Razón Social: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text((company.business_name || '').toUpperCase());
-            ey += 12;
-            doc.font('Helvetica-Bold').text('Domicilio Comercial: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text((company.address || '-').toUpperCase());
-            ey += 12;
-            doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text(condicionLabel(draft.emisorCondicion || '').toUpperCase());
-
-            // Centro — caja con letra C
-            const centerX = colLeft + leftW;
-            const boxSize = 42;
-            const boxX = centerX + (centerW - boxSize) / 2;
-            doc.rect(boxX, y, boxSize, boxSize).stroke('#000');
-            doc.fontSize(26).font('Helvetica-Bold')
-               .text('C', boxX, y + 6, { width: boxSize, align: 'center' });
-            doc.fontSize(6).font('Helvetica-Bold')
-               .text('COD. 011', boxX, y + 34, { width: boxSize, align: 'center' });
-            doc.moveTo(centerX + centerW / 2, y + boxSize).lineTo(centerX + centerW / 2, y + headerH).stroke('#000');
-
-            // Comprobante (derecha)
-            const rx = centerX + centerW + 8;
-            let ry = y + 12;
-            doc.fontSize(16).font('Helvetica-Bold').text('FACTURA', rx, ry);
-            ry += 22;
-            doc.fontSize(8).font('Helvetica-Bold')
-               .text(`Punto de Venta: ${pv}    Comp. Nro: ${nroComp}`, rx, ry);
-            ry += 12;
-            doc.font('Helvetica-Bold').text('Fecha de Emisión: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(fechaEmision);
-            ry += 12;
-            doc.font('Helvetica-Bold').text('CUIT: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(fmtCuit(company.cuit));
-            ry += 12;
-            doc.font('Helvetica-Bold').text('Ingresos Brutos: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(fmtCuit(company.cuit));
-            ry += 12;
-            doc.font('Helvetica-Bold').text('Fecha de Inicio de Actividades: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(startDate);
-
-            y += headerH;
-
-            // ── PERÍODO ──────────────────────────────────────────
-            const periodoH = 18;
-            doc.rect(colLeft, y, W, periodoH).stroke('#000');
-            doc.fontSize(7.5);
-            const periodoY = y + 5;
-            const thirdW = W / 3;
-            doc.font('Helvetica-Bold').text('Período Facturado Desde: ', colLeft + 8, periodoY, { continued: true });
-            doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_desde) || fechaEmision);
-            doc.font('Helvetica-Bold').text('Hasta: ', colLeft + thirdW + 8, periodoY, { continued: true });
-            doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_hasta) || fechaEmision);
-            doc.font('Helvetica-Bold').text('Fecha de Vto. para el pago: ', colLeft + thirdW * 2 + 8, periodoY, { continued: true });
-            doc.font('Helvetica').text(fmtDate(draft.fecha_vto_pago) || fechaEmision);
-            y += periodoH;
-
-            // ── RECEPTOR (2 columnas) ────────────────────────────
-            const receptorH = 44;
-            doc.rect(colLeft, y, W, receptorH).stroke('#000');
-            const halfW = W / 2;
-            let cy = y + 5;
-            doc.fontSize(7.5);
-            // Fila 1
-            doc.font('Helvetica-Bold').text('CUIT: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(fmtCuit(draft.receptor_cuit_o_dni));
-            doc.font('Helvetica-Bold').text('Apellido y Nombre / Razón Social: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text((draft.receptor_nombre || '-').toUpperCase());
-            cy += 12;
-            // Fila 2
-            doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(condicionLabel(draft.receptorCondicion || '').toUpperCase());
-            doc.font('Helvetica-Bold').text('Domicilio: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text((draft.receptor_domicilio || '-').toUpperCase());
-            cy += 12;
-            // Fila 3
-            doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text((draft.condicion_venta || 'Contado').toUpperCase());
-            y += receptorH;
-
-            // ── TABLA DE ITEMS ───────────────────────────────────
-            const cols = [
-                { label: 'Código',              w: W * 0.08, align: 'center' },
-                { label: 'Producto / Servicio',  w: W * 0.30, align: 'left'   },
-                { label: 'Cantidad',             w: W * 0.08, align: 'right'  },
-                { label: 'U. Medida',            w: W * 0.10, align: 'center' },
-                { label: 'Precio Unit.',         w: W * 0.13, align: 'right'  },
-                { label: '% Bonif',              w: W * 0.08, align: 'right'  },
-                { label: 'Imp. Bonif.',          w: W * 0.10, align: 'right'  },
-                { label: 'Subtotal',             w: W * 0.13, align: 'right'  },
-            ];
-            const rowH = 16;
-
-            // Header de la tabla
-            doc.rect(colLeft, y, W, rowH).fill('#f1f1f1').stroke('#000');
-            let cx = colLeft;
-            doc.fillColor('#000');
-            for (const col of cols) {
-                doc.rect(cx, y, col.w, rowH).stroke('#000');
-                doc.fontSize(7).font('Helvetica-Bold')
-                   .text(col.label, cx + 2, y + 4, { width: col.w - 4, align: 'center' });
-                cx += col.w;
-            }
-            y += rowH;
-
-            // Filas de items (campos: concept, quantity, unit_price)
-            const lineas = draft.lineas || [];
-            for (const line of lineas) {
-                const qty = Number(line.quantity || line.cantidad || 0);
-                const price = Number(line.unit_price || line.precio_unitario || 0);
-                const subtotal = qty * price;
-                cx = colLeft;
-                const vals = [
-                    '',
-                    line.concept || line.descripcion || '',
-                    String(qty),
-                    'unidades',
-                    fmtMoney(price),
-                    '0,00',
-                    '0,00',
-                    fmtMoney(subtotal),
-                ];
-                for (let i = 0; i < cols.length; i++) {
-                    doc.rect(cx, y, cols[i].w, rowH).stroke('#000');
-                    doc.fontSize(7).font('Helvetica')
-                       .text(vals[i], cx + 3, y + 4, { width: cols[i].w - 6, align: cols[i].align });
-                    cx += cols[i].w;
-                }
-                y += rowH;
-            }
-
-            // Espacio vacío restante hasta totales
-            const totalsY = boxTop + boxH - 50;
-            if (y < totalsY) {
-                doc.moveTo(colLeft, y).lineTo(colLeft, totalsY).stroke('#000');
-                doc.moveTo(colRight, y).lineTo(colRight, totalsY).stroke('#000');
-                y = totalsY;
-            }
-
-            // ── TOTALES ──────────────────────────────────────────
-            doc.rect(colLeft, y, W, 50).stroke('#000');
-            const labelW = 160;
-            const valueW = 90;
-            const totLabelX = colRight - labelW - valueW - 12;
-            const totValueX = colRight - valueW - 8;
-            let ty = y + 8;
-            doc.fontSize(8);
-
-            doc.font('Helvetica-Bold').text('Subtotal: $', totLabelX, ty, { width: labelW, align: 'right' });
-            doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
-            ty += 14;
-            doc.font('Helvetica-Bold').text('Importe Otros Tributos: $', totLabelX, ty, { width: labelW, align: 'right' });
-            doc.font('Helvetica-Bold').text('0,00', totValueX, ty, { width: valueW, align: 'right' });
-            ty += 14;
-            doc.font('Helvetica-Bold').text('Importe Total: $', totLabelX, ty, { width: labelW, align: 'right' });
-            doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
-
-            y = boxTop + boxH;
-
-            // ── FOOTER (fuera del borde) ─────────────────────────
-            y += 8;
-            const footerY = y;
-
-            // QR code (izquierda)
-            if (qrImageBuffer) {
-                try {
-                    doc.image(qrImageBuffer, colLeft, footerY, { width: 60, height: 60 });
-                } catch (imgErr) {
-                    console.warn('[pdf] No se pudo insertar QR en PDF:', imgErr.message);
-                }
-            }
-
-            // ARCA branding (centro-izquierda, al lado del QR)
-            const arcaX = colLeft + (qrImageBuffer ? 68 : 0);
-            doc.fontSize(16).font('Helvetica-Bold').text('ARCA', arcaX, footerY);
-            doc.fontSize(5).font('Helvetica-Bold')
-               .text('AGENCIA DE RECAUDACIÓN Y CONTROL ADUANERO', arcaX, footerY + 18);
-            doc.fontSize(9).font('Helvetica-BoldOblique')
-               .text('Comprobante Autorizado', arcaX, footerY + 28);
-            doc.fontSize(5.5).font('Helvetica')
-               .text('Esta Agencia no se responsabiliza por los datos ingresados en el detalle de la operación',
-                      arcaX, footerY + 40);
-
-            // CAE (derecha)
-            doc.fontSize(8).font('Helvetica-Bold')
-               .text(`CAE N°: ${afipResult?.cae || 'PENDIENTE'}`, colRight - 180, footerY + 18, { width: 180, align: 'right' });
-            doc.fontSize(8).font('Helvetica')
-               .text(`Fecha de Vto. de CAE: ${caeVto}`, colRight - 180, footerY + 30, { width: 180, align: 'right' });
-
-            // Pág
-            doc.fontSize(8).font('Helvetica')
-               .text('Pág. 1/1', colLeft + W / 2 - 20, footerY + 24);
-
-            doc.end();
-        } catch (err) {
-            reject(err);
-        }
-    });
-}
+// La generación del PDF de la factura vive en ./modules/invoicePdf.js
 
 // --- RUTAS ---
 
@@ -1219,6 +939,7 @@ app.get('/api/health', async (req, res) => {
         res.status(500).json({ status: 'error', message: err.message });
     }
 });
+
 
 app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
@@ -1319,7 +1040,6 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
             fiscalData: {
                 business_name: company.business_name || '',
                 cuit: company.cuit || '',
-                iva_condition: company.iva_condition || '',
                 default_point_of_sale: company.default_point_of_sale || '',
                 domicilio: company.address || '',
                 fecha_inicio: company.start_date || ''
@@ -1770,7 +1490,7 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
 });
 
 app.post('/api/companies', requireMondaySession, async (req, res) => {
-    const { monday_account_id, business_name, cuit, iva_condition, default_point_of_sale, domicilio, fecha_inicio } = req.body;
+    const { monday_account_id, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
 
     if (!accountId) {
@@ -1781,20 +1501,19 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
 
     try {
         const query = `
-            INSERT INTO companies (monday_account_id, business_name, cuit, iva_condition, default_point_of_sale, address, start_date)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            ON CONFLICT (monday_account_id) 
-            DO UPDATE SET 
+            INSERT INTO companies (monday_account_id, business_name, cuit, default_point_of_sale, address, start_date)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (monday_account_id)
+            DO UPDATE SET
                 business_name = EXCLUDED.business_name,
                 cuit = EXCLUDED.cuit,
-                iva_condition = EXCLUDED.iva_condition,
                 default_point_of_sale = EXCLUDED.default_point_of_sale,
                 address = EXCLUDED.address,
                 start_date = EXCLUDED.start_date,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
         `;
-        const result = await db.query(query, [accountId, business_name, cuit, iva_condition, default_point_of_sale, domicilio, fecha_inicio]);
+        const result = await db.query(query, [accountId, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio]);
         res.json(result.rows[0]);
     } catch (err) {
         console.error("❌ Error en DB:", err);
@@ -2311,10 +2030,18 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 const uploadComplete = prevUpload?.uploaded === true
                     || prevUpload?.reason === 'no_column_configured';
                 if (uploadComplete) {
-                    console.log('[emit] Idempotencia: factura ya completa (CAE + upload OK), skip');
-                    if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false,
-                        `Factura ya emitida para este item (idempotencia)`);
-                    return;
+                    // Tiramos un error con mensaje friendly. El catch general se encarga
+                    // de cambiar el status del item a "Error - Mirar Comentarios" y de
+                    // dejar el update explicativo en Monday.
+                    const prev = existing.rows[0].afip_result_json || {};
+                    const cae  = prev.cae || '—';
+                    const nro  = prev.numero_comprobante || '—';
+                    const tipo = prev.tipo_comprobante || existing.rows[0]?.invoice_type || '—';
+                    console.log('[emit] Idempotencia: factura ya completa (CAE + upload OK), abortando con error');
+                    throw new Error(
+                        `Factura ya emitida para este item (Factura ${tipo}, Comp. Nº ${nro}, CAE ${cae}). ` +
+                        `Para crear una factura nueva, generá un item nuevo en el tablero.`
+                    );
                 }
                 console.log('[emit] Row existe con CAE pero sin upload a Monday; borrando para reintentar');
                 await db.query(`DELETE FROM invoice_emissions WHERE id=$1`, [existing.rows[0].id]);
@@ -2360,17 +2087,18 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             const fechaVtoPagoRaw    = mapping.fecha_vto_pago ? (getColumnTextById(mainColumns, mapping.fecha_vto_pago) || null) : null;
 
             // ── 6. Consultar padrón: condición fiscal del EMISOR ──────────────
+            // Padrón AFIP es la ÚNICA fuente de verdad de la condición IVA.
+            // Si falla, no emitimos — preferible bloquear que emitir con datos obsoletos.
             console.log(`[emit] Consultando padrón para emisor CUIT: ${company.cuit}`);
             let emisorInfo;
             try {
-                emisorInfo = await afipPadron.getCondicionFiscal({ cuitAConsultar: company.cuit, db });
+                emisorInfo = await afipPadron.getCondicionFiscal({ cuitAConsultar: company.cuit });
             } catch (padronErr) {
-                // Si el padrón falla, continuamos con la condición guardada en la DB (degraded mode)
-                console.warn(`[emit] Padrón emisor falló (usando DB): ${padronErr.message}`);
-                emisorInfo = {
-                    condicion: (company.iva_condition || 'DESCONOCIDO').toUpperCase(),
-                    nombre:    company.business_name,
-                };
+                console.error(`[emit] Padrón emisor falló: ${padronErr.message}`);
+                throw new Error(
+                    `No se pudo consultar el padrón de AFIP para el emisor (CUIT ${company.cuit}). ` +
+                    `AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.`
+                );
             }
 
             // ── 7. Consultar padrón: condición fiscal del RECEPTOR ────────────
@@ -2380,10 +2108,14 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 if (receptorDocClean.length >= 7) {
                     console.log(`[emit] Consultando padrón para receptor doc: ${receptorDocClean}`);
                     try {
-                        receptorInfo = await afipPadron.getCondicionFiscalByDoc({ documento: receptorDocClean, db });
+                        receptorInfo = await afipPadron.getCondicionFiscalByDoc({ documento: receptorDocClean });
                         console.log(`[emit] Receptor: ${receptorInfo.nombre}, condición: ${receptorInfo.condicion}, CUIT: ${receptorInfo.cuitUsado || receptorDocClean}`);
                     } catch (padronErr) {
-                        console.warn(`[emit] Padrón receptor falló (usando CF por defecto): ${padronErr.message}`);
+                        console.error(`[emit] Padrón receptor falló: ${padronErr.message}`);
+                        throw new Error(
+                            `No se pudo consultar el padrón de AFIP para el receptor (doc ${receptorDocClean}). ` +
+                            `AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.`
+                        );
                     }
                 }
             }
@@ -2559,18 +2291,32 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             };
 
             // ── 10. Emitir en AFIP (WSFE) ─────────────────────────────────────
-            const { token, sign } = await afipAuthModule.getToken({
-                certPem: emisorCertPem, keyPem: emisorKeyPem,
-                cuit: company.cuit, service: 'wsfe',
-            });
+            // Si el cert del emisor fue rotado, el token cacheado queda obsoleto
+            // y AFIP devuelve [600] ValidacionDeToken. Invalidamos y reintentamos una vez.
+            async function emitirConReintentoToken(forceNewToken) {
+                const { token, sign } = await afipAuthModule.getToken({
+                    certPem: emisorCertPem, keyPem: emisorKeyPem,
+                    cuit: company.cuit, service: 'wsfe',
+                    force: forceNewToken,
+                });
+                return afipIssueFactura({
+                    token, sign,
+                    cuit:        company.cuit,
+                    pointOfSale: company.default_point_of_sale,
+                    draft,
+                    invoiceType: tipo,
+                });
+            }
 
-            afipResult = await afipIssueFactura({
-                token, sign,
-                cuit:        company.cuit,
-                pointOfSale: company.default_point_of_sale,
-                draft,
-                invoiceType: tipo,
-            });
+            try {
+                afipResult = await emitirConReintentoToken(false);
+            } catch (err) {
+                const esTokenInvalido = /\[600\]|ValidacionDeToken|No aparecio CUIT en lista de relaciones/i.test(err.message);
+                if (!esTokenInvalido) throw err;
+                console.warn(`[wsfe] Token WSAA rechazado por AFIP (posible cert rotado) — invalidando caché y reintentando`);
+                afipAuthModule.invalidateToken('wsfe', company.cuit);
+                afipResult = await emitirConReintentoToken(true);
+            }
 
             console.log(`[emit] AFIP respuesta (${(process.env.AFIP_ENV || 'homologation').toUpperCase()}) — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
 
@@ -2594,7 +2340,7 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             if (afipResult?.cae) {
                 console.log('[emit] Generando PDF…');
                 try {
-                    pdfBuffer = await generateFacturaCPdfBuffer({
+                    pdfBuffer = await generateFacturaPdfBuffer({
                         company,
                         draft,
                         afipResult,
@@ -2802,6 +2548,12 @@ function buildErrorComment(err) {
             solucion: 'Completá las columnas <b>Fecha Servicio Desde</b> y <b>Fecha Servicio Hasta</b> en el item. Son obligatorias cuando los subitems incluyen servicios.',
         },
         {
+            match: /alícuota iva incompatible con factura c/i,
+            title: 'Alícuota IVA incompatible con Factura C',
+            detail: mainMsg,
+            solucion: 'Las Facturas C no discriminan IVA porque el emisor es Monotributista o Exento. Abrí los subítems del item y cambiá la columna <b>Alícuota IVA %</b> a <b>0</b> en todos. Después reintentá la emisión.',
+        },
+        {
             match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida/i,
             title: 'Alícuota IVA inválida',
             detail: subitemDetails.length > 0
@@ -2812,9 +2564,11 @@ function buildErrorComment(err) {
         },
         {
             match: /idempotencia|ya emitida|ya completa/i,
-            title: 'Factura ya emitida',
-            detail: 'Este item ya tiene una factura emitida previamente.',
-            solucion: 'Si necesitás emitir otra factura para este item, contactá al administrador.',
+            title: 'Factura ya emitida para este item',
+            detail: mainMsg,
+            solucion: 'Cada item del tablero corresponde a <b>una sola factura</b>. ' +
+                'Para emitir una factura nueva, <b>creá un item nuevo</b> en el tablero ' +
+                'y disparálo desde ahí. Esto evita duplicar comprobantes en AFIP.',
         },
     ];
 
@@ -2943,8 +2697,21 @@ app.get('/*splat', (req, res, next) => {
     res.sendFile(path.join(publicPath, 'index.html'));
 });
 
+// Migraciones idempotentes al arranque.
+async function runStartupMigrations() {
+    try {
+        await db.query('ALTER TABLE companies DROP COLUMN IF EXISTS iva_condition');
+        console.log('[migrations] companies.iva_condition dropped (o no existía)');
+    } catch (err) {
+        console.error('[migrations] error:', err.message);
+    }
+}
+
 // Arranca el servidor (local y monday code)
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Backend corriendo en puerto ${PORT} | AFIP_ENV: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`));
+app.listen(PORT, async () => {
+    console.log(`Backend corriendo en puerto ${PORT} | AFIP_ENV: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+    await runStartupMigrations();
+});
 
 module.exports = app;
