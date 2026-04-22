@@ -6,7 +6,7 @@ import "monday-ui-react-core/dist/main.css";
 import "./App.css";
 
 const monday = mondaySdk();
-const APP_BUILD_VERSION = "v24-2026-04-17-iva-validation";
+const APP_BUILD_VERSION = "v25-2026-04-22-cert-guided-flow";
 // URL del backend. En monday code el frontend y backend comparten dominio,
 // así que usamos una ruta relativa "/api" que siempre resuelve a la versión actual.
 const configuredApiUrl = (import.meta.env.VITE_BACKEND_URL || "/api").trim();
@@ -110,11 +110,24 @@ const App = () => {
   const [isCertificatesLocked, setIsCertificatesLocked] = useState(false);
   const [isMappingLocked, setIsMappingLocked] = useState(false);
 
-  // Certificados
+  // Certificados (flujo manual legacy)
   const [crtFile, setCrtFile] = useState(null);
   const [keyFile, setKeyFile] = useState(null);
   const [hasSavedCertificates, setHasSavedCertificates] = useState(false);
   const [certificateExpirationDate, setCertificateExpirationDate] = useState("");
+
+  // Certificados — estado del flujo completo
+  // certificateStatus: 'no_cert' | 'pending_crt' | 'active' (viene del backend)
+  // certFlow: null | 'guided' | 'manual' (elección del usuario en la sesión)
+  const [certificateStatus, setCertificateStatus] = useState("no_cert");
+  const [certificateAlias, setCertificateAlias] = useState("");
+  const [certificateUpdatedAt, setCertificateUpdatedAt] = useState("");
+  const [certFlow, setCertFlow] = useState(null);
+  const [guidedStep, setGuidedStep] = useState(1);
+  const [aliasInput, setAliasInput] = useState("monday-facturacion");
+  const [serviceAdhered, setServiceAdhered] = useState(false);
+  const [finalCrtFile, setFinalCrtFile] = useState(null);
+  const [lastGeneratedCsrPem, setLastGeneratedCsrPem] = useState("");
 
   // Datos fiscales
   const [fiscal, setFiscal] = useState({
@@ -383,6 +396,11 @@ const App = () => {
           setIsFiscalLocked(true);
         }
 
+        const certStatus = data?.certificateStatus || 'no_cert';
+        setCertificateStatus(certStatus);
+        setCertificateAlias(data?.certificates?.alias || "");
+        setCertificateUpdatedAt(data?.certificates?.updated_at || "");
+
         if (data?.hasCertificates) {
           setHasSavedCertificates(true);
           setIsCertificatesLocked(true);
@@ -391,6 +409,10 @@ const App = () => {
               ? new Date(data.certificates.expiration_date).toLocaleDateString("es-AR")
               : ""
           );
+        } else {
+          setHasSavedCertificates(false);
+          setIsCertificatesLocked(false);
+          setCertificateExpirationDate("");
         }
 
         if (data?.visualMapping?.mapping && typeof data.visualMapping.mapping === "object") {
@@ -584,18 +606,152 @@ const App = () => {
       showToast("success", "Certificados subidos correctamente");
       setHasSavedCertificates(true);
       setIsCertificatesLocked(true);
+      setCertificateStatus("active");
+      setCertFlow(null);
       setCrtFile(null);
       setKeyFile(null);
       setApiStatus("ok");
     } catch (err) {
       const errorMsg = err?.response?.data?.error || err?.message || "Error al subir certificados";
-      showToast("error", "Error al subir certificados: " + errorMsg);
+      showToast("error", errorMsg);
       setApiStatus("error");
       setApiError(errorMsg);
     } finally {
       setIsLoading(false);
     }
   };
+
+  // ─── Helpers para disparar descarga de archivo en el navegador ──────────────
+  const downloadBlob = (content, filename, mime = "application/x-pem-file") => {
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // Genera CSR + key en el backend. La key queda guardada cifrada. Devuelve el
+  // CSR como archivo descargable para que el usuario lo suba a ARCA.
+  const handleGenerateCsr = async () => {
+    if (!context) return;
+    const aliasFinal = (aliasInput || "monday-facturacion").trim();
+    setIsLoading(true);
+    try {
+      const res = await api.post(`/certificates/csr/generate`, {
+        monday_account_id: context.account.id.toString(),
+        alias: aliasFinal
+      });
+      const csrPem = res.data?.csrPem || "";
+      const aliasUsed = res.data?.alias || aliasFinal;
+      if (!csrPem) throw new Error("El servidor no devolvió el CSR");
+
+      setLastGeneratedCsrPem(csrPem);
+      setCertificateAlias(aliasUsed);
+      setCertificateStatus("pending_crt");
+      downloadBlob(csrPem, `${aliasUsed}.csr`);
+      showToast("success", "Solicitud generada y descargada");
+      setGuidedStep(3);
+    } catch (err) {
+      const errorMsg = err?.response?.data?.error || err?.message || "Error generando la solicitud";
+      showToast("error", errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Re-descarga el CSR ya guardado (para el caso en que el usuario cerró la
+  // ventana y volvió más tarde sin tener el archivo).
+  const handleRedownloadCsr = async () => {
+    if (!context) return;
+    if (lastGeneratedCsrPem) {
+      const aliasSafe = (certificateAlias || "monday-facturacion").replace(/[^a-zA-Z0-9_-]/g, "_");
+      downloadBlob(lastGeneratedCsrPem, `${aliasSafe}.csr`);
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const res = await api.get(`/certificates/csr/download`, {
+        params: { monday_account_id: context.account.id.toString() },
+        responseType: "text"
+      });
+      const csrPem = typeof res.data === "string" ? res.data : "";
+      if (!csrPem) throw new Error("No se recibió el CSR del servidor");
+      setLastGeneratedCsrPem(csrPem);
+      const aliasSafe = (certificateAlias || "monday-facturacion").replace(/[^a-zA-Z0-9_-]/g, "_");
+      downloadBlob(csrPem, `${aliasSafe}.csr`);
+    } catch (err) {
+      const errorMsg = err?.response?.data?.error || err?.message || "Error descargando el CSR";
+      showToast("error", errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Paso 4 del flujo guiado: sube el .crt que ARCA generó a partir del CSR.
+  const handleFinalizeCsr = async () => {
+    if (!finalCrtFile || !context) {
+      showToast("error", "Seleccioná el archivo .crt que descargaste de ARCA");
+      return;
+    }
+    setIsLoading(true);
+    const formData = new FormData();
+    formData.append("crt", finalCrtFile);
+    formData.append("monday_account_id", context.account.id.toString());
+    try {
+      const res = await api.post(`/certificates/csr/finalize`, formData, {
+        headers: { "Content-Type": "multipart/form-data" }
+      });
+      showToast("success", "Certificado activado correctamente");
+      setCertificateStatus("active");
+      setHasSavedCertificates(true);
+      setIsCertificatesLocked(true);
+      setCertificateExpirationDate(
+        res?.data?.expirationDate
+          ? new Date(res.data.expirationDate).toLocaleDateString("es-AR")
+          : ""
+      );
+      setFinalCrtFile(null);
+      setCertFlow(null);
+      setGuidedStep(1);
+      setLastGeneratedCsrPem("");
+    } catch (err) {
+      const errorMsg = err?.response?.data?.error || err?.message || "Error activando el certificado";
+      showToast("error", errorMsg);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resetCertFlow = () => {
+    setCertFlow(null);
+    setGuidedStep(1);
+    setFinalCrtFile(null);
+    setCrtFile(null);
+    setKeyFile(null);
+    setLastGeneratedCsrPem("");
+  };
+
+  // ─── Info derivada del certificado para UI ──────────────────────────────────
+  const certDaysRemaining = (() => {
+    if (!certificateExpirationDate) return null;
+    // certificateExpirationDate viene como string en formato "es-AR" (DD/MM/YYYY)
+    const parts = certificateExpirationDate.split("/");
+    if (parts.length !== 3) return null;
+    const expDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
+    const diffMs = expDate.getTime() - Date.now();
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  })();
+  const certDaysBadge = (() => {
+    if (certDaysRemaining === null) return null;
+    if (certDaysRemaining < 0) return { cls: "expired", text: "Vencido" };
+    if (certDaysRemaining < 30) return { cls: "warning", text: `Vence en ${certDaysRemaining} días` };
+    if (certDaysRemaining < 90) return { cls: "notice", text: `${certDaysRemaining} días restantes` };
+    return { cls: "ok", text: `${certDaysRemaining} días restantes` };
+  })();
 
   const fiscalFormCompleted =
     Boolean(fiscal.razonSocial?.trim()) &&
@@ -605,11 +761,15 @@ const App = () => {
     Boolean(fiscal.domicilio?.trim());
 
   const fiscalStatus = hasSavedFiscalData || fiscalFormCompleted ? "complete" : "incomplete";
-  const certificateStatus = hasSavedCertificates || (crtFile && keyFile) ? "complete" : "incomplete";
+  const certSidebarStatus = hasSavedCertificates || (crtFile && keyFile)
+    ? "complete"
+    : certificateStatus === "pending_crt"
+      ? "pending"
+      : "incomplete";
   const mappingStatus = isMappingLocked || mappingCompleted ? "complete" : "incomplete";
   const sectionStatus = {
     datos: fiscalStatus,
-    certificados: certificateStatus,
+    certificados: certSidebarStatus,
     mapping_v2: mappingStatus,
   };
 
@@ -888,113 +1048,436 @@ const App = () => {
         {activeSection === "certificados" && (
           <section className="section">
             <div className="section-header">
-              <h1 className="section-title">Certificados AFIP</h1>
+              <h1 className="section-title">Certificados ARCA</h1>
               <p className="section-subtitle">
-                Subí tus archivos de certificado y clave privada. Los archivos se encriptarán automáticamente antes de guardarse.
+                Para facturar necesitás un certificado digital de ARCA (AFIP). Te guiamos paso a paso.
               </p>
             </div>
 
-            <div className={`section-status-banner ${certificateStatus}`}>
-              {hasSavedCertificates ? (
-                <>
-                  <strong>Estado:</strong> Certificados ya cargados.
-                  {certificateExpirationDate ? ` Vencimiento informado: ${certificateExpirationDate}.` : ""}
-                  {" "}Si querés, podés reemplazarlos con nuevos archivos.
-                </>
-              ) : (
-                <><strong>Estado:</strong> Todavía no hay certificados guardados para esta cuenta.</>
-              )}
-            </div>
-
-            <div className="cards-row">
-              {/* Card CRT */}
-              <div className="upload-card">
-                <div className="upload-card-header">
-                  <h3>Certificado (.crt)</h3>
-                  <p>Archivo de certificado público</p>
+            {/* ── ESTADO: CERTIFICADO ACTIVO ── */}
+            {certificateStatus === "active" && certFlow !== "guided" && certFlow !== "manual" && (
+              <div className="cert-active-card">
+                <div className="cert-active-header">
+                  <div className="cert-active-icon">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#00ca72" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+                    </svg>
+                  </div>
+                  <div>
+                    <h2 className="cert-active-title">Certificado activo</h2>
+                    <p className="cert-active-sub">Tu app está lista para facturar en ARCA.</p>
+                  </div>
                 </div>
-                {isCertificatesLocked && hasSavedCertificates && !crtFile ? (
-                  <div className="upload-success">
-                    <IconCheck />
-                    <span>Archivo .crt subido en sistema</span>
-                  </div>
-                ) : crtFile ? (
-                  <div className="upload-success">
-                    <IconCheck />
-                    <span>{crtFile.name}</span>
-                    <button className="btn-text" onClick={() => setCrtFile(null)}>Cambiar</button>
-                  </div>
-                ) : (
-                  <label className="upload-zone" htmlFor="crt-upload">
-                    <IconUpload />
-                    <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
-                    <span className="upload-zone-hint">.crt</span>
-                    <input
-                      id="crt-upload"
-                      type="file"
-                      accept=".crt"
-                      onChange={(e) => handleFileChange(e, "crt")}
-                      hidden
-                    />
-                  </label>
-                )}
-              </div>
-
-              {/* Card KEY */}
-              <div className="upload-card">
-                <div className="upload-card-header">
-                  <h3>Clave Privada (.key)</h3>
-                  <p>Archivo de clave privada</p>
+                <div className="cert-active-details">
+                  {certificateAlias && (
+                    <div><span>Alias:</span> <strong>{certificateAlias}</strong></div>
+                  )}
+                  {certificateExpirationDate && (
+                    <div>
+                      <span>Vencimiento:</span> <strong>{certificateExpirationDate}</strong>
+                      {certDaysBadge && (
+                        <span className={`cert-days-badge ${certDaysBadge.cls}`}>{certDaysBadge.text}</span>
+                      )}
+                    </div>
+                  )}
                 </div>
-                {isCertificatesLocked && hasSavedCertificates && !keyFile ? (
-                  <div className="upload-success">
-                    <IconCheck />
-                    <span>Archivo .key subido en sistema</span>
-                  </div>
-                ) : keyFile ? (
-                  <div className="upload-success">
-                    <IconCheck />
-                    <span>{keyFile.name}</span>
-                    <button className="btn-text" onClick={() => setKeyFile(null)}>Cambiar</button>
-                  </div>
-                ) : (
-                  <label className="upload-zone" htmlFor="key-upload">
-                    <IconUpload />
-                    <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
-                    <span className="upload-zone-hint">.key</span>
-                    <input
-                      id="key-upload"
-                      type="file"
-                      accept=".key"
-                      onChange={(e) => handleFileChange(e, "key")}
-                      hidden
-                    />
-                  </label>
-                )}
-              </div>
-            </div>
-
-            <div className="form-actions">
-                {hasSavedCertificates && (
-                  <button type="button" className="btn-secondary" onClick={() => setIsCertificatesLocked((prev) => !prev)}>
-                    {isCertificatesLocked ? "Modificar" : "Bloquear"}
+                <div className="cert-active-actions">
+                  <button
+                    className="btn-secondary"
+                    onClick={() => {
+                      const now = new Date();
+                      const ym = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}`;
+                      setAliasInput(`monday-facturacion-${ym}`);
+                      setCertFlow("guided");
+                      setGuidedStep(1);
+                    }}
+                  >
+                    Renovar certificado
                   </button>
-                )}
-              <button className="btn-primary" onClick={handleUploadCertificates} disabled={isLoading || !crtFile || !keyFile || isCertificatesLocked}>
-                    {isLoading ? "Subiendo..." : "Guardar Certificados"}
-                </button>
-            </div>
-
-            {isCertificatesLocked && hasSavedCertificates && (
-              <p className="fetching-text">Los certificados ya estan cargados. Toca "Modificar" para reemplazarlos.</p>
+                  <button className="btn-text" onClick={() => { setCertFlow("manual"); setIsCertificatesLocked(false); }}>
+                    Subir nuevos archivos manualmente
+                  </button>
+                </div>
+              </div>
             )}
 
-            <div className="info-box" style={{marginTop: "24px"}}>
-              <span className="info-box-icon">🔒</span>
-              <span>
-                <strong>Seguridad:</strong> Tu clave privada se encripta con algoritmos bancarios antes de salir de tu computadora y nunca se guarda en texto plano.
-              </span>
-            </div>
+            {/* ── ESTADO: SOLICITUD PENDIENTE (recovery) ── */}
+            {certificateStatus === "pending_crt" && certFlow !== "guided" && certFlow !== "manual" && (
+              <div className="cert-pending-card">
+                <div className="cert-pending-header">
+                  <span className="cert-pending-dot" />
+                  <div>
+                    <h2 className="cert-active-title">Solicitud pendiente</h2>
+                    <p className="cert-active-sub">
+                      Generaste una solicitud{certificateAlias ? <> con alias <strong>{certificateAlias}</strong></> : null}
+                      {certificateUpdatedAt ? <> el {new Date(certificateUpdatedAt).toLocaleDateString("es-AR")}</> : null}.
+                      Falta subir el archivo <code>.crt</code> que te da ARCA.
+                    </p>
+                  </div>
+                </div>
+                <div className="cert-active-actions">
+                  <button className="btn-primary" onClick={() => { setCertFlow("guided"); setGuidedStep(4); }}>
+                    Continuar — subir el .crt
+                  </button>
+                  <button className="btn-secondary" onClick={handleRedownloadCsr}>
+                    Re-descargar solicitud (.csr)
+                  </button>
+                  <button className="btn-text" onClick={() => { setCertFlow("guided"); setGuidedStep(1); }}>
+                    Empezar de cero
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── ESTADO: SIN CERT + sin flujo elegido → dos tarjetas de entrada ── */}
+            {certificateStatus === "no_cert" && certFlow === null && (
+              <div className="cert-entry-grid">
+                <button
+                  type="button"
+                  className="cert-entry-card primary"
+                  onClick={() => { setCertFlow("guided"); setGuidedStep(1); }}
+                >
+                  <div className="cert-entry-badge">Recomendado</div>
+                  <div className="cert-entry-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#0073ea" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                    </svg>
+                  </div>
+                  <h3>Crear certificado nuevo</h3>
+                  <p>No tengo certificado ARCA todavía o quiero renovarlo. Te guiamos paso a paso.</p>
+                  <span className="cert-entry-cta">Empezar →</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="cert-entry-card"
+                  onClick={() => setCertFlow("manual")}
+                >
+                  <div className="cert-entry-icon">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="#676879" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3v5h5"/>
+                    </svg>
+                  </div>
+                  <h3>Ya tengo mis archivos</h3>
+                  <p>Generé antes mi <code>.crt</code> y <code>.key</code> por mi cuenta y los quiero subir.</p>
+                  <span className="cert-entry-cta">Subir archivos →</span>
+                </button>
+              </div>
+            )}
+
+            {/* ── FLUJO GUIADO ── */}
+            {certFlow === "guided" && (
+              <div className="cert-guided">
+                <div className="cert-guided-header">
+                  <ol className="cert-stepper">
+                    {[
+                      { n: 1, label: "Confirmar datos" },
+                      { n: 2, label: "Descargar solicitud" },
+                      { n: 3, label: "Subir a ARCA" },
+                      { n: 4, label: "Subir certificado" }
+                    ].map((s) => (
+                      <li
+                        key={s.n}
+                        className={`cert-step ${guidedStep === s.n ? "current" : ""} ${guidedStep > s.n ? "done" : ""}`}
+                      >
+                        <span className="cert-step-num">{guidedStep > s.n ? "✓" : s.n}</span>
+                        <span className="cert-step-label">{s.label}</span>
+                      </li>
+                    ))}
+                  </ol>
+                  <button className="btn-text cert-guided-close" onClick={resetCertFlow}>Cambiar método</button>
+                </div>
+
+                {/* ─── PASO 1: Confirmar datos ─── */}
+                {guidedStep === 1 && (
+                  <div className="cert-step-panel">
+                    <h3 className="cert-step-title">Confirmá los datos del certificado</h3>
+                    <p className="cert-step-desc">
+                      Estos datos van a ir en la solicitud que firmará ARCA. Si algo está mal, corregilo en la sección "Datos Fiscales" antes de continuar.
+                    </p>
+
+                    {certificateStatus === "active" && (
+                      <div className="cert-warn-box">
+                        <strong>Estás renovando tu certificado.</strong> Al generar una nueva solicitud, el certificado actual queda reemplazado y no vas a poder facturar hasta completar el paso 4 con el <code>.crt</code> nuevo. Además, usá un alias distinto al anterior — ARCA no permite repetirlos.
+                      </div>
+                    )}
+
+                    {(!fiscal.razonSocial || !fiscal.cuit) ? (
+                      <div className="cert-warn-box">
+                        <strong>Faltan datos fiscales.</strong> Completá razón social y CUIT en la sección "Datos Fiscales" antes de generar la solicitud.
+                      </div>
+                    ) : (
+                      <div className="cert-confirm-grid">
+                        <div className="cert-confirm-row">
+                          <span>Razón Social</span><strong>{fiscal.razonSocial || "—"}</strong>
+                        </div>
+                        <div className="cert-confirm-row">
+                          <span>CUIT</span><strong>{fiscal.cuit || "—"}</strong>
+                        </div>
+                        <div className="cert-confirm-row">
+                          <span>Alias del certificado</span>
+                          <input
+                            className="form-input cert-alias-input"
+                            type="text"
+                            value={aliasInput}
+                            onChange={(e) => setAliasInput(e.target.value)}
+                            placeholder="monday-facturacion"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="info-box">
+                      <span className="info-box-icon">🔒</span>
+                      <span>
+                        <strong>Tu clave privada:</strong> se genera y guarda cifrada con AES-256. No la vas a ver ni descargar — no hace falta que la manejes.
+                      </span>
+                    </div>
+
+                    <div className="form-actions">
+                      <button className="btn-secondary" onClick={resetCertFlow}>Cancelar</button>
+                      <button
+                        className="btn-primary"
+                        onClick={handleGenerateCsr}
+                        disabled={isLoading || !fiscal.razonSocial || !fiscal.cuit || !aliasInput.trim()}
+                      >
+                        {isLoading ? "Generando..." : "Generar solicitud y descargar"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── PASO 2 (opcional si ya se descargó) ─── */}
+                {guidedStep === 2 && (
+                  <div className="cert-step-panel">
+                    <h3 className="cert-step-title">Descargá tu solicitud</h3>
+                    <p className="cert-step-desc">
+                      Si el archivo no se descargó, tocá el botón para bajarlo de nuevo.
+                    </p>
+                    <div className="form-actions">
+                      <button className="btn-secondary" onClick={handleRedownloadCsr} disabled={isLoading}>
+                        Re-descargar solicitud
+                      </button>
+                      <button className="btn-primary" onClick={() => setGuidedStep(3)}>
+                        Ya lo tengo — siguiente
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── PASO 3: Instrucciones ARCA ─── */}
+                {guidedStep === 3 && (
+                  <div className="cert-step-panel">
+                    <h3 className="cert-step-title">Subí la solicitud a ARCA</h3>
+                    <p className="cert-step-desc">
+                      Seguí estos pasos en el portal de ARCA para que generen tu certificado.
+                    </p>
+
+                    <label className="cert-adhered-check">
+                      <input
+                        type="checkbox"
+                        checked={serviceAdhered}
+                        onChange={(e) => setServiceAdhered(e.target.checked)}
+                      />
+                      <span>Ya tengo adherido el servicio "Administración de Certificados Digitales" en ARCA</span>
+                    </label>
+
+                    <ol className="cert-instructions">
+                      <li>
+                        Entrá a <a href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">auth.afip.gob.ar</a> e iniciá sesión con tu CUIT y clave fiscal.
+                      </li>
+                      {!serviceAdhered && (
+                        <>
+                          <li>
+                            Menú <strong>Administrador de Relaciones de Clave Fiscal</strong> → <strong>Adherir Servicio</strong>.
+                          </li>
+                          <li>
+                            Buscá <strong>"Administración de Certificados Digitales"</strong> (AFIP / ARCA) → Confirmar adhesión.
+                          </li>
+                        </>
+                      )}
+                      <li>
+                        Volvé al menú principal → entrá a <strong>Administración de Certificados Digitales</strong>.
+                      </li>
+                      <li>
+                        Click en <strong>Agregar alias</strong>.
+                      </li>
+                      <li>
+                        Pegá este alias:{" "}
+                        <span className="cert-alias-copy">
+                          <code>{certificateAlias || aliasInput}</code>
+                          <button
+                            type="button"
+                            className="btn-text"
+                            onClick={() => {
+                              navigator.clipboard?.writeText(certificateAlias || aliasInput);
+                              showToast("success", "Alias copiado");
+                            }}
+                          >Copiar</button>
+                        </span>
+                      </li>
+                      <li>Adjuntá el archivo <code>.csr</code> que descargaste en el paso anterior.</li>
+                      <li>Click <strong>Agregar alias</strong> → ARCA lo confirma y aparece en tu lista.</li>
+                      <li>
+                        Entrá al alias recién creado y <strong>descargá el archivo .crt</strong>.
+                      </li>
+                    </ol>
+
+                    <div className="form-actions">
+                      <button className="btn-secondary" onClick={() => setGuidedStep(2)}>Volver</button>
+                      <a
+                        className="btn-secondary"
+                        href="https://auth.afip.gob.ar/contribuyente_/login.xhtml"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        Abrir portal de ARCA
+                      </a>
+                      <button className="btn-primary" onClick={() => setGuidedStep(4)}>
+                        Ya tengo el .crt — siguiente
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ─── PASO 4: Subir .crt ─── */}
+                {guidedStep === 4 && (
+                  <div className="cert-step-panel">
+                    <h3 className="cert-step-title">Subí el certificado que te dio ARCA</h3>
+                    <p className="cert-step-desc">
+                      Adjuntá el archivo <code>.crt</code> que descargaste del alias <strong>{certificateAlias || "—"}</strong>.
+                    </p>
+
+                    <div className="cards-row">
+                      <div className="upload-card">
+                        <div className="upload-card-header">
+                          <h3>Certificado (.crt)</h3>
+                          <p>Archivo que descargaste de ARCA</p>
+                        </div>
+                        {finalCrtFile ? (
+                          <div className="upload-success">
+                            <IconCheck />
+                            <span>{finalCrtFile.name}</span>
+                            <button className="btn-text" onClick={() => setFinalCrtFile(null)}>Cambiar</button>
+                          </div>
+                        ) : (
+                          <label className="upload-zone" htmlFor="crt-final-upload">
+                            <IconUpload />
+                            <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                            <span className="upload-zone-hint">.crt</span>
+                            <input
+                              id="crt-final-upload"
+                              type="file"
+                              accept=".crt"
+                              onChange={(e) => setFinalCrtFile(e.target.files[0] || null)}
+                              hidden
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="form-actions">
+                      <button className="btn-secondary" onClick={() => setGuidedStep(3)}>Volver</button>
+                      <button
+                        className="btn-primary"
+                        onClick={handleFinalizeCsr}
+                        disabled={isLoading || !finalCrtFile}
+                      >
+                        {isLoading ? "Validando..." : "Activar certificado"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ── FLUJO MANUAL (legacy) ── */}
+            {certFlow === "manual" && (
+              <div className="cert-manual">
+                <div className="cert-guided-header">
+                  <h3 className="cert-step-title" style={{margin: 0}}>Subí tus archivos .crt y .key</h3>
+                  <button className="btn-text cert-guided-close" onClick={resetCertFlow}>Cambiar método</button>
+                </div>
+                <p className="cert-step-desc">
+                  Si ya tenés ambos archivos generados, adjuntalos. Validamos que sean pareja antes de guardarlos.
+                </p>
+
+                <div className="cards-row">
+                  <div className="upload-card">
+                    <div className="upload-card-header">
+                      <h3>Certificado (.crt)</h3>
+                      <p>Archivo de certificado público</p>
+                    </div>
+                    {crtFile ? (
+                      <div className="upload-success">
+                        <IconCheck />
+                        <span>{crtFile.name}</span>
+                        <button className="btn-text" onClick={() => setCrtFile(null)}>Cambiar</button>
+                      </div>
+                    ) : (
+                      <label className="upload-zone" htmlFor="crt-upload">
+                        <IconUpload />
+                        <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                        <span className="upload-zone-hint">.crt</span>
+                        <input
+                          id="crt-upload"
+                          type="file"
+                          accept=".crt"
+                          onChange={(e) => handleFileChange(e, "crt")}
+                          hidden
+                        />
+                      </label>
+                    )}
+                  </div>
+
+                  <div className="upload-card">
+                    <div className="upload-card-header">
+                      <h3>Clave Privada (.key)</h3>
+                      <p>Archivo de clave privada</p>
+                    </div>
+                    {keyFile ? (
+                      <div className="upload-success">
+                        <IconCheck />
+                        <span>{keyFile.name}</span>
+                        <button className="btn-text" onClick={() => setKeyFile(null)}>Cambiar</button>
+                      </div>
+                    ) : (
+                      <label className="upload-zone" htmlFor="key-upload">
+                        <IconUpload />
+                        <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                        <span className="upload-zone-hint">.key</span>
+                        <input
+                          id="key-upload"
+                          type="file"
+                          accept=".key"
+                          onChange={(e) => handleFileChange(e, "key")}
+                          hidden
+                        />
+                      </label>
+                    )}
+                  </div>
+                </div>
+
+                <div className="form-actions">
+                  <button className="btn-secondary" onClick={resetCertFlow}>Cancelar</button>
+                  <button
+                    className="btn-primary"
+                    onClick={handleUploadCertificates}
+                    disabled={isLoading || !crtFile || !keyFile}
+                  >
+                    {isLoading ? "Subiendo..." : "Guardar certificados"}
+                  </button>
+                </div>
+
+                <div className="info-box" style={{marginTop: "16px"}}>
+                  <span className="info-box-icon">🔒</span>
+                  <span>
+                    <strong>Seguridad:</strong> tu clave privada se cifra con AES-256 antes de guardarse y nunca se expone en texto plano.
+                  </span>
+                </div>
+              </div>
+            )}
           </section>
         )}
 
