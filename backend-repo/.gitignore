@@ -1,5 +1,18 @@
-.env
+# Dependencias
 node_modules/
-uploads/
+
+# Entorno local
+.env
+.env.local
 *.log
+
+# Outputs locales / tests
 test-output/
+uploads/
+
+# Build artifact del push a Monday Code
+code.tar.gz
+
+# Build del frontend copiado al backend (se regenera con `npm run copy-frontend`)
+public/assets/
+public/index.html
