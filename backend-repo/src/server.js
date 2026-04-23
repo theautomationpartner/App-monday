@@ -49,7 +49,8 @@ const upload = multer({ storage });
 
 async function getCompanyByMondayAccountId(mondayAccountId) {
     const companyQuery = `
-        SELECT id, monday_account_id, business_name, cuit, default_point_of_sale, address, start_date
+        SELECT id, monday_account_id, business_name, cuit, default_point_of_sale, address, start_date,
+               phone, email, website, logo_base64, logo_mime_type
         FROM companies
         WHERE monday_account_id::text = $1
         LIMIT 1;
@@ -326,9 +327,14 @@ function parseAuthorizationToken(req) {
 function extractMondayIdentity(decodedToken) {
     const dat = decodedToken?.dat || decodedToken?.data || {};
     const accountId = dat.account_id || decodedToken?.account_id || decodedToken?.accountId || null;
+    const userId    = dat.user_id    || decodedToken?.user_id    || null;
+    const appId     = dat.app_id     || null;
+    const appVersionId = dat.app_version_id || null;
     return {
         accountId: accountId ? String(accountId) : null,
-        userId: null,
+        userId:    userId    ? String(userId)    : null,
+        appId,
+        appVersionId,
     };
 }
 
@@ -359,7 +365,7 @@ function requireMondaySession(req, res, next) {
             return res.status(401).json({ error: 'sessionToken inválido: account_id ausente' });
         }
 
-        req.mondayIdentity = identity;
+        req.mondayIdentity = { ...identity, sessionToken: token };
         return next();
     } catch (err) {
         console.log('[session] FAIL: jwt.verify threw:', err.name, '-', err.message);
@@ -833,6 +839,241 @@ async function ensureAfipCredentialsColumns() {
     `).catch(() => { /* ya eran nullable */ });
 }
 
+// ─── Companies: columnas opcionales de contacto y branding ──────────────────
+// Datos opcionales que el usuario puede completar en "Datos Fiscales" para
+// luego personalizar el PDF de la factura (teléfono, email, web, logo).
+async function ensureCompaniesExtraColumns() {
+    await db.query(`
+        ALTER TABLE companies
+            ADD COLUMN IF NOT EXISTS phone VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS email VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS website VARCHAR(500),
+            ADD COLUMN IF NOT EXISTS logo_base64 TEXT,
+            ADD COLUMN IF NOT EXISTS logo_mime_type VARCHAR(50)
+    `);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// CAPTURA DE INSTALACIONES — leads a tablero Monday del developer
+// ═══════════════════════════════════════════════════════════════════════
+// Cuando una cuenta abre la app por primera vez, detectamos que no existe
+// en `installation_leads` y escribimos un item en el tablero de leads del
+// developer con info de la cuenta, el usuario y el tablero donde instaló.
+//
+// Requiere env/secrets configurados (Monday Code Developer Center):
+//   - DEV_MONDAY_TOKEN (secret) — personal API token del developer
+//   - DEV_LEADS_BOARD_ID (env)  — ID del tablero de leads del developer
+
+// Column IDs del tablero de leads (mapeados manualmente al tablero).
+// Si el developer cambia columnas, hay que actualizar estos IDs.
+const LEADS_COLS = {
+    accountId:  'text_mm2eca9q',
+    email:      'email_mm2e4cea',
+    name:       'text_mm2e50rs',
+    date:       'date_mm2er78w',
+    plan:       'dropdown_mm2ewwp6',
+    workspace:  'text_mm2pj3t2',
+    boardId:    'text_mm2pmpv9',
+    boardName:  'text_mm2p11f7',
+    itemCount:  'numeric_mm2pmt4p',
+    appVersion: 'text_mm2pcr2h',
+};
+
+// Crea la tabla que trackea qué cuentas ya fueron notificadas al tablero de
+// leads. Usamos `monday_account_id` como UNIQUE para que aunque la cuenta
+// abra la app muchas veces, el item se crea una sola vez.
+async function ensureInstallationLeadsTable() {
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS installation_leads (
+            id SERIAL PRIMARY KEY,
+            monday_account_id TEXT NOT NULL UNIQUE,
+            notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            lead_item_id TEXT,
+            notification_error TEXT
+        )
+    `);
+}
+
+// Query genérica a Monday GraphQL con un token dado.
+async function mondayGql(token, query, variables = {}) {
+    const res = await fetch('https://api.monday.com/v2', {
+        method: 'POST',
+        headers: {
+            'Authorization': token,
+            'Content-Type': 'application/json',
+            'API-Version': '2024-10',
+        },
+        body: JSON.stringify({ query, variables }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || json.errors || json.error_message) {
+        throw new Error(`Monday GraphQL error: ${JSON.stringify(json.errors || json.error_message || res.status)}`);
+    }
+    return json.data;
+}
+
+// Trae info de la cuenta del cliente (nombre empresa, plan, usuario que
+// abrió la app, tablero). Usa el sessionToken del cliente.
+async function fetchClientAccountInfo(sessionToken, boardId) {
+    const query = `
+        query($boardIds: [ID!]) {
+            me { id email name }
+            account { id name slug tier country_code }
+            boards(ids: $boardIds) {
+                id
+                name
+                items_count
+                workspace { id name }
+            }
+        }
+    `;
+    return mondayGql(sessionToken, query, { boardIds: boardId ? [String(boardId)] : [] });
+}
+
+// Crea el item en el tablero de leads del developer usando DEV_MONDAY_TOKEN.
+async function createLeadItem(devToken, leadsBoardId, payload) {
+    const columnValues = {
+        [LEADS_COLS.accountId]:  String(payload.accountId || ''),
+        [LEADS_COLS.email]:      { email: payload.email || '', text: payload.email || '' },
+        [LEADS_COLS.name]:       String(payload.name || ''),
+        [LEADS_COLS.date]:       { date: new Date().toISOString().slice(0, 10) },
+        [LEADS_COLS.plan]:       { labels: [payload.plan || 'unknown'] },
+        [LEADS_COLS.workspace]:  String(payload.workspace || ''),
+        [LEADS_COLS.boardId]:    String(payload.boardId || ''),
+        [LEADS_COLS.boardName]:  String(payload.boardName || ''),
+        [LEADS_COLS.itemCount]:  String(payload.itemCount || 0),
+        [LEADS_COLS.appVersion]: String(payload.appVersion || ''),
+    };
+
+    const mutation = `
+        mutation($boardId: ID!, $itemName: String!, $cv: JSON!) {
+            create_item(
+                board_id: $boardId,
+                item_name: $itemName,
+                column_values: $cv,
+                create_labels_if_missing: true
+            ) {
+                id
+            }
+        }
+    `;
+    const data = await mondayGql(devToken, mutation, {
+        boardId: String(leadsBoardId),
+        itemName: payload.itemName || `Account ${payload.accountId}`,
+        cv: JSON.stringify(columnValues),
+    });
+    return data?.create_item?.id || null;
+}
+
+// Orquestador: detecta si la cuenta es nueva, trae info del cliente, crea el
+// lead en el tablero del developer y marca en la DB para no duplicar.
+// Llamado en background — nunca debe tirar error al caller (solo loggear).
+async function notifyNewInstallationIfNeeded({ accountId, sessionToken, boardId, appVersionId }) {
+    try {
+        await ensureInstallationLeadsTable();
+
+        // ¿Ya se notificó esta cuenta?
+        const existing = await db.query(
+            'SELECT id FROM installation_leads WHERE monday_account_id = $1 LIMIT 1',
+            [String(accountId)]
+        );
+        if (existing.rows.length > 0) return; // ya notificada, no hacemos nada
+
+        const devToken = process.env.DEV_MONDAY_TOKEN;
+        const leadsBoardId = process.env.DEV_LEADS_BOARD_ID;
+        if (!devToken || !leadsBoardId) {
+            console.warn('[install-notify] DEV_MONDAY_TOKEN o DEV_LEADS_BOARD_ID no configurados — skip');
+            return;
+        }
+
+        // Intentar traer info del cliente con su sessionToken
+        let clientInfo = null;
+        let fetchError = null;
+        try {
+            clientInfo = await fetchClientAccountInfo(sessionToken, boardId);
+        } catch (err) {
+            fetchError = err.message;
+            console.warn('[install-notify] No se pudo traer info del cliente:', err.message);
+        }
+
+        const board = clientInfo?.boards?.[0] || null;
+        const accountName = clientInfo?.account?.name || `Cuenta ${accountId}`;
+        const payload = {
+            accountId,
+            itemName:   accountName,
+            email:      clientInfo?.me?.email || '',
+            name:       clientInfo?.me?.name || '',
+            plan:       clientInfo?.account?.tier || 'unknown',
+            workspace:  board?.workspace?.name || '',
+            boardId:    board?.id || boardId || '',
+            boardName:  board?.name || '',
+            itemCount:  board?.items_count || 0,
+            appVersion: appVersionId ? String(appVersionId) : '',
+        };
+
+        let leadItemId = null;
+        let createError = null;
+        try {
+            leadItemId = await createLeadItem(devToken, leadsBoardId, payload);
+            console.log(`[install-notify] Lead creado en tablero: item_id=${leadItemId} account=${accountName}`);
+        } catch (err) {
+            createError = err.message;
+            console.error('[install-notify] Error al crear lead en tablero:', err.message);
+        }
+
+        // Marcar como notificada (incluso si falló el create, para no reintentar en loop)
+        await db.query(
+            `INSERT INTO installation_leads (monday_account_id, lead_item_id, notification_error)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (monday_account_id) DO NOTHING`,
+            [String(accountId), leadItemId, fetchError || createError || null]
+        );
+    } catch (err) {
+        console.error('[install-notify] Error inesperado:', err);
+    }
+}
+
+// ─── Helpers de validación de datos de contacto (suaves) ────────────────────
+const ALLOWED_LOGO_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/jpg', 'image/svg+xml', 'image/webp']);
+const MAX_LOGO_BYTES = 1024 * 1024; // 1 MB
+
+function normalizeOptionalText(value, maxLen) {
+    if (value == null) return null;
+    const trimmed = String(value).trim();
+    if (!trimmed) return null;
+    return maxLen ? trimmed.slice(0, maxLen) : trimmed;
+}
+
+function normalizeEmail(value) {
+    const trimmed = normalizeOptionalText(value, 255);
+    if (!trimmed) return { value: null, error: null };
+    // Regex permisivo: algo@algo.algo. No pretende ser RFC-completo.
+    const ok = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed);
+    if (!ok) return { value: null, error: 'El email no tiene un formato válido' };
+    return { value: trimmed.toLowerCase(), error: null };
+}
+
+function normalizeWebsite(value) {
+    const trimmed = normalizeOptionalText(value, 500);
+    if (!trimmed) return { value: null, error: null };
+    // Si no trae protocolo, asumimos https.
+    const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+    try {
+        const u = new URL(withScheme);
+        if (!u.hostname.includes('.')) {
+            return { value: null, error: 'La dirección web no es válida' };
+        }
+        return { value: withScheme, error: null };
+    } catch {
+        return { value: null, error: 'La dirección web no es válida' };
+    }
+}
+
+function normalizePhone(value) {
+    const trimmed = normalizeOptionalText(value, 50);
+    return { value: trimmed, error: null };
+}
+
 // ─── Helpers de certificados ────────────────────────────────────────────────
 /**
  * Valida que una clave privada y un certificado sean pareja (misma clave pública).
@@ -1056,7 +1297,20 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
         app_feature_id: app_feature_id || null
     });
 
+    // Captura de instalación en background — si esta cuenta abre la app por
+    // primera vez, crea un item en el tablero de leads del developer.
+    // No bloquea la respuesta; errores se loggean pero no rompen la request.
+    setImmediate(() => {
+        notifyNewInstallationIfNeeded({
+            accountId:    mondayAccountId,
+            sessionToken: req.mondayIdentity?.sessionToken,
+            boardId:      board_id,
+            appVersionId: req.mondayIdentity?.appVersionId,
+        }).catch((err) => console.error('[install-notify] top-level error:', err));
+    });
+
     try {
+        await ensureCompaniesExtraColumns();
         const company = await getCompanyByMondayAccountId(mondayAccountId);
 
         if (!company) {
@@ -1155,7 +1409,14 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                 cuit: company.cuit || '',
                 default_point_of_sale: company.default_point_of_sale || '',
                 domicilio: company.address || '',
-                fecha_inicio: company.start_date || ''
+                fecha_inicio: company.start_date || '',
+                phone: company.phone || '',
+                email: company.email || '',
+                website: company.website || '',
+                logo_data_url: (company.logo_base64 && company.logo_mime_type)
+                    ? `data:${company.logo_mime_type};base64,${company.logo_base64}`
+                    : null,
+                has_logo: Boolean(company.logo_base64)
             },
             certificates: certRow
                 ? {
@@ -1611,7 +1872,10 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
 });
 
 app.post('/api/companies', requireMondaySession, async (req, res) => {
-    const { monday_account_id, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio } = req.body;
+    const {
+        monday_account_id, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio,
+        phone, email, website
+    } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
 
     if (!accountId) {
@@ -1620,10 +1884,18 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
 
     if (!ensureAccountMatch(req, res, accountId)) return;
 
+    const phoneNorm = normalizePhone(phone);
+    const emailNorm = normalizeEmail(email);
+    const websiteNorm = normalizeWebsite(website);
+
+    if (emailNorm.error)   return res.status(400).json({ error: emailNorm.error,   code: 'INVALID_EMAIL' });
+    if (websiteNorm.error) return res.status(400).json({ error: websiteNorm.error, code: 'INVALID_WEBSITE' });
+
     try {
+        await ensureCompaniesExtraColumns();
         const query = `
-            INSERT INTO companies (monday_account_id, business_name, cuit, default_point_of_sale, address, start_date)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO companies (monday_account_id, business_name, cuit, default_point_of_sale, address, start_date, phone, email, website)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (monday_account_id)
             DO UPDATE SET
                 business_name = EXCLUDED.business_name,
@@ -1631,18 +1903,97 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
                 default_point_of_sale = EXCLUDED.default_point_of_sale,
                 address = EXCLUDED.address,
                 start_date = EXCLUDED.start_date,
+                phone = EXCLUDED.phone,
+                email = EXCLUDED.email,
+                website = EXCLUDED.website,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
         `;
-        const result = await db.query(query, [accountId, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio]);
+        const result = await db.query(query, [
+            accountId, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio,
+            phoneNorm.value, emailNorm.value, websiteNorm.value
+        ]);
         res.json(result.rows[0]);
     } catch (err) {
         console.error("❌ Error en DB:", err);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Error al guardar los datos fiscales',
             details: err.message,
-            code: err.code 
+            code: err.code
         });
+    }
+});
+
+// ─── Logo de la empresa (opcional, para el PDF) ─────────────────────────────
+// Sube una imagen y la guarda como base64 en companies.logo_base64. Limitado a
+// 500 KB y a tipos de imagen comunes. La empresa ya tiene que estar creada.
+app.post('/api/companies/logo', requireMondaySession, upload.single('logo'), async (req, res) => {
+    const accountId = String(req.body.monday_account_id || req.mondayIdentity.accountId || '');
+
+    if (!accountId) return res.status(400).json({ error: 'monday_account_id es obligatorio' });
+    if (!ensureAccountMatch(req, res, accountId)) return;
+    if (!req.file)  return res.status(400).json({ error: 'Falta el archivo de logo' });
+
+    const { mimetype, size, buffer } = req.file;
+    if (!ALLOWED_LOGO_MIME_TYPES.has(mimetype)) {
+        return res.status(400).json({
+            error: 'Formato de imagen no permitido. Usá PNG, JPG, SVG o WebP.',
+            code: 'INVALID_LOGO_MIME'
+        });
+    }
+    if (size > MAX_LOGO_BYTES) {
+        return res.status(400).json({
+            error: `El logo supera el tamaño máximo (${Math.round(MAX_LOGO_BYTES / 1024)} KB).`,
+            code: 'LOGO_TOO_LARGE'
+        });
+    }
+
+    try {
+        await ensureCompaniesExtraColumns();
+        const result = await db.query(
+            `UPDATE companies
+                SET logo_base64 = $2,
+                    logo_mime_type = $3,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE monday_account_id = $1
+              RETURNING id`,
+            [accountId, buffer.toString('base64'), mimetype]
+        );
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Empresa no encontrada. Guardá los datos fiscales primero.' });
+        }
+        res.json({
+            message: 'Logo guardado correctamente',
+            logo_data_url: `data:${mimetype};base64,${buffer.toString('base64')}`
+        });
+    } catch (err) {
+        console.error('❌ Error al guardar logo:', err);
+        res.status(500).json({ error: 'Error al guardar el logo', details: err.message });
+    }
+});
+
+app.delete('/api/companies/logo/:mondayAccountId', requireMondaySession, async (req, res) => {
+    const { mondayAccountId } = req.params;
+    if (!ensureAccountMatch(req, res, mondayAccountId)) return;
+
+    try {
+        await ensureCompaniesExtraColumns();
+        const result = await db.query(
+            `UPDATE companies
+                SET logo_base64 = NULL,
+                    logo_mime_type = NULL,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE monday_account_id = $1
+              RETURNING id`,
+            [String(mondayAccountId)]
+        );
+        if (result.rowCount === 0) {
+            return res.status(404).json({ error: 'Empresa no encontrada' });
+        }
+        res.json({ message: 'Logo eliminado' });
+    } catch (err) {
+        console.error('❌ Error al eliminar logo:', err);
+        res.status(500).json({ error: 'Error al eliminar el logo', details: err.message });
     }
 });
 
@@ -2575,8 +2926,11 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             }));
 
             const importeNeto  = lineas.reduce((s, l) => s + l.quantity * l.unit_price, 0);
-            const ivaRate      = discriminaIva ? alicuotaConfig.rate : 0;
-            const importeIva   = discriminaIva ? Number((importeNeto * ivaRate).toFixed(2)) : 0;
+            // AFIP exige el desglose de IVA en el XML para A y B (emisor RI).
+            // C va sin IVA porque emisor Monotributo/Exento no factura IVA.
+            // discriminaIva controla solo la presentación del PDF, no el cálculo fiscal.
+            const ivaRate      = (tipo === 'C') ? 0 : alicuotaConfig.rate;
+            const importeIva   = Number((importeNeto * ivaRate).toFixed(2));
             const importeTotal = Number((importeNeto + importeIva).toFixed(2));
 
             const draft = {
@@ -3025,6 +3379,18 @@ async function runStartupMigrations() {
         console.log('[migrations] afip_credentials columnas aseguradas');
     } catch (err) {
         console.error('[migrations] afip_credentials error:', err.message);
+    }
+    try {
+        await ensureCompaniesExtraColumns();
+        console.log('[migrations] companies columnas extra (contacto/branding) aseguradas');
+    } catch (err) {
+        console.error('[migrations] companies extra error:', err.message);
+    }
+    try {
+        await ensureInstallationLeadsTable();
+        console.log('[migrations] installation_leads table asegurada');
+    } catch (err) {
+        console.error('[migrations] installation_leads error:', err.message);
     }
 }
 
