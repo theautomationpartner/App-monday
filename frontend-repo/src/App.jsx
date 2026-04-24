@@ -161,6 +161,7 @@ const App = () => {
     cuit: "",
     fechaInicio: "",
     razonSocial: "",
+    nombreFantasia: "",
     domicilio: "",
     telefono: "",
     email: "",
@@ -183,6 +184,7 @@ const App = () => {
   const [columnsLoadError, setColumnsLoadError] = useState(null);
   const [boardConfig, setBoardConfig] = useState({
     status_column_id: "",
+    invoice_pdf_column_id: "", // columna tipo "file" donde se adjunta el PDF emitido
     trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
     processing_label: COMPROBANTE_STATUS_FLOW.processing,
     success_label: COMPROBANTE_STATUS_FLOW.success,
@@ -205,8 +207,17 @@ const App = () => {
     "alicuota_iva",
   ];
   const optionalMappingFields = []; // ya no hay opcionales
-  const mappingCompleted = requiredMappingFields.every((field) => Boolean(mapping[field]));
-  const mappedRequiredCount = requiredMappingFields.filter((field) => Boolean(mapping[field])).length;
+  // Campos obligatorios de operación (columnas del tablero, no del mapeo de datos):
+  //   - status_column_id: columna Status donde ocurre el trigger de emisión
+  //   - invoice_pdf_column_id: columna File donde se sube el PDF generado
+  const operationCompleted = Boolean(boardConfig.status_column_id) && Boolean(boardConfig.invoice_pdf_column_id);
+  const mappingCompleted = requiredMappingFields.every((field) => Boolean(mapping[field])) && operationCompleted;
+  const operationMappedCount =
+    (Boolean(boardConfig.status_column_id) ? 1 : 0) +
+    (Boolean(boardConfig.invoice_pdf_column_id) ? 1 : 0);
+  const mappedRequiredCount =
+    requiredMappingFields.filter((field) => Boolean(mapping[field])).length + operationMappedCount;
+  const totalRequiredCount = requiredMappingFields.length + 2; // +2: status + invoice pdf columns
   const mappedOptionalCount = 0;
 
   const normalizeText = (value) =>
@@ -219,6 +230,10 @@ const App = () => {
 
   const statusColumns = columns.filter((column) =>
     ["status", "color", "dropdown"].includes(column.type)
+  );
+  // Columnas tipo "file" / "archivo" — para subir el PDF de la factura emitida
+  const fileColumns = columns.filter((column) =>
+    ["file", "files", "document", "doc"].includes(column.type)
   );
 
   useEffect(() => {
@@ -437,6 +452,7 @@ const App = () => {
               ? new Date(data.fiscalData.fecha_inicio).toISOString().split("T")[0]
               : "",
             razonSocial: data.fiscalData.business_name || "",
+            nombreFantasia: data.fiscalData.nombre_fantasia || data.fiscalData.business_name || "",
             domicilio: data.fiscalData.domicilio || "",
             telefono: data.fiscalData.phone || "",
             email: data.fiscalData.email || "",
@@ -483,8 +499,12 @@ const App = () => {
         }
 
         if (data?.boardConfig && typeof data.boardConfig === "object") {
+          // Extraer el invoice_pdf_column_id del required_columns_json (lo guarda el backend como array)
+          const requiredCols = Array.isArray(data.boardConfig.required_columns) ? data.boardConfig.required_columns : [];
+          const invoicePdfCol = requiredCols.find((c) => c?.key === "invoice_pdf");
           setBoardConfig({
             status_column_id: data.boardConfig.status_column_id || "",
+            invoice_pdf_column_id: invoicePdfCol?.resolved_column_id || "",
             trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
             processing_label: COMPROBANTE_STATUS_FLOW.processing,
             success_label: COMPROBANTE_STATUS_FLOW.success,
@@ -591,6 +611,16 @@ const App = () => {
     }));
   }, [boardConfig.status_column_id, statusColumns]);
 
+  // Auto-detect: si el tablero tiene una sola columna file, la usamos como PDF por default.
+  useEffect(() => {
+    if (boardConfig.invoice_pdf_column_id || fileColumns.length === 0) return;
+
+    setBoardConfig((prev) => ({
+      ...prev,
+      invoice_pdf_column_id: fileColumns[0].value,
+    }));
+  }, [boardConfig.invoice_pdf_column_id, fileColumns]);
+
   // Al salir de una sección con datos guardados, salimos del modo edición
   // (descartando cambios pendientes — equivale a un "Cancelar" implícito).
   useEffect(() => {
@@ -688,6 +718,7 @@ const App = () => {
         view_id: viewIdFromHref,
         app_feature_id: appFeatureId,
         business_name: fiscal.razonSocial,
+        nombre_fantasia: fiscal.nombreFantasia,
         cuit: fiscal.cuit,
         default_point_of_sale: parseInt(fiscal.puntoVenta) || 0,
         domicilio: fiscal.domicilio,
@@ -919,6 +950,7 @@ const App = () => {
 
   const fiscalFormCompleted =
     Boolean(fiscal.razonSocial?.trim()) &&
+    Boolean(fiscal.nombreFantasia?.trim()) &&
     Boolean(fiscal.cuit?.trim()) &&
     Boolean(fiscal.puntoVenta?.toString().trim()) &&
     Boolean(fiscal.fechaInicio) &&
@@ -976,6 +1008,16 @@ const App = () => {
     }
     setMissingMappingFields([]);
 
+    // Validar columnas de operación (status + PDF) antes de guardar
+    if (!boardConfig.status_column_id) {
+      showToast("error", "Elegí la Columna de estado del tablero antes de guardar");
+      return;
+    }
+    if (!boardConfig.invoice_pdf_column_id) {
+      showToast("error", "Elegí la Columna Comprobante PDF antes de guardar");
+      return;
+    }
+
     if (!context?.account?.id || !boardId) {
       showToast("error", "No se pudo identificar cuenta/tablero para guardar el mapeo");
       return;
@@ -983,6 +1025,7 @@ const App = () => {
 
     setIsLoading(true);
     try {
+      // 1) Guardar el mapeo visual de campos
       await api.post(`/mappings`, {
         monday_account_id: context.account.id.toString(),
         board_id: boardId,
@@ -990,6 +1033,21 @@ const App = () => {
         app_feature_id: appFeatureId,
         mapping,
         is_locked: true,
+      });
+
+      // 2) Guardar el board-config con las columnas de operación (status + PDF)
+      await api.post(`/board-config`, {
+        monday_account_id: context.account.id.toString(),
+        board_id: boardId,
+        view_id: viewIdFromHref,
+        app_feature_id: appFeatureId,
+        status_column_id: boardConfig.status_column_id,
+        trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
+        success_label: COMPROBANTE_STATUS_FLOW.success,
+        error_label: COMPROBANTE_STATUS_FLOW.error,
+        required_columns: [
+          { key: "invoice_pdf", resolved_column_id: boardConfig.invoice_pdf_column_id },
+        ],
       });
 
       setHasSavedMapping(true);
@@ -1219,6 +1277,10 @@ const App = () => {
                       <span className={`data-value ${!fiscal.razonSocial ? "empty" : ""}`}>{fiscal.razonSocial || "—"}</span>
                     </div>
                     <div className="data-row">
+                      <span className="data-label">Nombre de Fantasía</span>
+                      <span className={`data-value ${!fiscal.nombreFantasia ? "empty" : ""}`}>{fiscal.nombreFantasia || "—"}</span>
+                    </div>
+                    <div className="data-row">
                       <span className="data-label">Punto de Venta</span>
                       <span className={`data-value mono ${!fiscal.puntoVenta ? "empty" : ""}`}>{fiscal.puntoVenta || "—"}</span>
                     </div>
@@ -1297,6 +1359,18 @@ const App = () => {
                   value={fiscal.razonSocial}
                   onChange={(e) => handleFiscalChange("razonSocial", e.target.value)}
                 />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Nombre de Fantasía</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  placeholder="Ej: Martín Melendrez"
+                  value={fiscal.nombreFantasia}
+                  onChange={(e) => handleFiscalChange("nombreFantasia", e.target.value)}
+                />
+                <p className="form-hint">Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné tu razón social.</p>
               </div>
 
               <div className="form-group">
@@ -1429,7 +1503,7 @@ const App = () => {
                       </div>
                       <div className="invoice-mockup-data">
                         <div className="invoice-mockup-name">
-                          {(fiscal.razonSocial || "TU EMPRESA S.A.").toUpperCase()}
+                          {(fiscal.nombreFantasia || fiscal.razonSocial || "TU EMPRESA S.A.").toUpperCase()}
                         </div>
                         <div className="invoice-mockup-line">
                           <strong>Razón Social:</strong> {(fiscal.razonSocial || "Tu Empresa S.A.")}
@@ -2213,7 +2287,7 @@ const App = () => {
           );
 
           const pvFormatted = String(fiscal.puntoVenta || "0001").padStart(4, "0");
-          const pillKind = mappedRequiredCount === requiredMappingFields.length ? "ok" : "warn";
+          const pillKind = mappedRequiredCount === totalRequiredCount ? "ok" : "warn";
 
           return (
           <section className="gd-content">
@@ -2226,7 +2300,7 @@ const App = () => {
               </div>
               <div className="gd-section-head-actions">
                 <span className={pillKind === "ok" ? "gd-pill-ok" : "gd-pill-warn"}>
-                  {mappedRequiredCount}/{requiredMappingFields.length} campos mapeados
+                  {mappedRequiredCount}/{totalRequiredCount} campos mapeados
                 </span>
                 {!inMappingEditMode && (
                   <button type="button" className="btn-secondary section-edit-btn" onClick={handleEnterMappingEdit}>
@@ -2283,6 +2357,76 @@ const App = () => {
                 {" "}— Los campos marcados en rojo deben asignarse antes de guardar.
               </div>
             )}
+
+            {/* ─── Columnas de operación: status trigger + PDF output ─── */}
+            <div className="gd-card" style={{ marginBottom: 16 }}>
+              <div className="gd-card-head">
+                <span className="h-eyebrow">Columnas de operación</span>
+                <span className="gd-dim">Obligatorias</span>
+              </div>
+              <div className="gd-confirm-grid">
+                <div className="gd-confirm-row">
+                  <span className="gd-confirm-label">Columna de estado (trigger)</span>
+                  {inMappingEditMode ? (
+                    <select
+                      className={`invoice-preview-select ${boardConfig.status_column_id ? "mapped" : "unmapped"}`}
+                      value={boardConfig.status_column_id || ""}
+                      onChange={(e) => setBoardConfig((prev) => ({ ...prev, status_column_id: e.target.value }))}
+                    >
+                      <option value="">— Elegir columna Status —</option>
+                      {statusColumns.map((c) => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="gd-confirm-value">
+                      {statusColumns.find((c) => c.value === boardConfig.status_column_id)?.label || (
+                        <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                      )}
+                    </span>
+                  )}
+                  <span className="gd-confirm-hint">
+                    La columna donde el usuario cambia el estado a "{COMPROBANTE_STATUS_FLOW.trigger}" para disparar la emisión.
+                  </span>
+                </div>
+
+                <div className="gd-confirm-row">
+                  <span className="gd-confirm-label">Columna Comprobante PDF</span>
+                  {inMappingEditMode ? (
+                    <select
+                      className={`invoice-preview-select ${boardConfig.invoice_pdf_column_id ? "mapped" : "unmapped"}`}
+                      value={boardConfig.invoice_pdf_column_id || ""}
+                      onChange={(e) => setBoardConfig((prev) => ({ ...prev, invoice_pdf_column_id: e.target.value }))}
+                    >
+                      <option value="">— Elegir columna Archivo —</option>
+                      {fileColumns.map((c) => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="gd-confirm-value">
+                      {fileColumns.find((c) => c.value === boardConfig.invoice_pdf_column_id)?.label || (
+                        <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                      )}
+                    </span>
+                  )}
+                  <span className="gd-confirm-hint">
+                    La columna (tipo Archivo) donde se va a adjuntar el PDF emitido por AFIP.
+                  </span>
+                </div>
+              </div>
+              {inMappingEditMode && fileColumns.length === 0 && (
+                <div className="gd-infobox warn" style={{ marginTop: 12 }}>
+                  <span className="gd-infobox-icon">⚠</span>
+                  <div>
+                    <p className="gd-infobox-title">Tu tablero no tiene columna de Archivo</p>
+                    <p className="gd-infobox-body">
+                      Necesitás agregar una columna tipo "Archivo" al tablero para que la app pueda adjuntar el PDF de la factura.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* ─── Factura modelo: campos embebidos en el layout de la factura ─── */}
             <div className="rf-mapping-frame">

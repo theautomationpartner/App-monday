@@ -11,6 +11,7 @@
 'use strict';
 
 const PDFDocument = require('pdfkit');
+const QRCode = require('qrcode');
 const invoiceRules = require('./invoiceRules');
 
 // Códigos AFIP de comprobante (siempre 2 dígitos en el cabezal según ARCA).
@@ -90,10 +91,11 @@ function calcularDesgloseIva(draft) {
 }
 
 // ─── Helpers de marca/branding ──────────────────────────────────────────
-// Las 3 copias tradicionales AFIP: ORIGINAL (cliente), DUPLICADO (emisor),
-// TRIPLICADO (transporte/archivo). Se imprimen como 3 páginas idénticas
-// del mismo PDF, cambia sólo el tag superior y la numeración del footer.
-const INVOICE_COPIES = ['ORIGINAL', 'DUPLICADO', 'TRIPLICADO'];
+// Facturación electrónica con CAE: la factura digital es el "original" único
+// válido ante AFIP, por lo que no hace falta generar DUPLICADO ni TRIPLICADO.
+// Si en el futuro hace falta volver a las 3 copias tradicionales, agregar
+// 'DUPLICADO' y 'TRIPLICADO' a este array y el resto del código se adapta solo.
+const INVOICE_COPIES = ['ORIGINAL'];
 
 // Normaliza una URL para mostrar: saca "https://" (no aporta info visual).
 // NO hace pre-truncate — drawKV se encarga del auto-shrink y truncate final,
@@ -165,6 +167,7 @@ function drawLogo(doc, x, y, w, h, logoBuffer) {
 }
 
 async function fetchQrImage({ company, draft, afipResult }) {
+    const tStart = Date.now();
     try {
         const qrData = {
             ver: 1,
@@ -183,29 +186,61 @@ async function fetchQrImage({ company, draft, afipResult }) {
         };
         const base64Payload = Buffer.from(JSON.stringify(qrData)).toString('base64');
         const arcaUrl = `https://www.afip.gob.ar/fe/qr/?p=${base64Payload}`;
-        // size=600 → PNG nítido al escalarlo en el PDF.
-        // margin=4 → quiet zone obligatoria para que los lectores detecten los patrones a distancia.
-        // ecc=M → 15% de corrección de errores (default L = 7% es muy frágil).
-        const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=4&ecc=M&data=${encodeURIComponent(arcaUrl)}`;
-        const qrResp = await fetch(qrApiUrl);
-        if (qrResp.ok) return Buffer.from(await qrResp.arrayBuffer());
+
+        // Generamos el QR LOCALMENTE (librería qrcode, 100% in-process).
+        // Antes llamábamos a api.qrserver.com (externo gratuito, latencia
+        // variable 200ms-30s, potencial SPOF). Ahora es ~10-30ms siempre.
+        //   width: 600 → PNG nítido al escalar en el PDF
+        //   margin: 4  → quiet zone obligatoria para lectura a distancia
+        //   errorCorrectionLevel: 'M' → 15% (default L es muy frágil a 7%)
+        const buf = await QRCode.toBuffer(arcaUrl, {
+            type: 'png',
+            width: 600,
+            margin: 4,
+            errorCorrectionLevel: 'M',
+        });
+        console.log(`[timing] pdf_qr_fetch: ${Date.now() - tStart}ms status=ok (local)`);
+        return buf;
     } catch (err) {
-        console.warn('[pdf] No se pudo generar QR:', err.message);
+        console.warn(`[pdf] QR falló tras ${Date.now() - tStart}ms: ${err.message}`);
     }
     return null;
 }
 
 async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId */ }) {
+    const tQrStart = Date.now();
     const qrImageBuffer = await fetchQrImage({ company, draft, afipResult });
+    const tLogoStart = Date.now();
     const logoBuffer = decodeCompanyLogo(company);
+    const tRenderStart = Date.now();
+    console.log(`[timing] pdf_logo_decode: ${tRenderStart - tLogoStart}ms qr_total=${tLogoStart - tQrStart}ms`);
+
+    // Sub-timers del render: puntos clave para detectar qué sección tarda.
+    const marks = [];
+    const mark = (label) => marks.push({ label, t: Date.now() });
+    mark('start');
 
     return new Promise((resolve, reject) => {
         try {
             const M = 18; // margen reducido (antes 28pt) — recuadro más ancho
             const doc = new PDFDocument({ size: 'A4', margin: M });
+            mark('doc_init');
             const buffers = [];
             doc.on('data', (chunk) => buffers.push(chunk));
-            doc.on('end', () => resolve(Buffer.concat(buffers)));
+            doc.on('end', () => {
+                const buf = Buffer.concat(buffers);
+                mark('stream_end');
+                // Calcular deltas relativos al inicio y al anterior
+                const baseT = marks[0].t;
+                const deltas = marks.map((m, i) => {
+                    const dPrev = i > 0 ? m.t - marks[i-1].t : 0;
+                    const dTotal = m.t - baseT;
+                    return `${m.label}:+${dPrev}ms(${dTotal}ms)`;
+                }).join(' | ');
+                console.log(`[timing] pdf_render_breakdown: ${deltas}`);
+                console.log(`[timing] pdf_render: ${Date.now() - tRenderStart}ms bytes=${buf.length}`);
+                resolve(buf);
+            });
             doc.on('error', reject);
 
             const W = 595.28 - M * 2;
@@ -226,6 +261,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             // Loop por las 3 copias tradicionales: ORIGINAL / DUPLICADO / TRIPLICADO.
             // Cada copia es una página idéntica salvo por el tag superior y la
             // numeración del footer. Aplica igual para A, B y C.
+            mark('prep_done');
             const totalPages = INVOICE_COPIES.length;
             for (let copyIdx = 0; copyIdx < totalPages; copyIdx++) {
                 if (copyIdx > 0) doc.addPage();
@@ -286,10 +322,12 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 nameMaxW = contentW - LOGO_SIZE - 10;
             }
 
-            // Nombre del emisor (centrado vertical en banner)
+            // Nombre comercial (trade_name) arriba del banner — cae a business_name
+            // si la empresa todavía no migró al campo de "Nombre de fantasía".
+            const displayName = (company.trade_name || company.business_name || '').toUpperCase();
             const nameFontSize = 14;
             doc.fontSize(nameFontSize).font('Helvetica-Bold')
-               .text((company.business_name || '').toUpperCase(),
+               .text(displayName,
                      nameX, bannerCenterY - nameFontSize / 2,
                      { width: nameMaxW, align: hasLogo ? 'left' : 'center', lineBreak: false });
 
@@ -365,6 +403,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             drawKV(doc, compX, cry, compW, 'Fecha de Inicio de Actividades: ', startDate);
 
             y += headerH;
+            mark(`header_done_c${copyIdx}`);
 
             // ── PERÍODO (solo servicios o productos+servicios) ────
             // Layout: izquierda | centro geométrico | derecha alineado
@@ -423,6 +462,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text((draft.condicion_venta || 'Contado').toUpperCase());
             y += receptorH;
+            mark(`receptor_done_c${copyIdx}`);
 
             // ── TABLA DE ITEMS ───────────────────────────────────
             // Factura A: agrega Alícuota IVA + Subtotal c/IVA (RG 1415 Ap. A.IV.a).
@@ -463,6 +503,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
 
             const lineas = draft.lineas || [];
             const fallbackAlicuota = normalizeAlicuota(draft.alicuota_iva_pct) || '21';
+            mark(`table_header_done_c${copyIdx}`);
 
             for (const line of lineas) {
                 const qty = Number(line.quantity || line.cantidad || 0);
@@ -523,6 +564,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 y += rowH;
             }
 
+            mark(`table_rows_done_c${copyIdx}`);
             // Espacio vacío restante hasta totales
             const totalsY = boxTop + boxH - totalesH;
             if (y < totalsY) {
@@ -590,6 +632,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             }
 
             y = boxTop + boxH;
+            mark(`totals_done_c${copyIdx}`);
 
             // ── FOOTER (fuera del borde) ─────────────────────────
             y += 8;
@@ -624,9 +667,12 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             doc.fontSize(8).font('Helvetica')
                .text(`Pág. ${pageNum}/${totalPages}`, colLeft + W / 2 - 20, footerY + 24);
 
+            mark(`footer_done_c${copyIdx}`);
             } // end for copyIdx (loop por ORIGINAL / DUPLICADO / TRIPLICADO)
 
+            mark('before_doc_end');
             doc.end();
+            mark('after_doc_end');
         } catch (err) {
             reject(err);
         }

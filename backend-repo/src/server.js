@@ -16,6 +16,440 @@ const afipPadron        = require('./modules/afipPadron');
 const invoiceRules      = require('./modules/invoiceRules');
 const { generateFacturaPdfBuffer } = require('./modules/invoicePdf');
 
+// ─── Cache del padrón del EMISOR en DB ───────────────────────────────────────
+// La condición fiscal propia no cambia seguido y AFIP tarda 24-48h en reflejar
+// cambios en el padrón A5 de todas formas. Guardamos el resultado en la tabla
+// companies (padron_condicion, padron_fetched_at, etc.) para:
+//   • Sobrevivir reinicios del container de Monday Code
+//   • Funcionar aun cuando el usuario nunca abre la app (automation pura)
+//   • Compartir el dato entre todas las instancias del servicio
+//
+// Invalidación:
+//   • Al editar Datos Fiscales (POST /api/companies) → SET padron_fetched_at=NULL
+//   • Al re-subir certificado → idem
+//   • Cron diario 2am Argentina (5am UTC) refresca todas las empresas con
+//     datos > 18h o con fetched_at NULL.
+const PADRON_EMISOR_TTL_MS = 24 * 60 * 60 * 1000;    // 24 horas
+const PADRON_EMISOR_STALE_MS = 18 * 60 * 60 * 1000;  // el cron refresca si > 18h
+
+function normalizeCuit(cuit) {
+    return String(cuit || '').replace(/\D/g, '');
+}
+
+// Devuelve la condición del emisor desde DB si está fresca, sino consulta AFIP
+// y actualiza la DB. Si AFIP falla y hay dato viejo, usa ese con warning.
+async function getOrRefreshEmisorPadron(company) {
+    const cuit = normalizeCuit(company?.cuit);
+    if (!cuit) throw new Error('La empresa no tiene CUIT configurado');
+
+    const fetchedAt = company.padron_fetched_at
+        ? new Date(company.padron_fetched_at).getTime()
+        : 0;
+    const ageMs = fetchedAt ? Date.now() - fetchedAt : Infinity;
+    const hasCached = Boolean(company.padron_condicion) && fetchedAt > 0;
+
+    // Cache hit: dato fresco en DB → usarlo.
+    if (hasCached && ageMs < PADRON_EMISOR_TTL_MS) {
+        console.log(`[padron-db] HIT — condición: ${company.padron_condicion} (edad: ${Math.round(ageMs/1000)}s)`);
+        return {
+            condicion: company.padron_condicion,
+            nombre: company.padron_nombre || '',
+            tipoPersona: company.padron_tipo_persona || '',
+            domicilio: company.padron_domicilio || '',
+        };
+    }
+
+    // Miss o stale → consultar AFIP.
+    try {
+        console.log(`[padron-db] MISS/stale (ageMs=${ageMs === Infinity ? 'null' : ageMs}) — consultando AFIP`);
+        const info = await afipPadron.getCondicionFiscal({ cuitAConsultar: cuit });
+        await db.query(
+            `UPDATE companies
+             SET padron_condicion=$1, padron_nombre=$2, padron_tipo_persona=$3,
+                 padron_domicilio=$4, padron_fetched_at=NOW()
+             WHERE id=$5`,
+            [info.condicion, info.nombre || '', info.tipoPersona || '', info.domicilio || '', company.id]
+        );
+        return info;
+    } catch (err) {
+        // AFIP falló. Si tenemos dato viejo, usamos ese con warning.
+        if (hasCached) {
+            console.warn(`[padron-db] AFIP falló (${err.message}) — usando dato viejo (edad: ${Math.round(ageMs/1000/60)}min)`);
+            return {
+                condicion: company.padron_condicion,
+                nombre: company.padron_nombre || '',
+                tipoPersona: company.padron_tipo_persona || '',
+                domicilio: company.padron_domicilio || '',
+                _stale: true,
+            };
+        }
+        throw err; // primera vez sin dato viejo → propagar
+    }
+}
+
+// Invalida el cache en DB (para ser llamado al editar datos fiscales o certs).
+async function invalidateEmisorPadronDb(companyId) {
+    if (!companyId) return;
+    try {
+        await db.query(`UPDATE companies SET padron_fetched_at=NULL WHERE id=$1`, [companyId]);
+        console.log(`[padron-db] invalidado para company ${companyId}`);
+    } catch (err) {
+        console.warn(`[padron-db] error invalidando company ${companyId}: ${err.message}`);
+    }
+}
+
+// ─── Cache del padrón de RECEPTORES ─────────────────────────────────────────
+// Cada factura consulta a AFIP la condición fiscal del cliente final (~8s).
+// Como los clientes suelen ser recurrentes (SaaS, servicios, etc), cachear
+// por documento (CUIT o DNI) ahorra esos 8s en todas las facturas siguientes
+// al mismo receptor. Es un cache GLOBAL por documento — compartido entre
+// todas las empresas usuarias del sistema.
+//
+// TTL: 24h. AFIP mismo tarda 24-48h en reflejar cambios en su padrón, así
+// que cachear 24h no suma riesgo relevante. Si AFIP falla y tenemos dato
+// viejo, lo usamos con warning (fallback a stale-while-error).
+const PADRON_RECEPTOR_TTL_MS = 24 * 60 * 60 * 1000;
+const PADRON_RECEPTOR_STALE_MS = 20 * 60 * 60 * 1000; // el cron refresca si > 20h
+
+async function ensurePadronReceptoresCacheTable() {
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS padron_receptores_cache (
+            documento TEXT PRIMARY KEY,
+            condicion TEXT,
+            nombre TEXT,
+            tipo_persona TEXT,
+            domicilio TEXT,
+            cuit_usado TEXT,
+            doc_tipo INTEGER,
+            doc_nro TEXT,
+            fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    // Índice para buscar stales en el cron.
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_padron_receptores_fetched
+        ON padron_receptores_cache (fetched_at)
+    `);
+}
+
+// Devuelve la condición fiscal del receptor usando cache DB. Si el dato
+// en DB es fresco (<24h), lo devuelve inmediatamente. Si es stale o no
+// existe, consulta AFIP, guarda y devuelve. Si AFIP falla y hay dato
+// viejo, lo usa con warning (stale-while-error).
+async function getOrRefreshReceptorPadron(documento) {
+    const doc = String(documento || '').replace(/\D/g, '');
+    if (!doc || doc.length < 7) {
+        throw new Error(`Documento inválido para consultar padrón: "${documento}"`);
+    }
+
+    // Intentar cache
+    let row = null;
+    try {
+        const result = await db.query(
+            `SELECT condicion, nombre, tipo_persona, domicilio, cuit_usado, doc_tipo, doc_nro, fetched_at
+             FROM padron_receptores_cache WHERE documento = $1 LIMIT 1`,
+            [doc]
+        );
+        row = result.rows[0] || null;
+    } catch (err) {
+        console.warn(`[padron-rec] error leyendo cache: ${err.message}`);
+    }
+
+    const fetchedAt = row?.fetched_at ? new Date(row.fetched_at).getTime() : 0;
+    const ageMs = fetchedAt ? Date.now() - fetchedAt : Infinity;
+    const hasCache = Boolean(row?.condicion);
+
+    // HIT: cache fresco
+    if (hasCache && ageMs < PADRON_RECEPTOR_TTL_MS) {
+        console.log(`[padron-rec] HIT — doc=${doc} condicion=${row.condicion} (edad: ${Math.round(ageMs/1000)}s)`);
+        return {
+            condicion: row.condicion,
+            nombre: row.nombre || '',
+            tipoPersona: row.tipo_persona || '',
+            domicilio: row.domicilio || '',
+            cuitUsado: row.cuit_usado || null,
+            docTipo: row.doc_tipo,
+            docNro: row.doc_nro,
+        };
+    }
+
+    // MISS o STALE: consultar AFIP
+    try {
+        console.log(`[padron-rec] MISS/stale — consultando AFIP para doc ${doc}`);
+        const info = await afipPadron.getCondicionFiscalByDoc({ documento: doc });
+        // Guardar en DB (fire-and-forget — no bloquea el flujo de emisión)
+        db.query(
+            `INSERT INTO padron_receptores_cache
+             (documento, condicion, nombre, tipo_persona, domicilio, cuit_usado, doc_tipo, doc_nro, fetched_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+             ON CONFLICT (documento) DO UPDATE SET
+                condicion    = EXCLUDED.condicion,
+                nombre       = EXCLUDED.nombre,
+                tipo_persona = EXCLUDED.tipo_persona,
+                domicilio    = EXCLUDED.domicilio,
+                cuit_usado   = EXCLUDED.cuit_usado,
+                doc_tipo     = EXCLUDED.doc_tipo,
+                doc_nro      = EXCLUDED.doc_nro,
+                fetched_at   = NOW()`,
+            [
+                doc, info.condicion, info.nombre || '', info.tipoPersona || '',
+                info.domicilio || '', info.cuitUsado || null,
+                info.docTipo || 99, info.docNro || null
+            ]
+        ).catch(err => console.warn(`[padron-rec] save error: ${err.message}`));
+        return info;
+    } catch (err) {
+        // AFIP falló. Si hay dato viejo, usar ese con warning.
+        if (hasCache) {
+            console.warn(`[padron-rec] AFIP falló (${err.message}) — usando dato viejo (edad: ${Math.round(ageMs/1000/60)}min)`);
+            return {
+                condicion: row.condicion,
+                nombre: row.nombre || '',
+                tipoPersona: row.tipo_persona || '',
+                domicilio: row.domicilio || '',
+                cuitUsado: row.cuit_usado || null,
+                docTipo: row.doc_tipo,
+                docNro: row.doc_nro,
+                _stale: true,
+            };
+        }
+        // Primera vez sin dato viejo: propagar (el caller decide qué hacer).
+        throw err;
+    }
+}
+
+// Refresh preventivo de receptores cercanos a expirar. Se llama desde el
+// cron diario después del refresh del emisor. Toma los que tienen fetched_at
+// > 20h y los regenera espaciando 2s para no saturar AFIP.
+async function refreshStaleReceptores() {
+    console.log('[padron-rec-cron] iniciando refresh de receptores stale');
+    const started = Date.now();
+    let ok = 0, fail = 0;
+    try {
+        await ensurePadronReceptoresCacheTable();
+        const result = await db.query(`
+            SELECT documento FROM padron_receptores_cache
+            WHERE fetched_at IS NULL
+               OR fetched_at < NOW() - INTERVAL '20 hours'
+            LIMIT 100
+        `);
+        console.log(`[padron-rec-cron] ${result.rows.length} receptor(es) a refrescar`);
+        for (const r of result.rows) {
+            try {
+                const info = await afipPadron.getCondicionFiscalByDoc({ documento: r.documento });
+                await db.query(
+                    `UPDATE padron_receptores_cache
+                     SET condicion=$1, nombre=$2, tipo_persona=$3, domicilio=$4,
+                         cuit_usado=$5, doc_tipo=$6, doc_nro=$7, fetched_at=NOW()
+                     WHERE documento=$8`,
+                    [info.condicion, info.nombre || '', info.tipoPersona || '', info.domicilio || '',
+                     info.cuitUsado || null, info.docTipo || 99, info.docNro || null, r.documento]
+                );
+                ok++;
+            } catch (err) {
+                console.warn(`[padron-rec-cron] doc ${r.documento} falló: ${err.message}`);
+                fail++;
+            }
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    } catch (err) {
+        console.warn(`[padron-rec-cron] error: ${err.message}`);
+    }
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    console.log(`[padron-rec-cron] fin — OK: ${ok} | FAIL: ${fail} | ${elapsed}s`);
+}
+
+// ─── Cron diario: refresca padrón de todas las empresas a las 2am AR ─────────
+// Corre una vez por día a las 2am Argentina (5am UTC, AR no hace horario de
+// verano). Levanta todas las empresas con CUIT y padrón stale (>18h o NULL),
+// consulta AFIP para cada una con 2s de espaciado para no saturar AFIP, y
+// guarda el resultado en DB. Errores individuales no detienen el batch.
+async function runPadronEmisorDailyRefresh() {
+    console.log('[padron-cron] iniciando refresh masivo de padrones');
+    const started = Date.now();
+    let rows;
+    try {
+        await ensureCompaniesExtraColumns();
+        const result = await db.query(`
+            SELECT id, cuit, padron_condicion, padron_nombre, padron_tipo_persona,
+                   padron_domicilio, padron_fetched_at
+            FROM companies
+            WHERE cuit IS NOT NULL AND cuit <> ''
+              AND (padron_fetched_at IS NULL
+                   OR padron_fetched_at < NOW() - INTERVAL '18 hours')
+        `);
+        rows = result.rows;
+    } catch (err) {
+        console.error('[padron-cron] error levantando empresas:', err.message);
+        return;
+    }
+    console.log(`[padron-cron] ${rows.length} empresa(s) a refrescar`);
+    let ok = 0, fail = 0;
+    for (const company of rows) {
+        try {
+            await getOrRefreshEmisorPadron(company);
+            ok++;
+        } catch (err) {
+            console.warn(`[padron-cron] company ${company.id} falló: ${err.message}`);
+            fail++;
+        }
+        // Espaciado para no saturar AFIP durante el batch.
+        await new Promise(r => setTimeout(r, 2000));
+    }
+    const elapsedSec = Math.round((Date.now() - started) / 1000);
+    console.log(`[padron-cron] fin — OK: ${ok} | FAIL: ${fail} | ${elapsedSec}s`);
+
+    // Después del padrón, refrescar también los tokens WSAA que estén cerca
+    // de expirar. Si falla, no afecta al cron del padrón.
+    try {
+        await refreshAllWsaaTokens();
+    } catch (err) {
+        console.warn(`[wsaa-cron] error en refresh post-padrón: ${err.message}`);
+    }
+
+    // Luego refrescar receptores stale (cache de padrón de clientes finales).
+    try {
+        await refreshStaleReceptores();
+    } catch (err) {
+        console.warn(`[padron-rec-cron] error: ${err.message}`);
+    }
+}
+
+// Dos corridas por día: 2am (UTC 5am) como principal y 1pm (UTC 4pm) como
+// red de seguridad por si AFIP estuvo caído a las 2am. Argentina no hace
+// horario de verano (UTC-3 fijo).
+function schedulePadronEmisorCron(label, utcHour) {
+    const now = new Date();
+    const next = new Date(now);
+    next.setUTCHours(utcHour, 0, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    const delayMs = next.getTime() - now.getTime();
+    console.log(`[padron-cron ${label}] próxima corrida: ${next.toISOString()} (en ${Math.round(delayMs/1000/60)} min)`);
+    setTimeout(async () => {
+        try { await runPadronEmisorDailyRefresh(); }
+        catch (err) { console.error(`[padron-cron ${label}] error en corrida:`, err.message); }
+        schedulePadronEmisorCron(label, utcHour); // re-agendar
+    }, delayMs);
+}
+function schedulePadronEmisorDailyRefresh() {
+    // 3 slots cada 8 horas (2am, 10am, 6pm Argentina = UTC-3).
+    // Cada token dura 11h cacheado; con 3 refresh por día (cada 8h) siempre
+    // hay margen de 3h antes de que expire el anterior → cobertura continua
+    // sin huecos y con fallback si un cron falla.
+    schedulePadronEmisorCron('02am-AR', 5);   // 5am UTC = 2am Argentina
+    schedulePadronEmisorCron('10am-AR', 13);  // 1pm UTC = 10am Argentina
+    schedulePadronEmisorCron('06pm-AR', 21);  // 9pm UTC = 6pm Argentina
+}
+
+// Warm-up de pdfkit al arrancar: la primera instancia de PDFDocument en el
+// proceso toma ~5s cargando las fuentes Helvetica. Con este dummy forzamos
+// esa carga AL ARRANQUE, así la primera factura real no paga ese costo.
+function warmupPdfkit() {
+    try {
+        const PDFDocument = require('pdfkit');
+        const doc = new PDFDocument();
+        doc.font('Helvetica-Bold').fontSize(8).text('warmup');
+        doc.font('Helvetica').text('ok');
+        doc.font('Helvetica-BoldOblique').text('ok');
+        // No hace falta capturar el output — solo forzar la carga de fuentes.
+        doc.on('data', () => {});
+        doc.on('end', () => console.log('[pdf-warmup] pdfkit fonts pre-cargadas'));
+        doc.end();
+    } catch (err) {
+        console.warn('[pdf-warmup] falló:', err.message);
+    }
+}
+
+// Refresh en batch de tokens WSAA (padrón global + wsfe por empresa).
+// Se ejecuta como parte del cron diario. Cada token que esté cerca de
+// expirar (<3h de vida) se regenera anticipadamente.
+async function refreshAllWsaaTokens() {
+    console.log('[wsaa-cron] iniciando refresh de tokens');
+    const started = Date.now();
+    let refreshed = 0, failed = 0;
+
+    // Helper que chequea si el token de una empresa necesita refresh.
+    const needsRefresh = async (service, companyId) => {
+        const row = await wsaaDbLoad({ service, companyId });
+        if (!row) return true; // no hay → generar
+        const hoursLeft = (row.expiresAt - Date.now()) / (60 * 60 * 1000);
+        return hoursLeft < 3; // < 3h de vida → regenerar
+    };
+
+    // 1. Token del Padrón (global, cert de Martín). Solo si está configurado.
+    try {
+        const padronCreds = (() => {
+            try {
+                const afipPadronMod = require('./modules/afipPadron');
+                // El módulo tiene loadPadronCredentials privado; usamos una
+                // bandera: si hay env vars, hay credenciales.
+                if (process.env.PADRON_CRT && process.env.PADRON_KEY) return true;
+            } catch {}
+            return false;
+        })();
+        if (padronCreds && await needsRefresh('ws_sr_constancia_inscripcion', null)) {
+            console.log('[wsaa-cron] refrescando token del Padrón (global)');
+            // Disparar una consulta al padrón con un CUIT conocido fuerza la
+            // generación del token. Usamos el CUIT del padrón (de Martín) que
+            // siempre debería existir en AFIP.
+            const afipPadron = require('./modules/afipPadron');
+            try {
+                // getCondicionFiscal internamente llama a afipAuth.getToken
+                // que ahora usa DB storage → se guarda automáticamente.
+                const padronCuit = require('./config').padronCuit;
+                if (padronCuit) {
+                    await afipPadron.getCondicionFiscal({ cuitAConsultar: padronCuit });
+                    refreshed++;
+                }
+            } catch (err) {
+                console.warn(`[wsaa-cron] refresh padrón falló: ${err.message}`);
+                failed++;
+            }
+        }
+    } catch (err) {
+        console.warn(`[wsaa-cron] error chequeando padrón: ${err.message}`);
+    }
+
+    // 2. Tokens WSFE por empresa con certificado activo.
+    try {
+        const companies = await db.query(`
+            SELECT c.id, c.cuit, ac.crt_file_url, ac.encrypted_private_key
+            FROM companies c
+            JOIN afip_credentials ac ON ac.company_id = c.id
+            WHERE c.cuit IS NOT NULL AND c.cuit <> ''
+              AND ac.status = 'active'
+              AND ac.crt_file_url IS NOT NULL
+              AND ac.encrypted_private_key IS NOT NULL
+        `);
+        console.log(`[wsaa-cron] ${companies.rows.length} empresa(s) con cert activo`);
+        for (const company of companies.rows) {
+            if (!(await needsRefresh('wsfe', company.id))) continue;
+            try {
+                const certPem = normalizePem(company.crt_file_url, 'CERTIFICATE');
+                const decryptedKey = CryptoJS.AES.decrypt(
+                    company.encrypted_private_key, process.env.ENCRYPTION_KEY
+                ).toString(CryptoJS.enc.Utf8);
+                const keyPem = normalizePem(decryptedKey, 'PRIVATE KEY');
+                await afipAuthModule.getToken({
+                    certPem, keyPem, cuit: company.cuit, service: 'wsfe',
+                    companyId: company.id, force: true,
+                });
+                refreshed++;
+            } catch (err) {
+                console.warn(`[wsaa-cron] company ${company.id} wsfe falló: ${err.message}`);
+                failed++;
+            }
+            // Espaciado para no saturar AFIP.
+            await new Promise(r => setTimeout(r, 2000));
+        }
+    } catch (err) {
+        console.warn(`[wsaa-cron] error listando empresas: ${err.message}`);
+    }
+
+    const elapsed = Math.round((Date.now() - started) / 1000);
+    console.log(`[wsaa-cron] fin — refreshed: ${refreshed} | failed: ${failed} | ${elapsed}s`);
+}
+
 // Inicializar SDK de monday code para inyectar env vars y secrets en process.env
 try {
     const { EnvironmentVariablesManager, SecretsManager } = require('@mondaycom/apps-sdk');
@@ -49,8 +483,9 @@ const upload = multer({ storage });
 
 async function getCompanyByMondayAccountId(mondayAccountId) {
     const companyQuery = `
-        SELECT id, monday_account_id, business_name, cuit, default_point_of_sale, address, start_date,
-               phone, email, website, logo_base64, logo_mime_type
+        SELECT id, monday_account_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date,
+               phone, email, website, logo_base64, logo_mime_type,
+               padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio, padron_fetched_at
         FROM companies
         WHERE monday_account_id::text = $1
         LIMIT 1;
@@ -845,11 +1280,17 @@ async function ensureAfipCredentialsColumns() {
 async function ensureCompaniesExtraColumns() {
     await db.query(`
         ALTER TABLE companies
+            ADD COLUMN IF NOT EXISTS trade_name VARCHAR(255),
             ADD COLUMN IF NOT EXISTS phone VARCHAR(50),
             ADD COLUMN IF NOT EXISTS email VARCHAR(255),
             ADD COLUMN IF NOT EXISTS website VARCHAR(500),
             ADD COLUMN IF NOT EXISTS logo_base64 TEXT,
-            ADD COLUMN IF NOT EXISTS logo_mime_type VARCHAR(50)
+            ADD COLUMN IF NOT EXISTS logo_mime_type VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS padron_condicion VARCHAR(50),
+            ADD COLUMN IF NOT EXISTS padron_nombre VARCHAR(255),
+            ADD COLUMN IF NOT EXISTS padron_tipo_persona VARCHAR(20),
+            ADD COLUMN IF NOT EXISTS padron_domicilio VARCHAR(500),
+            ADD COLUMN IF NOT EXISTS padron_fetched_at TIMESTAMP
     `);
 }
 
@@ -1309,6 +1750,38 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
         }).catch((err) => console.error('[install-notify] top-level error:', err));
     });
 
+    // Refresh oportunista del padrón del emisor — cuando abren la app, si el
+    // dato en DB tiene >18h o no existe, consultamos AFIP en background.
+    // El cron diario (2am AR) cubre la mayoría de los casos; esto es backup.
+    setImmediate(async () => {
+        try {
+            const company = await getCompanyByMondayAccountId(mondayAccountId);
+            if (!company?.cuit) return;
+            const fetchedAt = company.padron_fetched_at
+                ? new Date(company.padron_fetched_at).getTime() : 0;
+            const ageMs = fetchedAt ? Date.now() - fetchedAt : Infinity;
+            if (company.padron_condicion && ageMs < PADRON_EMISOR_STALE_MS) return;
+            console.log(`[padron-refresh] refresh oportunista CUIT ${company.cuit} (ageMs=${ageMs === Infinity ? 'null' : ageMs})`);
+            await getOrRefreshEmisorPadron(company);
+        } catch (err) {
+            console.error('[padron-refresh] error:', err.message);
+        }
+    });
+
+    // Pre-generar token WSFE en background si hay cert activo pero no hay
+    // token fresco en DB. Cubre: clientes ya instalados antes del deploy de
+    // esta feature, y cualquier caso borde donde el token se haya perdido.
+    // Así la primera factura después de abrir la app tampoco paga el costo.
+    setImmediate(async () => {
+        try {
+            const company = await getCompanyByMondayAccountId(mondayAccountId);
+            if (!company?.id) return;
+            await pregenerateWsfeTokenForCompanyId(company.id);
+        } catch (err) {
+            console.error('[wsaa-pregen setup] error:', err.message);
+        }
+    });
+
     try {
         await ensureCompaniesExtraColumns();
         const company = await getCompanyByMondayAccountId(mondayAccountId);
@@ -1406,6 +1879,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
             certificateStatus, // 'no_cert' | 'pending_crt' | 'active'
             fiscalData: {
                 business_name: company.business_name || '',
+                nombre_fantasia: company.trade_name || '',
                 cuit: company.cuit || '',
                 default_point_of_sale: company.default_point_of_sale || '',
                 domicilio: company.address || '',
@@ -1873,7 +2347,7 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
 
 app.post('/api/companies', requireMondaySession, async (req, res) => {
     const {
-        monday_account_id, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio,
+        monday_account_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
         phone, email, website
     } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
@@ -1883,6 +2357,14 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
     }
 
     if (!ensureAccountMatch(req, res, accountId)) return;
+
+    const tradeName = String(nombre_fantasia || '').trim();
+    if (!tradeName) {
+        return res.status(400).json({
+            error: 'El nombre de fantasía es obligatorio',
+            code: 'MISSING_TRADE_NAME'
+        });
+    }
 
     const phoneNorm = normalizePhone(phone);
     const emailNorm = normalizeEmail(email);
@@ -1894,11 +2376,12 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
     try {
         await ensureCompaniesExtraColumns();
         const query = `
-            INSERT INTO companies (monday_account_id, business_name, cuit, default_point_of_sale, address, start_date, phone, email, website)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            INSERT INTO companies (monday_account_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             ON CONFLICT (monday_account_id)
             DO UPDATE SET
                 business_name = EXCLUDED.business_name,
+                trade_name = EXCLUDED.trade_name,
                 cuit = EXCLUDED.cuit,
                 default_point_of_sale = EXCLUDED.default_point_of_sale,
                 address = EXCLUDED.address,
@@ -1910,9 +2393,11 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
             RETURNING *;
         `;
         const result = await db.query(query, [
-            accountId, business_name, cuit, default_point_of_sale, domicilio, fecha_inicio,
+            accountId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
             phoneNorm.value, emailNorm.value, websiteNorm.value
         ]);
+        // Datos fiscales cambiaron → invalidar cache del padrón en DB.
+        if (result.rows[0]?.id) await invalidateEmisorPadronDb(result.rows[0].id);
         res.json(result.rows[0]);
     } catch (err) {
         console.error("❌ Error en DB:", err);
@@ -2023,10 +2508,11 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
     try {
         await ensureAfipCredentialsColumns();
 
-        const companyRes = await db.query('SELECT id FROM companies WHERE monday_account_id = $1', [accountId]);
+        const companyRes = await db.query('SELECT id, cuit FROM companies WHERE monday_account_id = $1', [accountId]);
         if (companyRes.rows.length === 0) return res.status(404).json({ error: 'Empresa no encontrada' });
 
         const companyId = companyRes.rows[0].id;
+        const companyCuit = companyRes.rows[0].cuit;
 
         const crtContent = files['crt'][0].buffer.toString('utf8');
         const keyContent = files['key'][0].buffer.toString('utf8');
@@ -2066,6 +2552,19 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
                 csr_pem = NULL,
                 updated_at = NOW()
         `, [companyId, crtContent, encryptedKey, expirationDate]);
+
+        // Cambió el certificado → podría haber cambiado la condición fiscal
+        // (ej: cert nuevo asociado a otro CUIT o tras cambio de categoría).
+        await invalidateEmisorPadronDb(companyId);
+        // También invalidamos el token WSFE anterior (fue firmado con el cert
+        // viejo) para forzar regeneración con el cert nuevo.
+        await wsaaDbInvalidate({ service: 'wsfe', companyId });
+
+        // Pre-generar el token WSFE en background para que la primera factura
+        // del cliente no tenga que esperar 30-40s regenerándolo.
+        setImmediate(() => {
+            pregenerateWsfeTokenForCompanyId(companyId).catch(() => {});
+        });
 
         res.json({
             message: 'Certificados guardados correctamente',
@@ -2248,6 +2747,20 @@ app.post('/api/certificates/csr/finalize', requireMondaySession, upload.single('
                    updated_at = NOW()
              WHERE company_id = $3
         `, [crtContent, expirationDate, company.id]);
+
+        // Certificado nuevo activado → invalidar cache del padrón emisor por
+        // si la condición fiscal cambió desde la última consulta.
+        await invalidateEmisorPadronDb(company.id);
+        // También invalidamos el token WSFE anterior (fue firmado con el cert
+        // viejo) para forzar regeneración con el cert nuevo.
+        await wsaaDbInvalidate({ service: 'wsfe', companyId: company.id });
+
+        // Pre-generar el token WSFE en background para que la primera factura
+        // del cliente no tenga que esperar 30-40s regenerándolo. Así cuando
+        // termine de configurar el mapeo y emita, el token ya está listo.
+        setImmediate(() => {
+            pregenerateWsfeTokenForCompanyId(company.id).catch(() => {});
+        });
 
         res.json({
             message: 'Certificado activado correctamente',
@@ -2524,6 +3037,7 @@ app.post('/api/webhooks/monday-trigger', async (req, res) => {
 // ─── Middleware para bloques de automatización de Monday ─────────────────────
 // El JWT viene firmado con CLIENT_SECRET y contiene shortLivedToken, accountId, userId
 function requireAutomationBlock(req, res, next) {
+    req._tIncoming = Date.now();
     console.log('[automation] ───── incoming request ─────');
     console.log('[automation] method:', req.method, 'path:', req.path);
     console.log('[automation] headers keys:', Object.keys(req.headers).join(', '));
@@ -2627,40 +3141,63 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
     res.status(200).json({ status: 'received', actionUuid });
 
     // ── Procesar en background ────────────────────────────────────────────────
+    const tIncoming = req._tIncoming || Date.now();
+    const tAckReply = Date.now();
+    const timings = {};
+    const markStart = (k) => { timings[k] = { start: Date.now() }; };
+    const markEnd   = (k) => {
+        if (timings[k]) {
+            timings[k].ms = Date.now() - timings[k].start;
+            console.log(`[timing] ${k}: ${timings[k].ms}ms`);
+        }
+    };
+
     setImmediate(async () => {
+        const tBgStart = Date.now();
         let afipResult  = null;
         let pdfBuffer   = null;
-        let pdfBase64   = null;
         let mondayUpload = null;
         let resolvedType = requestedType;
 
         try {
-            // ── 1. Empresa emisora ─────────────────────────────────────────────
-            const company = await getCompanyByMondayAccountId(accountId);
-            if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
+            markStart('preflight');
 
-            await ensureInvoiceEmissionsTable();
-
-            // ── 2. Token de monday + datos del item ────────────────────────────
-            // Traemos el item primero para resolver boardId (si no vino en inboundFieldValues)
+            // ── 1. Token de Monday (necesario para el fetch del item) ──────────
             const mondayToken = req.mondayAutomation.shortLivedToken
                 || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
             if (!mondayToken) throw new Error('No hay token de Monday para consultar el item');
 
-            const itemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
+            // ── 2. Paralelo: empresa + item de Monday + migración tabla +
+            //      readiness (si ya tenemos boardId upfront) ─────────────────────
+            // Estas 4 operaciones son independientes entre sí. Antes corrían
+            // en serie y sumaban ~3s; ahora manda la más lenta (fetchMondayItem).
+            const hasBoardIdUpfront = Boolean(boardId);
+            const [company, itemData, , readinessEarly] = await Promise.all([
+                getCompanyByMondayAccountId(accountId),
+                fetchMondayItem({ apiToken: mondayToken, itemId }),
+                ensureInvoiceEmissionsTable(),
+                hasBoardIdUpfront
+                    ? validateEmissionReadiness({ mondayAccountId: accountId, boardId })
+                    : Promise.resolve(null),
+            ]);
+            if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
+
             const { mainColumns, subitems } = itemData;
             if (!boardId) boardId = itemData.boardId;
             if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
 
             // ── 2b. Pre-flight 1: bloquear si falta configuración ──────────────
             console.log(`[emit] Emitiendo factura para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
-            const readiness = await validateEmissionReadiness({ mondayAccountId: accountId, boardId });
+            const readiness = readinessEarly
+                || await validateEmissionReadiness({ mondayAccountId: accountId, boardId });
             if (!readiness.ready) {
                 console.warn(`[emit] Pre-flight falló:`, readiness.missing);
                 throw new Error(formatMissingConfigError(readiness.missing));
             }
 
             // ── 2b-bis. Pre-flight 2: bloquear si faltan valores en celdas ─────
+            // Tiene que quedar ANTES del cambio de status: si los datos están mal,
+            // no queremos pasar por "Creando Comprobante" y de ahí saltar a error.
             const dataCheck = validateItemDataCompleteness({
                 mainColumns,
                 subitems,
@@ -2674,14 +3211,22 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 );
             }
 
-            // ── 2c. Cambiar status a "Creando Comprobante" ────────────────────
+            markEnd('preflight');
+
+            // ── 2c. Disparar status "Creando Comprobante" EN PARALELO ─────────
+            // Fire-and-forget: arrancamos la mutation y seguimos con el resto
+            // del flujo. El usuario ve el cambio de status lo antes posible,
+            // y el resto de la emisión no espera al round-trip a Monday.
             const statusColumnId = readiness.boardConfig?.status_column_id;
             if (statusColumnId) {
-                await updateMondayItemStatus({
+                markStart('status_processing');
+                updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
                     statusColumnId,
                     label: COMPROBANTE_STATUS_FLOW.processing,
-                });
+                })
+                    .then(() => markEnd('status_processing'))
+                    .catch((err) => console.warn('[status] fire-and-forget processing falló:', err.message));
             }
 
             // ── 3. Idempotencia ────────────────────────────────────────────────
@@ -2755,11 +3300,14 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             // ── 6. Consultar padrón: condición fiscal del EMISOR ──────────────
             // Padrón AFIP es la ÚNICA fuente de verdad de la condición IVA.
             // Si falla, no emitimos — preferible bloquear que emitir con datos obsoletos.
-            console.log(`[emit] Consultando padrón para emisor CUIT: ${company.cuit}`);
+            console.log(`[emit] Resolviendo padrón emisor CUIT: ${company.cuit}`);
+            markStart('padron_emisor');
             let emisorInfo;
             try {
-                emisorInfo = await afipPadron.getCondicionFiscal({ cuitAConsultar: company.cuit });
+                emisorInfo = await getOrRefreshEmisorPadron(company);
+                markEnd('padron_emisor');
             } catch (padronErr) {
+                markEnd('padron_emisor');
                 console.error(`[emit] Padrón emisor falló: ${padronErr.message}`);
                 throw new Error(
                     `No se pudo consultar el padrón de AFIP para el emisor (CUIT ${company.cuit}). ` +
@@ -2768,15 +3316,20 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             }
 
             // ── 7. Consultar padrón: condición fiscal del RECEPTOR ────────────
+            // Usa cache DB con TTL 24h. Si AFIP falla y hay dato viejo, se usa
+            // ese con warning (getOrRefreshReceptorPadron maneja el fallback).
             let receptorInfo = { condicion: 'CONSUMIDOR_FINAL', nombre: receptorNombre || 'Consumidor Final', domicilio: null, docTipo: 99, docNro: 0 };
             if (receptorCuitRaw) {
                 const receptorDocClean = String(receptorCuitRaw).replace(/\D/g, '');
                 if (receptorDocClean.length >= 7) {
-                    console.log(`[emit] Consultando padrón para receptor doc: ${receptorDocClean}`);
+                    console.log(`[emit] Resolviendo padrón receptor doc: ${receptorDocClean}`);
+                    markStart('padron_receptor');
                     try {
-                        receptorInfo = await afipPadron.getCondicionFiscalByDoc({ documento: receptorDocClean });
+                        receptorInfo = await getOrRefreshReceptorPadron(receptorDocClean);
+                        markEnd('padron_receptor');
                         console.log(`[emit] Receptor: ${receptorInfo.nombre}, condición: ${receptorInfo.condicion}, CUIT: ${receptorInfo.cuitUsado || receptorDocClean}`);
                     } catch (padronErr) {
+                        markEnd('padron_receptor');
                         console.error(`[emit] Padrón receptor falló: ${padronErr.message}`);
                         throw new Error(
                             `No se pudo consultar el padrón de AFIP para el receptor (doc ${receptorDocClean}). ` +
@@ -2962,14 +3515,16 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             // ── 10. Emitir en AFIP (WSFE) ─────────────────────────────────────
             // Si el cert del emisor fue rotado, el token cacheado queda obsoleto
             // y AFIP devuelve [600] ValidacionDeToken. Invalidamos y reintentamos una vez.
+            // afipAuth.getToken() internamente usa: memoria → DB → AFIP.
             async function emitirConReintentoToken(forceNewToken) {
-                const { token, sign } = await afipAuthModule.getToken({
+                const tokenData = await afipAuthModule.getToken({
                     certPem: emisorCertPem, keyPem: emisorKeyPem,
                     cuit: company.cuit, service: 'wsfe',
+                    companyId: company.id,
                     force: forceNewToken,
                 });
                 return afipIssueFactura({
-                    token, sign,
+                    token: tokenData.token, sign: tokenData.sign,
                     cuit:        company.cuit,
                     pointOfSale: company.default_point_of_sale,
                     draft,
@@ -2977,14 +3532,30 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 });
             }
 
+            markStart('wsfe_issue');
             try {
                 afipResult = await emitirConReintentoToken(false);
+                markEnd('wsfe_issue');
             } catch (err) {
                 const esTokenInvalido = /\[600\]|ValidacionDeToken|No aparecio CUIT en lista de relaciones/i.test(err.message);
-                if (!esTokenInvalido) throw err;
-                console.warn(`[wsfe] Token WSAA rechazado por AFIP (posible cert rotado) — invalidando caché y reintentando`);
-                afipAuthModule.invalidateToken('wsfe', company.cuit);
-                afipResult = await emitirConReintentoToken(true);
+                if (esTokenInvalido) {
+                    console.warn(`[wsfe] Token WSAA rechazado por AFIP (posible cert rotado) — invalidando caché y reintentando`);
+                    afipAuthModule.invalidateToken('wsfe', company.cuit, company.id);
+                    afipResult = await emitirConReintentoToken(true);
+                    markEnd('wsfe_issue');
+                } else {
+                    markEnd('wsfe_issue');
+                    // Si el error parece relacionado con la condición fiscal del
+                    // emisor (ej: pasó de monotributo a RI pero nuestro cache
+                    // dice monotributo), invalidamos el padrón para que la
+                    // próxima corrida consulte AFIP fresco.
+                    const esErrorCondicionFiscal = /condici[oó]n|categor[ií]a|habilitad|no autorizado|tipo.*comprobante.*emisor|emisor.*tipo.*comprobante/i.test(err.message);
+                    if (esErrorCondicionFiscal) {
+                        console.warn(`[wsfe] Error de AFIP parece por condición fiscal — invalidando padrón emisor para forzar refresh. Detalle: ${err.message}`);
+                        invalidateEmisorPadronDb(company.id).catch(() => {});
+                    }
+                    throw err;
+                }
             }
 
             console.log(`[emit] AFIP respuesta (${(process.env.AFIP_ENV || 'homologation').toUpperCase()}) — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
@@ -3008,6 +3579,7 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             // ── 11. Generar PDF ────────────────────────────────────────────────
             if (afipResult?.cae) {
                 console.log('[emit] Generando PDF…');
+                markStart('pdf_gen');
                 try {
                     pdfBuffer = await generateFacturaPdfBuffer({
                         company,
@@ -3015,9 +3587,10 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                         afipResult,
                         itemId,
                     });
-                    pdfBase64 = pdfBuffer ? pdfBuffer.toString('base64') : null;
+                    markEnd('pdf_gen');
                     console.log(`[emit] PDF generado, ${pdfBuffer?.length || 0} bytes`);
                 } catch (pdfErr) {
+                    markEnd('pdf_gen');
                     console.error('[emit] ⚠ Error generando PDF:', pdfErr.message);
                     console.error('[emit] stack:', pdfErr.stack?.slice(0, 800));
                     // seguimos sin PDF para que al menos el item se marque como éxito
@@ -3032,13 +3605,19 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                     console.log('[emit] invoicePdfColumnId:', invoicePdfColumnId);
                     if (invoicePdfColumnId) {
                         console.log('[emit] Subiendo PDF a Monday…');
-                        const nroCompPadded = String(afipResult?.numero_comprobante || '').padStart(8, '0');
+                        // Padding mínimo sin truncar: PV ≥ 2 dígitos, Nro ≥ 4 dígitos.
+                        // Si PV o Nro son más largos, se alargan (nunca se truncan) → unicidad garantizada.
+                        // Ej: PV=6, Nro=40 → "06-0040". PV=105, Nro=12345 → "105-12345".
+                        const pvPadded      = String(draft?.punto_venta || '').padStart(2, '0');
+                        const nroCompPadded = String(afipResult?.numero_comprobante || '').padStart(4, '0');
+                        markStart('pdf_upload');
                         mondayUpload = await uploadPdfToMondayFileColumn({
                             apiToken: mondayToken, itemId,
                             fileColumnId: invoicePdfColumnId,
                             pdfBuffer,
-                            filename: `Factura_${tipo}_Nro_${nroCompPadded}.pdf`,
+                            filename: `Factura_${tipo}_Nro_${pvPadded}-${nroCompPadded}.pdf`,
                         });
+                        markEnd('pdf_upload');
                         console.log('[emit] PDF subido:', JSON.stringify(mondayUpload).slice(0, 300));
                     } else {
                         console.warn('[emit] No hay columna de PDF configurada (invoice_pdf) en el mapeo');
@@ -3053,41 +3632,64 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             }
 
             // ── 13. Persistir resultado final ──────────────────────────────────
+            // CRÍTICO: este UPDATE tiene que ser sincrónico (await) para proteger
+            // la idempotencia. Si el usuario re-dispara la emisión, el SELECT
+            // inicial tiene que ver status='success' + monday_upload OK para
+            // abortar con "factura ya emitida". Sin base64 el UPDATE es liviano
+            // (~500ms vs 10s+ con base64).
             console.log('[emit] UPDATE final de invoice_emissions…');
             const finalAfipResult = afipResult
                 ? { ...afipResult, monday_upload: mondayUpload }
                 : null;
+            markStart('db_final_update');
             await db.query(
                 `UPDATE invoice_emissions
-                 SET status=$5, draft_json=$6, afip_result_json=$7, pdf_base64=$8, updated_at=CURRENT_TIMESTAMP
+                 SET status=$5, draft_json=$6, afip_result_json=$7, updated_at=CURRENT_TIMESTAMP
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                 [
                     company.id, boardId, itemId, typeForIdempotency,
                     afipResult?.cae ? 'success' : 'prepared',
                     JSON.stringify(draft),
                     JSON.stringify(finalAfipResult),
-                    pdfBase64,
                 ]
             );
+            markEnd('db_final_update');
 
-            // ── 14. Cambiar status a "Comprobante Creado" ──────────────────
+            // ── 14. Cambiar status a "Comprobante Creado" (FIRE-AND-FORGET) ──
+            // La idempotencia ya está protegida por el UPDATE anterior. El
+            // usuario ve el cambio casi inmediato; si Monday tarda o falla,
+            // la factura y el PDF ya están persistidos correctamente.
             if (statusColumnId && afipResult?.cae) {
-                await updateMondayItemStatus({
+                markStart('status_success');
+                updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
                     statusColumnId,
                     label: COMPROBANTE_STATUS_FLOW.success,
-                });
+                })
+                    .then(() => markEnd('status_success'))
+                    .catch((err) => console.warn('[status] fire-and-forget success falló:', err.message));
             }
 
+            // Callback a Monday (FIRE-AND-FORGET) — no es crítico para el usuario.
             if (callbackUrl) {
-                await notifyCallback(callbackUrl, actionUuid, true, null, {
+                notifyCallback(callbackUrl, actionUuid, true, null, {
                     invoiceType:      tipo,
                     cae:              afipResult?.cae,
                     numero:           afipResult?.numero_comprobante,
                     emisorCondicion:  emisorInfo.condicion,
                     receptorCondicion: receptorInfo.condicion,
-                });
+                }).catch((err) => console.warn('[callback] fire-and-forget falló:', err.message));
             }
+
+            // Resumen completo de tiempos — una sola línea legible al final.
+            const tTotal = Date.now() - tIncoming;
+            const tBg    = Date.now() - tBgStart;
+            const tAck   = tAckReply - tIncoming;
+            const summary = Object.entries(timings)
+                .filter(([, v]) => typeof v.ms === 'number')
+                .map(([k, v]) => `${k}=${v.ms}`)
+                .join(' | ');
+            console.log(`[timing] ── SUMMARY (item ${itemId}) ── total=${tTotal}ms ack=${tAck}ms bg=${tBg}ms | ${summary}`);
 
         } catch (err) {
             console.error(`❌ [emit] Error factura:`, err.message);
@@ -3392,6 +3994,231 @@ async function runStartupMigrations() {
     } catch (err) {
         console.error('[migrations] installation_leads error:', err.message);
     }
+    try {
+        await ensureAfipWsaaTokensTable();
+        console.log('[migrations] afip_wsaa_tokens table asegurada');
+    } catch (err) {
+        console.error('[migrations] afip_wsaa_tokens error:', err.message);
+    }
+    try {
+        await ensurePadronReceptoresCacheTable();
+        console.log('[migrations] padron_receptores_cache table asegurada');
+    } catch (err) {
+        console.error('[migrations] padron_receptores_cache error:', err.message);
+    }
+}
+
+// ─── Cache de tokens WSAA en DB ─────────────────────────────────────────────
+// AFIP emite tokens WSAA que duran 12h. Guardarlos en DB permite que sobrevivan
+// reinicios del container (cold start, redeploy) y se compartan entre todas
+// las instancias. Esto ahorra 30-40s en la primera factura después de cada
+// reinicio porque no hay que volver a autenticar contra WSAA.
+//
+// Dos tipos de tokens:
+//   - service='ws_sr_constancia_inscripcion', company_id=NULL → token del Padrón (cert Martín),
+//     compartido por todo el sistema.
+//   - service='wsfe', company_id=N → token de facturación, uno por empresa
+//     (cada empresa firma con su propio certificado).
+//
+// No usamos UNIQUE con NULL (ambiguo en Postgres). Hacemos UPSERT manual:
+// DELETE + INSERT dentro de una transacción.
+async function ensureAfipWsaaTokensTable() {
+    // company_id es TEXT porque companies.id puede ser UUID (string) o integer
+    // según cómo se creó la tabla. TEXT cubre ambos casos sin romper.
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS afip_wsaa_tokens (
+            id SERIAL PRIMARY KEY,
+            company_id TEXT NULL,
+            service VARCHAR(50) NOT NULL,
+            token TEXT NOT NULL,
+            sign TEXT NOT NULL,
+            expires_at TIMESTAMP NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    // Si la tabla ya existía con company_id INTEGER (deploy anterior buggy),
+    // migrarla a TEXT. El USING convierte cualquier valor existente a string.
+    await db.query(`
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'afip_wsaa_tokens'
+                  AND column_name = 'company_id'
+                  AND data_type = 'integer'
+            ) THEN
+                ALTER TABLE afip_wsaa_tokens
+                    ALTER COLUMN company_id TYPE TEXT USING company_id::text;
+            END IF;
+        END $$
+    `);
+    // Índice para búsqueda rápida. Se combinan company_id+service.
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_afip_wsaa_tokens_lookup
+        ON afip_wsaa_tokens (service, company_id)
+    `);
+}
+
+// Funciones del storage DB que se inyectan a afipAuth.setDbStorage().
+// La interfaz esperada por afipAuth es { load, save, invalidate }.
+//
+// load({service, companyId}) → busca un token válido en DB
+// save({service, companyId, token, sign, expiresAt}) → persiste token nuevo
+// invalidate({service, companyId}) → borra token (usado ante error de AFIP)
+// Sentinel string para company_id NULL (tokens globales como el Padrón).
+// Usamos un string porque company_id es TEXT — COALESCE de TEXT con INTEGER
+// no funciona en Postgres.
+const WSAA_GLOBAL_COMPANY = '__global__';
+
+async function wsaaDbLoad({ service, companyId }) {
+    try {
+        const cid = companyId ? String(companyId) : null;
+        const result = await db.query(
+            `SELECT token, sign, expires_at FROM afip_wsaa_tokens
+             WHERE service = $1
+               AND COALESCE(company_id, $2) = COALESCE($3::text, $2)
+             LIMIT 1`,
+            [service, WSAA_GLOBAL_COMPANY, cid]
+        );
+        const row = result.rows[0];
+        if (!row) return null;
+        const expiresAt = new Date(row.expires_at).getTime();
+        // afipAuth aplica su propio margen de 5min al leer; acá devolvemos el
+        // token tal cual si no está expirado (sin aplicar refresh-ahead, eso
+        // es responsabilidad del cron diario cada 8h).
+        if (expiresAt <= Date.now()) return null;
+        return { token: row.token, sign: row.sign, expiresAt };
+    } catch (err) {
+        console.warn(`[wsaa-db] error leyendo token (${service}): ${err.message}`);
+        return null;
+    }
+}
+
+// Guarda (o reemplaza) un token en DB. Usa DELETE+INSERT para evitar problemas
+// con UNIQUE sobre NULL. No falla la emisión si la DB falla.
+async function wsaaDbSave({ service, companyId, token, sign, expiresAt }) {
+    try {
+        const cid = companyId ? String(companyId) : null;
+        await db.query('BEGIN');
+        await db.query(
+            `DELETE FROM afip_wsaa_tokens
+             WHERE service = $1
+               AND COALESCE(company_id, $2) = COALESCE($3::text, $2)`,
+            [service, WSAA_GLOBAL_COMPANY, cid]
+        );
+        await db.query(
+            `INSERT INTO afip_wsaa_tokens (company_id, service, token, sign, expires_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())`,
+            [cid, service, token, sign, new Date(expiresAt)]
+        );
+        await db.query('COMMIT');
+    } catch (err) {
+        try { await db.query('ROLLBACK'); } catch {}
+        console.warn(`[wsaa-db] error guardando token (${service}): ${err.message}`);
+    }
+}
+
+async function wsaaDbInvalidate({ service, companyId }) {
+    try {
+        const cid = companyId ? String(companyId) : null;
+        await db.query(
+            `DELETE FROM afip_wsaa_tokens
+             WHERE service = $1
+               AND COALESCE(company_id, $2) = COALESCE($3::text, $2)`,
+            [service, WSAA_GLOBAL_COMPANY, cid]
+        );
+    } catch (err) {
+        console.warn(`[wsaa-db] error invalidando token (${service}): ${err.message}`);
+    }
+}
+
+// ─── Pre-generación de tokens WSAA ──────────────────────────────────────────
+// Genera el token WSFE de una empresa y lo guarda en DB. Se dispara en
+// background cuando el cliente sube su certificado (o al abrir la app si
+// falta). Así para cuando emita su primera factura el token ya está listo
+// y no tiene que esperar 30-40s en el peor momento (first impression).
+//
+// Si ya hay un token válido en DB, no hace nada.
+async function pregenerateWsfeToken({ companyId, cuit, certPem, keyPem }) {
+    if (!companyId || !cuit || !certPem || !keyPem) {
+        console.warn('[wsaa-pregen] faltan datos — skip');
+        return;
+    }
+    try {
+        // Chequear si ya hay un token válido con >3h de vida. Si sí, no hace
+        // falta regenerar.
+        const existing = await wsaaDbLoad({ service: 'wsfe', companyId });
+        if (existing && (existing.expiresAt - Date.now()) > 3 * 60 * 60 * 1000) {
+            console.log(`[wsaa-pregen] WSFE ya fresco para company ${companyId} — skip`);
+            return;
+        }
+        console.log(`[wsaa-pregen] generando WSFE para company ${companyId} en background`);
+        await afipAuthModule.getToken({
+            certPem, keyPem, cuit, service: 'wsfe',
+            companyId, force: true,
+        });
+        console.log(`[wsaa-pregen] WSFE OK para company ${companyId} — cacheado en DB`);
+    } catch (err) {
+        console.warn(`[wsaa-pregen] WSFE falló para company ${companyId}: ${err.message}`);
+    }
+}
+
+// Pre-genera el token del Padrón (global, cert de Martín). Se dispara al
+// arrancar el server y al abrir la app. El token es compartido por todo el
+// sistema, así que una vez generado sirve para cualquier cliente.
+async function pregeneratePadronToken() {
+    try {
+        if (!process.env.PADRON_CRT || !process.env.PADRON_KEY) {
+            console.log('[wsaa-pregen] PADRON_CRT/KEY no configurados — skip');
+            return;
+        }
+        const existing = await wsaaDbLoad({ service: 'ws_sr_constancia_inscripcion', companyId: null });
+        if (existing && (existing.expiresAt - Date.now()) > 3 * 60 * 60 * 1000) {
+            console.log('[wsaa-pregen] Padrón global ya fresco — skip');
+            return;
+        }
+        console.log('[wsaa-pregen] generando token del Padrón (global) en background');
+        // Disparamos una consulta al padrón con el CUIT del padrón (el de
+        // Martín) — una llamada liviana. Esto fuerza la generación del token
+        // que queda cacheado en DB.
+        const afipPadron = require('./modules/afipPadron');
+        const padronCuit = require('./config').padronCuit;
+        if (padronCuit) {
+            await afipPadron.getCondicionFiscal({ cuitAConsultar: padronCuit });
+            console.log('[wsaa-pregen] Padrón global OK — cacheado en DB');
+        }
+    } catch (err) {
+        console.warn(`[wsaa-pregen] Padrón global falló: ${err.message}`);
+    }
+}
+
+// Helper: levanta el cert del emisor y pre-genera su token. Úsalo después
+// de subir un certificado o al abrir la app si hay cert activo sin token.
+async function pregenerateWsfeTokenForCompanyId(companyId) {
+    try {
+        const certResult = await db.query(`
+            SELECT c.id, c.cuit, ac.crt_file_url, ac.encrypted_private_key
+            FROM companies c
+            JOIN afip_credentials ac ON ac.company_id = c.id
+            WHERE c.id = $1
+              AND ac.status = 'active'
+              AND ac.crt_file_url IS NOT NULL
+              AND ac.encrypted_private_key IS NOT NULL
+            LIMIT 1
+        `, [companyId]);
+        const row = certResult.rows[0];
+        if (!row) return;
+        const certPem = normalizePem(row.crt_file_url, 'CERTIFICATE');
+        const decryptedKey = CryptoJS.AES.decrypt(
+            row.encrypted_private_key, process.env.ENCRYPTION_KEY
+        ).toString(CryptoJS.enc.Utf8);
+        const keyPem = normalizePem(decryptedKey, 'PRIVATE KEY');
+        await pregenerateWsfeToken({
+            companyId: row.id, cuit: row.cuit, certPem, keyPem
+        });
+    } catch (err) {
+        console.warn(`[wsaa-pregen] error cargando cert de company ${companyId}: ${err.message}`);
+    }
 }
 
 // Arranca el servidor (local y monday code)
@@ -3399,6 +4226,38 @@ const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
     console.log(`Backend corriendo en puerto ${PORT} | AFIP_ENV: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
     await runStartupMigrations();
+
+    // Inyectar el storage de DB en afipAuth para que los tokens sobrevivan
+    // reinicios del container. Debe ir DESPUÉS de las migrations porque la
+    // tabla afip_wsaa_tokens se crea ahí.
+    afipAuthModule.setDbStorage({
+        load:       wsaaDbLoad,
+        save:       wsaaDbSave,
+        invalidate: wsaaDbInvalidate,
+    });
+    console.log('[wsaa] DB storage inyectado en afipAuth');
+
+    // Warm-up pdfkit (carga fuentes Helvetica en memoria).
+    warmupPdfkit();
+
+    schedulePadronEmisorDailyRefresh();
+
+    // Pre-generar el token del Padrón (global, cert de Martín) al arrancar.
+    // Así la primera consulta a padrón (emisor o receptor) no espera los
+    // 30-40s de regeneración. Background, no bloquea.
+    setTimeout(() => {
+        pregeneratePadronToken().catch(err =>
+            console.error('[wsaa-pregen padron startup] error:', err.message));
+    }, 3000);
+
+    // Al arrancar el server (cold start / redeploy / crash recovery), disparamos
+    // el refresh del padrón como red de seguridad. La función filtra por
+    // fetched_at > 18h, así que si todo está fresco no hace nada.
+    setTimeout(() => {
+        console.log('[padron-cron startup] disparando refresh post-boot');
+        runPadronEmisorDailyRefresh().catch(err =>
+            console.error('[padron-cron startup] error:', err.message));
+    }, 10000);
 });
 
 module.exports = app;
