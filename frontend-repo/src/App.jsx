@@ -434,12 +434,13 @@ const App = () => {
       if (!context?.account?.id) return;
 
       setIsFetchingSavedData(true);
+
       try {
         const response = await api.get(`/setup/${context.account.id}`, {
           params: {
             board_id: boardId,
             view_id: viewIdFromHref,
-            app_feature_id: appFeatureId
+            app_feature_id: appFeatureId,
           }
         });
         const data = response.data;

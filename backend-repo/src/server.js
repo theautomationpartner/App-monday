@@ -455,7 +455,7 @@ try {
     const { EnvironmentVariablesManager, SecretsManager } = require('@mondaycom/apps-sdk');
     const envManager = new EnvironmentVariablesManager({ updateProcessEnv: true });
     const secretsManager = new SecretsManager();
-    const secretKeys = ['MONDAY_CLIENT_SECRET', 'MONDAY_SIGNING_SECRET', 'MONDAY_OAUTH_SECRET', 'ENCRYPTION_KEY', 'PADRON_KEY', 'PADRON_CRT'];
+    const secretKeys = ['MONDAY_CLIENT_SECRET', 'MONDAY_SIGNING_SECRET', 'MONDAY_OAUTH_SECRET', 'ENCRYPTION_KEY', 'PADRON_KEY', 'PADRON_CRT', 'DEV_MONDAY_TOKEN'];
     for (const key of secretKeys) {
         if (!process.env[key]) {
             const val = secretsManager.get(key);
@@ -1305,20 +1305,54 @@ async function ensureCompaniesExtraColumns() {
 //   - DEV_MONDAY_TOKEN (secret) — personal API token del developer
 //   - DEV_LEADS_BOARD_ID (env)  — ID del tablero de leads del developer
 
-// Column IDs del tablero de leads (mapeados manualmente al tablero).
-// Si el developer cambia columnas, hay que actualizar estos IDs.
+// Column IDs del tablero de leads del developer (mapeados manualmente).
+// Si se cambian columnas en el tablero, actualizar IDs acá.
 const LEADS_COLS = {
-    accountId:  'text_mm2eca9q',
-    email:      'email_mm2e4cea',
-    name:       'text_mm2e50rs',
-    date:       'date_mm2er78w',
-    plan:       'dropdown_mm2ewwp6',
-    workspace:  'text_mm2pj3t2',
-    boardId:    'text_mm2pmpv9',
-    boardName:  'text_mm2p11f7',
-    itemCount:  'numeric_mm2pmt4p',
-    appVersion: 'text_mm2pcr2h',
+    // Identidad de cuenta + admin
+    accountId:          'text_mm2eca9q',
+    email:              'email_mm2e4cea',
+    name:               'text_mm2e50rs',
+    idAdmin:            'numeric_mm2qsc4v',   // user_id
+    slug:               'text_mm2e1q62',      // account_slug
+    pais:               'dropdown_mm2gt6vn',  // user_country
+    producto:           'dropdown_mm2e2g97',  // user_cluster
+    plan:               'dropdown_mm2ewwp6',  // account_tier (free/basic/standard/pro/enterprise)
+    cantidadUsuarios:   'numeric_mm2eh07p',   // account_max_users
+    // Ciclo de vida
+    date:               'date_mm2er78w',      // fecha de instalación original
+    ultimoEvento:       'date_mm2q4t0y',      // fecha del último evento recibido
+    estado:             'color_mm2qgzh',      // Instalada/Desinstalada/Trial/Suscripto/Cancelado
+    appVersion:         'text_mm2pcr2h',      // version_data.number
+    // Suscripción
+    planApp:            'dropdown_mm2eayn',   // subscription.plan_id (label)
+    idPlanPago:         'text_mm2qy7m9',      // subscription.plan_id (raw)
+    enTrial:            'boolean_mm2qeprp',   // subscription.is_trial
+    periodoFacturacion: 'dropdown_mm2qgkm5',  // subscription.billing_period (Mensual/Anual)
+    diasRestantes:      'numeric_mm2qv3va',   // subscription.days_left
+    seatsPlan:          'numeric_mm2qzhb7',   // subscription.max_units
 };
+
+// Mapa evento → label del dropdown "Estado"
+const LIFECYCLE_STATE_LABEL = {
+    install:                              'Instalada',
+    uninstall:                            'Desinstalada',
+    app_trial_subscription_started:       'Trial',
+    app_trial_subscription_ended:         'Trial terminado',
+    app_subscription_created:             'Suscripto',
+    app_subscription_renewed:             'Suscripto',
+    app_subscription_changed:             'Suscripto',
+    app_subscription_cancelled_by_user:   'Cancelación pendiente',
+    app_subscription_cancelled:           'Cancelado',
+    app_subscription_cancellation_revoked_by_user: 'Suscripto',
+    app_subscription_renewal_attempt_failed: 'Pago fallido',
+    app_subscription_renewal_failed:      'Pago fallido',
+};
+
+function billingPeriodLabel(period) {
+    if (period === 'monthly') return 'Mensual';
+    if (period === 'yearly')  return 'Anual';
+    return period ? String(period) : '';
+}
 
 // Crea la tabla que trackea qué cuentas ya fueron notificadas al tablero de
 // leads. Usamos `monday_account_id` como UNIQUE para que aunque la cuenta
@@ -1353,39 +1387,49 @@ async function mondayGql(token, query, variables = {}) {
     return json.data;
 }
 
-// Trae info de la cuenta del cliente (nombre empresa, plan, usuario que
-// abrió la app, tablero). Usa el sessionToken del cliente.
-async function fetchClientAccountInfo(sessionToken, boardId) {
-    const query = `
-        query($boardIds: [ID!]) {
-            me { id email name }
-            account { id name slug tier country_code }
-            boards(ids: $boardIds) {
-                id
-                name
-                items_count
-                workspace { id name }
-            }
-        }
-    `;
-    return mondayGql(sessionToken, query, { boardIds: boardId ? [String(boardId)] : [] });
+// Arma el objeto column_values para mandar a Monday desde el payload del webhook
+// lifecycle. Solo incluye campos que vinieron con valor, así los updates no pisan
+// columnas con vacío cuando el evento no trae ese dato (ej: uninstall no trae
+// subscription.*).
+function buildLeadColumnValues(eventType, data) {
+    const sub = data.subscription || {};
+    const cv = {};
+
+    // Estado según el tipo de evento
+    const estado = LIFECYCLE_STATE_LABEL[eventType];
+    if (estado) cv[LEADS_COLS.estado] = { label: estado };
+
+    // Siempre setear la fecha del último evento
+    cv[LEADS_COLS.ultimoEvento] = { date: new Date().toISOString().slice(0, 10) };
+
+    // Cuenta + admin (vienen en casi todos los eventos)
+    if (data.account_id != null)       cv[LEADS_COLS.accountId]        = String(data.account_id);
+    if (data.account_tier)             cv[LEADS_COLS.plan]             = { labels: [String(data.account_tier)] };
+    if (data.account_slug)             cv[LEADS_COLS.slug]             = String(data.account_slug);
+    if (data.account_max_users != null) cv[LEADS_COLS.cantidadUsuarios] = String(data.account_max_users);
+    if (data.user_country)             cv[LEADS_COLS.pais]             = { labels: [String(data.user_country)] };
+    if (data.user_cluster)             cv[LEADS_COLS.producto]         = { labels: [String(data.user_cluster)] };
+    if (data.user_email)               cv[LEADS_COLS.email]            = { email: data.user_email, text: data.user_email };
+    if (data.user_name)                cv[LEADS_COLS.name]             = String(data.user_name);
+    if (data.user_id != null)          cv[LEADS_COLS.idAdmin]          = String(data.user_id);
+    if (data.version_data?.number != null) cv[LEADS_COLS.appVersion]   = String(data.version_data.number);
+
+    // Suscripción (solo llega en eventos app_subscription_* / app_trial_*)
+    if (sub.plan_id) {
+        cv[LEADS_COLS.planApp]    = { labels: [String(sub.plan_id)] };
+        cv[LEADS_COLS.idPlanPago] = String(sub.plan_id);
+    }
+    if (sub.is_trial != null)      cv[LEADS_COLS.enTrial]            = { checked: sub.is_trial ? 'true' : 'false' };
+    if (sub.billing_period)        cv[LEADS_COLS.periodoFacturacion] = { labels: [billingPeriodLabel(sub.billing_period)] };
+    if (sub.days_left != null)     cv[LEADS_COLS.diasRestantes]      = String(sub.days_left);
+    if (sub.max_units != null)     cv[LEADS_COLS.seatsPlan]          = String(sub.max_units);
+
+    return cv;
 }
 
-// Crea el item en el tablero de leads del developer usando DEV_MONDAY_TOKEN.
-async function createLeadItem(devToken, leadsBoardId, payload) {
-    const columnValues = {
-        [LEADS_COLS.accountId]:  String(payload.accountId || ''),
-        [LEADS_COLS.email]:      { email: payload.email || '', text: payload.email || '' },
-        [LEADS_COLS.name]:       String(payload.name || ''),
-        [LEADS_COLS.date]:       { date: new Date().toISOString().slice(0, 10) },
-        [LEADS_COLS.plan]:       { labels: [payload.plan || 'unknown'] },
-        [LEADS_COLS.workspace]:  String(payload.workspace || ''),
-        [LEADS_COLS.boardId]:    String(payload.boardId || ''),
-        [LEADS_COLS.boardName]:  String(payload.boardName || ''),
-        [LEADS_COLS.itemCount]:  String(payload.itemCount || 0),
-        [LEADS_COLS.appVersion]: String(payload.appVersion || ''),
-    };
-
+// Crea item nuevo en el tablero de leads. Se usa solo en el primer `install`
+// de cada cuenta.
+async function createLeadItem(devToken, leadsBoardId, itemName, columnValues) {
     const mutation = `
         mutation($boardId: ID!, $itemName: String!, $cv: JSON!) {
             create_item(
@@ -1400,78 +1444,32 @@ async function createLeadItem(devToken, leadsBoardId, payload) {
     `;
     const data = await mondayGql(devToken, mutation, {
         boardId: String(leadsBoardId),
-        itemName: payload.itemName || `Account ${payload.accountId}`,
+        itemName,
         cv: JSON.stringify(columnValues),
     });
     return data?.create_item?.id || null;
 }
 
-// Orquestador: detecta si la cuenta es nueva, trae info del cliente, crea el
-// lead en el tablero del developer y marca en la DB para no duplicar.
-// Llamado en background — nunca debe tirar error al caller (solo loggear).
-async function notifyNewInstallationIfNeeded({ accountId, sessionToken, boardId, appVersionId }) {
-    try {
-        await ensureInstallationLeadsTable();
-
-        // ¿Ya se notificó esta cuenta?
-        const existing = await db.query(
-            'SELECT id FROM installation_leads WHERE monday_account_id = $1 LIMIT 1',
-            [String(accountId)]
-        );
-        if (existing.rows.length > 0) return; // ya notificada, no hacemos nada
-
-        const devToken = process.env.DEV_MONDAY_TOKEN;
-        const leadsBoardId = process.env.DEV_LEADS_BOARD_ID;
-        if (!devToken || !leadsBoardId) {
-            console.warn('[install-notify] DEV_MONDAY_TOKEN o DEV_LEADS_BOARD_ID no configurados — skip');
-            return;
+// Actualiza un item existente del tablero de leads. Se usa para todos los
+// eventos posteriores a install (uninstall, trial, subscription, etc.).
+async function updateLeadItem(devToken, leadsBoardId, itemId, columnValues) {
+    const mutation = `
+        mutation($boardId: ID!, $itemId: ID!, $cv: JSON!) {
+            change_multiple_column_values(
+                board_id: $boardId,
+                item_id: $itemId,
+                column_values: $cv,
+                create_labels_if_missing: true
+            ) {
+                id
+            }
         }
-
-        // Intentar traer info del cliente con su sessionToken
-        let clientInfo = null;
-        let fetchError = null;
-        try {
-            clientInfo = await fetchClientAccountInfo(sessionToken, boardId);
-        } catch (err) {
-            fetchError = err.message;
-            console.warn('[install-notify] No se pudo traer info del cliente:', err.message);
-        }
-
-        const board = clientInfo?.boards?.[0] || null;
-        const accountName = clientInfo?.account?.name || `Cuenta ${accountId}`;
-        const payload = {
-            accountId,
-            itemName:   accountName,
-            email:      clientInfo?.me?.email || '',
-            name:       clientInfo?.me?.name || '',
-            plan:       clientInfo?.account?.tier || 'unknown',
-            workspace:  board?.workspace?.name || '',
-            boardId:    board?.id || boardId || '',
-            boardName:  board?.name || '',
-            itemCount:  board?.items_count || 0,
-            appVersion: appVersionId ? String(appVersionId) : '',
-        };
-
-        let leadItemId = null;
-        let createError = null;
-        try {
-            leadItemId = await createLeadItem(devToken, leadsBoardId, payload);
-            console.log(`[install-notify] Lead creado en tablero: item_id=${leadItemId} account=${accountName}`);
-        } catch (err) {
-            createError = err.message;
-            console.error('[install-notify] Error al crear lead en tablero:', err.message);
-        }
-
-        // Marcar como notificada (incluso si falló el create, para no reintentar en loop)
-        await db.query(
-            `INSERT INTO installation_leads (monday_account_id, lead_item_id, notification_error)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (monday_account_id) DO NOTHING`,
-            [String(accountId), leadItemId, fetchError || createError || null]
-        );
-    } catch (err) {
-        console.error('[install-notify] Error inesperado:', err);
-    }
+    `;
+    await mondayGql(devToken, mutation, {
+        boardId: String(leadsBoardId),
+        itemId:  String(itemId),
+        cv:      JSON.stringify(columnValues),
+    });
 }
 
 // ─── Helpers de validación de datos de contacto (suaves) ────────────────────
@@ -1736,18 +1734,6 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
         board_id: board_id || null,
         view_id: view_id || null,
         app_feature_id: app_feature_id || null
-    });
-
-    // Captura de instalación en background — si esta cuenta abre la app por
-    // primera vez, crea un item en el tablero de leads del developer.
-    // No bloquea la respuesta; errores se loggean pero no rompen la request.
-    setImmediate(() => {
-        notifyNewInstallationIfNeeded({
-            accountId:    mondayAccountId,
-            sessionToken: req.mondayIdentity?.sessionToken,
-            boardId:      board_id,
-            appVersionId: req.mondayIdentity?.appVersionId,
-        }).catch((err) => console.error('[install-notify] top-level error:', err));
     });
 
     // Refresh oportunista del padrón del emisor — cuando abren la app, si el
@@ -3034,6 +3020,117 @@ app.post('/api/webhooks/monday-trigger', async (req, res) => {
     }
 });
 
+// ─── Webhook de lifecycle de la app ──────────────────────────────────────────
+// Monday notifica eventos de ciclo de vida (install, uninstall, app_subscription_*)
+// a esta URL, configurada en Developer Center → Webhooks → "Todos los eventos".
+//
+// Autenticación: JWT en Authorization header, firmado con MONDAY_CLIENT_SECRET.
+// Payload: { type: 'install'|'uninstall'|..., data: { account_id, account_name,
+//            account_tier, user_email, user_name, subscription, ... } }
+//
+// Docs: https://developer.monday.com/apps/docs/app-lifecycle-events
+app.post('/api/webhooks/monday-lifecycle', async (req, res) => {
+    // Responder inmediatamente (Monday reintenta si tardamos)
+    res.status(200).json({ ok: true });
+
+    const token = parseAuthorizationToken(req);
+    if (!token) {
+        console.warn('[lifecycle] sin token de autorización');
+        return;
+    }
+
+    try {
+        verifyWithAnySecret(token);
+    } catch (err) {
+        console.warn('[lifecycle] JWT inválido:', err.message);
+        return;
+    }
+
+    const body = req.body || {};
+    const type = body.type || '';
+    const data = body.data || {};
+    console.log(`[lifecycle] evento=${type} account=${data.account_id} name=${data.account_name}`);
+
+    try {
+        await handleLifecycleEvent(type, data);
+    } catch (err) {
+        console.error('[lifecycle] Error procesando evento:', err);
+    }
+});
+
+// Dispatcher: en `install` crea item; en cualquier otro evento actualiza el
+// existente. Si no existe item (nunca pasó por install), loggea skip.
+async function handleLifecycleEvent(type, data) {
+    await ensureInstallationLeadsTable();
+
+    const devToken = process.env.DEV_MONDAY_TOKEN;
+    const leadsBoardId = process.env.DEV_LEADS_BOARD_ID;
+    if (!devToken || !leadsBoardId) {
+        console.warn('[lifecycle] DEV_MONDAY_TOKEN o DEV_LEADS_BOARD_ID no configurados — skip');
+        return;
+    }
+
+    const accountId = String(data.account_id || '');
+    if (!accountId) {
+        console.warn(`[lifecycle] ${type} sin account_id — skip`);
+        return;
+    }
+
+    if (type === 'install') {
+        // Race-safe insert: gana el primero, duplicados caen al UPDATE branch
+        const insertRes = await db.query(
+            `INSERT INTO installation_leads (monday_account_id)
+             VALUES ($1)
+             ON CONFLICT (monday_account_id) DO NOTHING
+             RETURNING id`,
+            [accountId]
+        );
+        if (insertRes.rows.length > 0) {
+            const accountName = data.account_name || `Cuenta ${accountId}`;
+            const cv = buildLeadColumnValues('install', data);
+            cv[LEADS_COLS.date] = { date: new Date().toISOString().slice(0, 10) };
+
+            let leadItemId = null;
+            let createError = null;
+            try {
+                leadItemId = await createLeadItem(devToken, leadsBoardId, accountName, cv);
+                console.log(`[lifecycle] Lead creado: item_id=${leadItemId} account=${accountName} admin=${data.user_email}`);
+            } catch (err) {
+                createError = err.message;
+                console.error('[lifecycle] Error creando lead:', err.message);
+            }
+
+            await db.query(
+                `UPDATE installation_leads
+                 SET lead_item_id = $2, notification_error = $3
+                 WHERE monday_account_id = $1`,
+                [accountId, leadItemId, createError || null]
+            );
+            return;
+        }
+        // Si ya existía, tratamos el install como "reinstall" → update del item
+    }
+
+    // Para todos los eventos != primer install: actualizar el item existente
+    const row = await db.query(
+        'SELECT lead_item_id FROM installation_leads WHERE monday_account_id = $1',
+        [accountId]
+    );
+    const leadItemId = row.rows[0]?.lead_item_id;
+    if (!leadItemId) {
+        console.warn(`[lifecycle] ${type} account=${accountId} sin lead_item_id — skip`);
+        return;
+    }
+
+    const cv = buildLeadColumnValues(type, data);
+    try {
+        await updateLeadItem(devToken, leadsBoardId, leadItemId, cv);
+        console.log(`[lifecycle] Lead actualizado: item_id=${leadItemId} evento=${type} account=${accountId}`);
+    } catch (err) {
+        console.error(`[lifecycle] Error actualizando lead ${leadItemId}:`, err.message);
+    }
+}
+
 // ─── Middleware para bloques de automatización de Monday ─────────────────────
 // El JWT viene firmado con CLIENT_SECRET y contiene shortLivedToken, accountId, userId
 function requireAutomationBlock(req, res, next) {
@@ -3962,9 +4059,20 @@ async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnI
 // Servir frontend React desde public/
 const path = require('path');
 const publicPath = path.join(__dirname, '../public');
-app.use(express.static(publicPath));
+// Assets hasheados (Vite) pueden cachearse forever. index.html NO debe cachearse
+// para que el browser siempre lea el bundle más reciente referenciado adentro.
+app.use(express.static(publicPath, {
+    setHeaders(res, filePath) {
+        if (filePath.endsWith('index.html')) {
+            res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        } else if (/\.(js|css|woff2?|ttf|png|jpg|svg)$/.test(filePath)) {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+    },
+}));
 app.get('/*splat', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(publicPath, 'index.html'));
 });
 
