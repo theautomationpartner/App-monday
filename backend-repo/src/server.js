@@ -455,7 +455,7 @@ try {
     const { EnvironmentVariablesManager, SecretsManager } = require('@mondaycom/apps-sdk');
     const envManager = new EnvironmentVariablesManager({ updateProcessEnv: true });
     const secretsManager = new SecretsManager();
-    const secretKeys = ['MONDAY_CLIENT_SECRET', 'MONDAY_SIGNING_SECRET', 'MONDAY_OAUTH_SECRET', 'ENCRYPTION_KEY', 'PADRON_KEY', 'PADRON_CRT', 'DEV_MONDAY_TOKEN'];
+    const secretKeys = ['MONDAY_CLIENT_SECRET', 'MONDAY_SIGNING_SECRET', 'MONDAY_OAUTH_SECRET', 'ENCRYPTION_KEY', 'PADRON_KEY', 'PADRON_CRT', 'DEV_MONDAY_TOKEN', 'SLACK_WEBHOOK_URL'];
     for (const key of secretKeys) {
         if (!process.env[key]) {
             const val = secretsManager.get(key);
@@ -1367,6 +1367,81 @@ async function ensureInstallationLeadsTable() {
             notification_error TEXT
         )
     `);
+}
+
+// Tabla del audit log: mapea (cuenta de cliente, item del cliente) -> item del
+// board de auditoría de TAP. Garantiza un único item de auditoría por cada item
+// del cliente: los reintentos actualizan el item existente en lugar de crear
+// duplicados.
+let _auditLogItemsTableEnsured = false;
+async function ensureAuditLogItemsTable() {
+    if (_auditLogItemsTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS audit_log_items (
+            id SERIAL PRIMARY KEY,
+            monday_account_id TEXT NOT NULL,
+            client_item_id TEXT NOT NULL,
+            audit_item_id TEXT NOT NULL,
+            created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE (monday_account_id, client_item_id)
+        )
+    `);
+    _auditLogItemsTableEnsured = true;
+}
+
+async function findAuditItemId(accountId, clientItemId) {
+    if (!accountId || !clientItemId) return null;
+    try {
+        const r = await db.query(
+            'SELECT audit_item_id FROM audit_log_items WHERE monday_account_id=$1 AND client_item_id=$2',
+            [String(accountId), String(clientItemId)]
+        );
+        return r.rows[0]?.audit_item_id || null;
+    } catch (_) { return null; }
+}
+
+async function recordAuditMapping(accountId, clientItemId, auditItemId) {
+    if (!accountId || !clientItemId || !auditItemId) return;
+    try {
+        await db.query(
+            `INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (monday_account_id, client_item_id)
+             DO UPDATE SET audit_item_id = EXCLUDED.audit_item_id, updated_at = CURRENT_TIMESTAMP`,
+            [String(accountId), String(clientItemId), String(auditItemId)]
+        );
+    } catch (err) { console.warn('[audit-log] error guardando mapeo:', err.message); }
+}
+
+// Wrapper de fetch con reintentos: hasta `attempts` intentos con `delayMs` entre
+// cada uno. Reintenta en errores de red (excepción) y en HTTP 5xx. NO reintenta
+// en 4xx (es nuestro problema, no transient). Tiene timeout duro por intento.
+async function fetchWithRetry(url, options = {}, { attempts = 2, delayMs = 3000, timeoutMs = 30000, label = 'fetch' } = {}) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(timeoutId);
+            if (res.status >= 500 && res.status < 600 && i < attempts - 1) {
+                console.warn(`[${label}] HTTP ${res.status} — reintento ${i + 1}/${attempts} en ${delayMs}ms`);
+                await new Promise(r => setTimeout(r, delayMs));
+                continue;
+            }
+            return res;
+        } catch (err) {
+            clearTimeout(timeoutId);
+            lastErr = err;
+            if (i < attempts - 1) {
+                console.warn(`[${label}] fetch falló (${err.message}) — reintento ${i + 1}/${attempts} en ${delayMs}ms`);
+                await new Promise(r => setTimeout(r, delayMs));
+                continue;
+            }
+        }
+    }
+    throw lastErr || new Error(`fetchWithRetry: agotados ${attempts} intentos`);
 }
 
 // Query genérica a Monday GraphQL con un token dado.
@@ -3255,6 +3330,7 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
         let pdfBuffer   = null;
         let mondayUpload = null;
         let resolvedType = requestedType;
+        let itemSourceName = null;
 
         try {
             markStart('preflight');
@@ -3280,8 +3356,17 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
 
             const { mainColumns, subitems } = itemData;
+            itemSourceName = itemData?.name || null;
             if (!boardId) boardId = itemData.boardId;
             if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
+
+            // Trigger de testing: si el item se llama exactamente "make-errores-",
+            // forzar un Error sistema para validar que el flujo de notificación
+            // (audit board + Slack) funciona end-to-end. El mensaje no matchea
+            // los patrones de classifyAuditError → cae en error_sistema.
+            if (itemSourceName === 'make-errores-') {
+                throw new Error('TEST forzado: error sistema simulado desde item make-errores-');
+            }
 
             // ── 2b. Pre-flight 1: bloquear si falta configuración ──────────────
             console.log(`[emit] Emitiendo factura para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
@@ -3788,6 +3873,30 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 .join(' | ');
             console.log(`[timing] ── SUMMARY (item ${itemId}) ── total=${tTotal}ms ack=${tAck}ms bg=${tBg}ms | ${summary}`);
 
+            // Renombrar el item del cliente con el formato del comprobante emitido.
+            // FIRE-AND-FORGET: la emisión ya fue exitosa, esto es solo cosmético.
+            if (afipResult?.numero_comprobante) {
+                const newClientItemName = `Factura ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim();
+                renameMondayItem({
+                    apiToken: mondayToken, boardId, itemId,
+                    newName: newClientItemName,
+                }).catch((e) => console.warn('[rename] cliente fire-and-forget falló:', e.message));
+            }
+
+            // Audit log central de TAP (FIRE-AND-FORGET) — registra la emisión exitosa.
+            logEmissionToAuditBoard({
+                accountId,
+                success: true,
+                clientItemId: itemId,
+                sourceItemName: itemSourceName,
+                draft,
+                afipResult,
+                tipo,
+                durationMs: tTotal,
+                pdfBuffer,
+                receptorRazonSocial: receptorInfo?.nombre || draft?.receptor_nombre || null,
+            }).catch((e) => console.warn('[audit-log] fire-and-forget falló:', e.message));
+
         } catch (err) {
             console.error(`❌ [emit] Error factura:`, err.message);
 
@@ -3826,6 +3935,27 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             } catch (_) {}
 
             if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message);
+
+            // Audit log central de TAP (FIRE-AND-FORGET) — registra la emisión fallida.
+            // Salteamos si el error es de idempotencia ("factura ya emitida"): la
+            // factura original ya está registrada del intento exitoso anterior, y
+            // este es solo el cliente reintentando algo bloqueado por el sistema.
+            const isIdempotencyError = /idempotencia|ya emitida|ya completa/i.test(err?.message || '');
+            if (!isIdempotencyError) {
+                logEmissionToAuditBoard({
+                    accountId,
+                    success: false,
+                    clientItemId: itemId,
+                    sourceItemName: itemSourceName,
+                    draft: null,
+                    afipResult: null,
+                    tipo: typeof resolvedType !== 'undefined' ? resolvedType : null,
+                    error: err,
+                    durationMs: Date.now() - tIncoming,
+                }).catch((e) => console.warn('[audit-log] fire-and-forget falló:', e.message));
+            } else {
+                console.log('[audit-log] skip (factura ya emitida — el audit item ya está actualizado del intento exitoso)');
+            }
         }
     });
 });
@@ -3876,8 +4006,8 @@ function buildErrorComment(err) {
         {
             match: /tipo de factura incorrecto|factura.*incorrecto|corresponde.*[ABC]/i,
             title: 'Tipo de factura incorrecto',
-            detail: mainMsg,
-            solucion: 'Verificá la condición IVA del emisor y receptor. El sistema determina automáticamente si corresponde Factura A, B o C.',
+            detail: 'Los datos fiscales del emisor o del receptor no coinciden con el tipo de factura que se intentó emitir.',
+            solucion: 'Revisá dos cosas:<br/>&nbsp;&nbsp;1) En la app, abrí <b>Datos Fiscales</b> y confirmá que la <b>Condición IVA</b> de tu empresa esté bien cargada (Responsable Inscripto, Monotributo, etc.).<br/>&nbsp;&nbsp;2) En el item, confirmá que el <b>CUIT del receptor</b> sea correcto. La app consulta automáticamente a AFIP la condición del receptor para decidir si corresponde A, B o C.',
         },
         {
             match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
@@ -3899,15 +4029,15 @@ function buildErrorComment(err) {
         },
         {
             match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
-            title: 'Error de comunicación con AFIP',
-            detail: `Los servidores de AFIP respondieron con un error: ${mainMsg.substring(0, 150)}`,
-            solucion: 'Los servidores de AFIP pueden tener mantenimiento. Reintentá en unos minutos. Si persiste, verificá que los certificados estén vigentes.',
+            title: 'AFIP no está respondiendo correctamente',
+            detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
+            solucion: 'Esperá unos minutos y volvé a intentarlo. AFIP suele tener cortes breves o mantenimientos. Si después de 30 minutos sigue fallando, avisá al soporte de la app.',
         },
         {
             match: /token.*monday|no hay token|sessionToken/i,
             title: 'Error de autenticación con Monday',
-            detail: 'No se pudo obtener un token válido para acceder a los datos del tablero.',
-            solucion: 'Reintentá la operación. Si persiste, revisá que la app esté correctamente instalada en el workspace.',
+            detail: 'La app no pudo acceder a los datos del tablero.',
+            solucion: 'Cerrá la vista de la app y volvé a abrirla. Si el error sigue, desinstalá la app desde el tablero y volvé a instalarla desde el Marketplace de Monday.',
         },
         {
             match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta/i,
@@ -3950,7 +4080,7 @@ function buildErrorComment(err) {
 
     return `<b>Error al emitir factura</b><br/><br/>` +
         `<b>Causa:</b> ${mainMsg}<br/><br/>` +
-        `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, revisá los logs en Developer Center → Registros.`;
+        `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.`;
 }
 
 /**
@@ -4017,6 +4147,7 @@ async function fetchMondayItem({ apiToken, itemId }) {
     if (!item) throw new Error(`Item ${itemId} no encontrado en Monday`);
     return {
         boardId: item.board?.id ? String(item.board.id) : null,
+        name: item.name || null,
         mainColumns: item.column_values || [],
         subitems: (item.subitems || []).map(s => ({
             id: s.id, name: s.name, column_values: s.column_values || []
@@ -4026,6 +4157,40 @@ async function fetchMondayItem({ apiToken, itemId }) {
 
 // Actualizar el estado de un item en Monday (columna de status).
 // Usa create_labels_if_missing para crear el label automáticamente si no existe.
+// Cambia el nombre de un item de Monday usando change_simple_column_value
+// con la columna especial "name". Es la forma oficial de renombrar items.
+// Usa reintentos: si Monday responde 5xx o falla la conexión, reintenta una vez.
+async function renameMondayItem({ apiToken, boardId, itemId, newName }) {
+    if (!apiToken || !boardId || !itemId || !newName) return;
+    try {
+        const safeName = String(newName).slice(0, 255);
+        const mutation = `mutation ($boardId: ID!, $itemId: ID!, $value: String!) {
+            change_simple_column_value(
+                board_id: $boardId,
+                item_id: $itemId,
+                column_id: "name",
+                value: $value
+            ) { id }
+        }`;
+        const res = await fetchWithRetry('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({
+                query: mutation,
+                variables: { boardId: String(boardId), itemId: String(itemId), value: safeName },
+            }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'rename' });
+        const j = await res.json();
+        if (j?.errors?.length) {
+            console.warn(`[rename] errors:`, JSON.stringify(j.errors).slice(0, 300));
+        } else {
+            console.log(`[rename] item ${itemId} renombrado a "${safeName}"`);
+        }
+    } catch (err) {
+        console.warn(`[rename] excepción:`, err.message);
+    }
+}
+
 async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnId, label }) {
     if (!apiToken || !boardId || !itemId || !statusColumnId || !label) return;
     try {
@@ -4053,6 +4218,284 @@ async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnI
         }
     } catch (err) {
         console.error(`[status] Exception cambiando status a "${label}":`, err.message);
+    }
+}
+
+// ─── Audit log central: registra cada emisión (OK o error) en el board de TAP ─
+// Board en the-automation-partner.monday.com — no es del cliente final.
+// Sirve para auditoría y monitoreo diario del funcionamiento del sistema.
+const AUDIT_COLS = {
+    fecha_emision:    'date_mm2ttq29',
+    estado:           'color_mm2t2mrr',
+    instalacion:      'board_relation_mm2kxvcj',
+    tipo:             'dropdown_mm2ty1vv',
+    nro_comprobante:  'numeric_mm2ts2xt',
+    cae:              'numeric_mm2tbp76',
+    vto_cae:          'date_mm2tnn5a',
+    cuit_receptor:    'numeric_mm2tdk2h',
+    razon_social:     'text_mm2t7wza',
+    importe_total:    'numeric_mm2t5pm8',
+    importe_neto:     'numeric_mm2t5f9x',
+    importe_iva:      'numeric_mm2tqb1d',
+    pdf_adjunto:      'file_mm2tyjfw',
+    mensaje_error:    'long_text_mm2tx4ka',
+    concepto_afip:    'dropdown_mm2tge43',
+    condicion_venta:  'dropdown_mm2t75pn',
+    duracion_ms:      'numeric_mm2txds8',
+};
+
+const AUDIT_ESTADO = {
+    ok:               'Emitida OK',
+    error_validacion: 'Error validación',
+    error_afip:       'Error AFIP',
+    error_sistema:    'Error sistema',
+};
+
+const AUDIT_CONCEPTO = { 1: 'Productos', 2: 'Servicios', 3: 'Productos y Servicios' };
+
+// Clasifica el error en uno de los 3 buckets de Estado para el log central.
+function classifyAuditError(err) {
+    const msg = String(err?.message || '');
+    if (/wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout|padr[oó]n/i.test(msg)) return AUDIT_ESTADO.error_afip;
+    if (/falta|incompleta|incompatible|inv[aá]lid|obligator|no hay|sin .|ya emitida|certificad/i.test(msg)) return AUDIT_ESTADO.error_validacion;
+    return AUDIT_ESTADO.error_sistema;
+}
+
+async function getInstallationLeadItemId(accountId) {
+    if (!accountId) return null;
+    try {
+        const r = await db.query(
+            'SELECT lead_item_id FROM installation_leads WHERE monday_account_id = $1',
+            [String(accountId)]
+        );
+        return r.rows[0]?.lead_item_id || null;
+    } catch (_) { return null; }
+}
+
+// Normaliza fechas a YYYY-MM-DD: AFIP las devuelve como YYYYMMDD (sin guiones)
+// y Monday rechaza con "invalid value" si no tienen el formato con guiones.
+function toMondayDate(s) {
+    if (!s) return null;
+    const digits = String(s).replace(/\D/g, '');
+    if (digits.length >= 8) return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+    const isoMatch = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return isoMatch ? `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}` : null;
+}
+
+// Notifica a Slack solo cuando hay un Error sistema (los que requieren acción
+// del equipo de TAP — bugs, infra, casos no clasificables).
+// FIRE-AND-FORGET: nunca tira excepción. Tiene reintentos.
+async function notifySlackSystemError({ accountId, clientItemName, errorMessage, auditItemId }) {
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) {
+        console.warn('[slack] SLACK_WEBHOOK_URL no configurado — skip');
+        return;
+    }
+    try {
+        const auditBoardId = process.env.MONDAY_AUDIT_BOARD_ID;
+        const auditUrl = (auditItemId && auditBoardId)
+            ? `https://the-automation-partner.monday.com/boards/${auditBoardId}/pulses/${auditItemId}`
+            : (auditBoardId ? `https://the-automation-partner.monday.com/boards/${auditBoardId}` : null);
+
+        const lines = [
+            `:rotating_light: *Error sistema en facturación*`,
+            `*Cuenta:* ${accountId || '(desconocida)'}`,
+            clientItemName ? `*Item del cliente:* "${clientItemName}"` : null,
+            `*Error:* \`${(errorMessage || 'sin mensaje').slice(0, 500)}\``,
+            auditUrl
+                ? (auditItemId ? `<${auditUrl}|→ Ver en Comp Emitidos>` : `<${auditUrl}|→ Abrir Comp Emitidos> _(item aún no creado — buscar manualmente)_`)
+                : '_(MONDAY_AUDIT_BOARD_ID no configurado)_',
+        ].filter(Boolean);
+
+        const payload = { text: lines.join('\n') };
+        const res = await fetchWithRetry(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'slack' });
+
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            console.error(`[slack] webhook devolvió ${res.status}: ${body.slice(0, 200)}`);
+        } else {
+            console.log(`[slack] notificación Error sistema enviada (account=${accountId || '?'})`);
+        }
+    } catch (err) {
+        console.error(`[slack] excepción al notificar: ${err.message}`);
+    }
+}
+
+// Registra una emisión (exitosa o fallida) en el board centralizado de TAP.
+// Es FIRE-AND-FORGET: nunca tira excepción para no afectar la emisión real.
+//
+// Idempotencia: por cada item del cliente existe un único item en el audit
+// board. Los reintentos actualizan ese mismo item (columnas + nombre) en lugar
+// de crear duplicados. El mapeo se mantiene en la tabla `audit_log_items`.
+//
+// Cobertura ante fallas: si es Error sistema, se dispara Slack EN PARALELO con
+// el create/update del audit item. Así, aunque Monday API esté caída, igual
+// llega la alerta a Slack.
+async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, pdfBuffer, receptorRazonSocial }) {
+    const boardId = process.env.MONDAY_AUDIT_BOARD_ID;
+    const token   = process.env.DEV_MONDAY_TOKEN;
+    if (!boardId || !token) {
+        console.warn('[audit-log] MONDAY_AUDIT_BOARD_ID o DEV_MONDAY_TOKEN no configurados — skip');
+        return;
+    }
+
+    // Si es Error sistema, disparar Slack EN PARALELO desde el inicio (no esperar
+    // a que el audit item se cree). Si Monday API o la DB están caídos, igual
+    // llega la alerta. El link al audit item solo va si ya existía de un intento
+    // previo (existingAuditItemId).
+    const isSystemError = !success && classifyAuditError(error) === AUDIT_ESTADO.error_sistema;
+    let slackPromise = null;
+
+    try {
+        await ensureAuditLogItemsTable();
+
+        const leadItemId = await getInstallationLeadItemId(accountId);
+        const fechaEmision = toMondayDate(draft?.fecha_emision) || new Date().toISOString().slice(0, 10);
+        const vtoCae       = toMondayDate(afipResult?.cae_vencimiento);
+
+        const cv = {};
+        cv[AUDIT_COLS.fecha_emision] = { date: fechaEmision };
+        cv[AUDIT_COLS.estado]        = { label: success ? AUDIT_ESTADO.ok : classifyAuditError(error) };
+        if (leadItemId)                              cv[AUDIT_COLS.instalacion]     = { item_ids: [Number(leadItemId)] };
+        if (tipo)                                    cv[AUDIT_COLS.tipo]            = { labels: [String(tipo)] };
+        if (afipResult?.numero_comprobante != null)  cv[AUDIT_COLS.nro_comprobante] = String(afipResult.numero_comprobante);
+        if (afipResult?.cae)                         cv[AUDIT_COLS.cae]             = String(afipResult.cae);
+        if (vtoCae)                                  cv[AUDIT_COLS.vto_cae]         = { date: vtoCae };
+        const cuitDigits = String(draft?.receptor_cuit_o_dni || '').replace(/\D/g, '');
+        if (cuitDigits)                              cv[AUDIT_COLS.cuit_receptor]   = cuitDigits;
+        if (receptorRazonSocial)                     cv[AUDIT_COLS.razon_social]    = String(receptorRazonSocial);
+        if (draft?.importe_total != null)            cv[AUDIT_COLS.importe_total]   = String(draft.importe_total);
+        if (draft?.importe_neto != null)             cv[AUDIT_COLS.importe_neto]    = String(draft.importe_neto);
+        if (draft?.importe_iva != null)              cv[AUDIT_COLS.importe_iva]     = String(draft.importe_iva);
+        // En éxito limpiamos el mensaje de error (puede haber quedado de un intento previo fallido).
+        if (success)                                 cv[AUDIT_COLS.mensaje_error]   = { text: '' };
+        else if (error?.message)                     cv[AUDIT_COLS.mensaje_error]   = { text: String(error.message).slice(0, 1500) };
+        if (draft?.concepto_afip)                    cv[AUDIT_COLS.concepto_afip]   = { labels: [AUDIT_CONCEPTO[draft.concepto_afip] || 'Productos'] };
+        if (draft?.condicion_venta)                  cv[AUDIT_COLS.condicion_venta] = { labels: [String(draft.condicion_venta)] };
+        if (durationMs != null)                      cv[AUDIT_COLS.duracion_ms]     = String(durationMs);
+
+        // Nombre final del audit item:
+        // - éxito  → "Factura C N° 0005-00000048" (formato de comprobante)
+        // - error  → nombre original del item del cliente, para que sepas qué factura falló
+        const successName = success && afipResult?.numero_comprobante
+            ? `Factura ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim()
+            : null;
+        const fallbackErrorName = `Error emisión ${tipo || ''} - ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`.trim();
+        const itemName = successName
+            || (sourceItemName ? String(sourceItemName).slice(0, 255) : fallbackErrorName);
+
+        // Idempotencia: ¿ya existe un audit item para este client_item_id?
+        const existingAuditItemId = await findAuditItemId(accountId, clientItemId);
+
+        // Disparar Slack ya con la info que tenemos (incluye link si ya existía el item).
+        if (isSystemError) {
+            slackPromise = notifySlackSystemError({
+                accountId,
+                clientItemName: sourceItemName,
+                errorMessage: error?.message || '',
+                auditItemId: existingAuditItemId,
+            });
+        }
+
+        let auditItemId;
+        if (existingAuditItemId) {
+            // UPDATE columnas del item existente
+            auditItemId = existingAuditItemId;
+            const updateMutation = `mutation ($boardId: ID!, $itemId: ID!, $columnValues: JSON!) {
+                change_multiple_column_values(
+                    board_id: $boardId,
+                    item_id: $itemId,
+                    column_values: $columnValues,
+                    create_labels_if_missing: true
+                ) { id }
+            }`;
+            const res = await fetchWithRetry('https://api.monday.com/v2', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: token },
+                body: JSON.stringify({
+                    query: updateMutation,
+                    variables: {
+                        boardId: String(boardId),
+                        itemId: String(auditItemId),
+                        columnValues: JSON.stringify(cv),
+                    },
+                }),
+            }, { attempts: 2, delayMs: 3000, timeoutMs: 20000, label: 'audit-log-update' });
+            const j = await res.json();
+            if (j?.errors?.length) {
+                console.error('[audit-log] errores actualizando item existente:', JSON.stringify(j.errors).slice(0, 500));
+            } else {
+                console.log(`[audit-log] item actualizado: ${auditItemId} estado="${cv[AUDIT_COLS.estado].label}"`);
+                // Renombrar siempre (idempotente: si el nombre ya está, no hay efecto).
+                await renameMondayItem({ apiToken: token, boardId, itemId: auditItemId, newName: itemName });
+            }
+        } else {
+            // CREATE nuevo item + persistir mapeo
+            const createMutation = `mutation ($boardId: ID!, $itemName: String!, $columnValues: JSON!) {
+                create_item(
+                    board_id: $boardId,
+                    item_name: $itemName,
+                    column_values: $columnValues,
+                    create_labels_if_missing: true
+                ) { id }
+            }`;
+            const res = await fetchWithRetry('https://api.monday.com/v2', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', Authorization: token },
+                body: JSON.stringify({
+                    query: createMutation,
+                    variables: {
+                        boardId: String(boardId),
+                        itemName: itemName,
+                        columnValues: JSON.stringify(cv),
+                    },
+                }),
+            }, { attempts: 2, delayMs: 3000, timeoutMs: 20000, label: 'audit-log-create' });
+            const j = await res.json();
+            if (j?.errors?.length) {
+                console.error('[audit-log] errores creando item:', JSON.stringify(j.errors).slice(0, 500));
+            } else {
+                auditItemId = j?.data?.create_item?.id;
+                console.log(`[audit-log] item creado: ${auditItemId} estado="${cv[AUDIT_COLS.estado].label}" account=${accountId}`);
+
+                if (auditItemId && clientItemId) {
+                    await recordAuditMapping(accountId, clientItemId, auditItemId);
+                }
+            }
+        }
+
+        // Subir PDF al board de auditoría (solo en éxito y si tenemos buffer).
+        if (success && pdfBuffer && auditItemId) {
+            uploadPdfToMondayFileColumn({
+                apiToken: token,
+                itemId: auditItemId,
+                fileColumnId: AUDIT_COLS.pdf_adjunto,
+                pdfBuffer,
+                filename: `Factura_${tipo || ''}_${afipResult?.numero_comprobante || ''}.pdf`,
+            }).catch((e) => console.warn('[audit-log] PDF upload falló:', e.message));
+        }
+    } catch (err) {
+        console.warn('[audit-log] error registrando:', err.message);
+        // Si el audit log falló pero era Error sistema y todavía no disparamos Slack
+        // (porque el error fue antes de la búsqueda), disparamos ahora sin link.
+        if (isSystemError && !slackPromise) {
+            slackPromise = notifySlackSystemError({
+                accountId,
+                clientItemName: sourceItemName,
+                errorMessage: error?.message || '',
+                auditItemId: null,
+            });
+        }
+    }
+
+    // Esperar Slack al final (si se disparó). Nunca tira porque la función ya tiene
+    // su propio try/catch interno.
+    if (slackPromise) {
+        await slackPromise.catch(() => {});
     }
 }
 
