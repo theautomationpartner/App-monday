@@ -138,6 +138,12 @@ body {
   border-color: #ffd8a8;
 }
 
+.status-pill.pending {
+  background: #eef3ff;
+  color: #1c4fd4;
+  border-color: #c7d7ff;
+}
+
 /* ─── Sidebar Footer ─── */
 .sidebar-footer {
   padding: 16px;
@@ -1280,6 +1286,463 @@ body {
 .toast-message {
   flex: 1;
   line-height: 1.35;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CERTIFICADOS ARCA — flujo guiado, tarjetas de entrada y estados
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Tarjetas de entrada (elegir entre guiado vs manual) ── */
+.cert-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.cert-entry-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 24px;
+  background: #fff;
+  border: 1.5px solid #e6e9ef;
+  border-radius: 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  font-family: inherit;
+}
+
+.cert-entry-card:hover {
+  border-color: #0073ea;
+  box-shadow: 0 4px 16px rgba(0, 115, 234, 0.12);
+  transform: translateY(-1px);
+}
+
+.cert-entry-card.primary {
+  border-color: #0073ea;
+  background: linear-gradient(180deg, #f5faff 0%, #fff 60%);
+}
+
+.cert-entry-badge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 10px;
+  background: #0073ea;
+  color: #fff;
+  border-radius: 999px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.cert-entry-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  background: #f5faff;
+  border-radius: 12px;
+  margin-bottom: 4px;
+}
+
+.cert-entry-card h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #323338;
+}
+
+.cert-entry-card p {
+  margin: 0;
+  font-size: 13px;
+  color: #676879;
+  line-height: 1.5;
+}
+
+.cert-entry-card code {
+  background: #f0f2f7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+
+.cert-entry-cta {
+  margin-top: auto;
+  padding-top: 8px;
+  color: #0073ea;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+/* ── Tarjeta de certificado ACTIVO ── */
+.cert-active-card {
+  background: linear-gradient(180deg, #f0fff5 0%, #fff 70%);
+  border: 1.5px solid #b8ebcf;
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-top: 8px;
+}
+
+.cert-active-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.cert-active-icon {
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #e7f7ef;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.cert-active-title {
+  margin: 0 0 2px 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: #0b7841;
+}
+
+.cert-active-sub {
+  margin: 0;
+  font-size: 13px;
+  color: #5a6270;
+  line-height: 1.45;
+}
+
+.cert-active-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 14px 0;
+  border-top: 1px solid #dde8e1;
+  border-bottom: 1px solid #dde8e1;
+  margin-bottom: 16px;
+  font-size: 13px;
+}
+
+.cert-active-details span {
+  color: #676879;
+  margin-right: 4px;
+}
+
+.cert-active-details strong {
+  color: #323338;
+}
+
+.cert-active-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.cert-days-badge {
+  display: inline-block;
+  margin-left: 10px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.cert-days-badge.ok       { background: #e7f7ef; color: #0b7841; border: 1px solid #b8ebcf; }
+.cert-days-badge.notice   { background: #eef3ff; color: #1c4fd4; border: 1px solid #c7d7ff; }
+.cert-days-badge.warning  { background: #fff4e5; color: #8a5a00; border: 1px solid #ffd8a8; }
+.cert-days-badge.expired  { background: #fff0f0; color: #a52020; border: 1px solid #ffc7c7; }
+
+/* ── Tarjeta de solicitud PENDIENTE (CSR generado, falta CRT) ── */
+.cert-pending-card {
+  background: #f6f9ff;
+  border: 1.5px solid #c7d7ff;
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin-top: 8px;
+}
+
+.cert-pending-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.cert-pending-dot {
+  width: 14px;
+  height: 14px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #1c4fd4;
+  flex-shrink: 0;
+  animation: cert-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes cert-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(28, 79, 212, 0.35); }
+  50%      { box-shadow: 0 0 0 8px rgba(28, 79, 212, 0); }
+}
+
+.cert-pending-card code {
+  background: #eef3ff;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+
+/* ── Flujo guiado: stepper y paneles ── */
+.cert-guided {
+  margin-top: 8px;
+}
+
+.cert-guided-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.cert-guided-close {
+  font-size: 13px;
+  color: #676879;
+}
+
+.cert-stepper {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  gap: 4px;
+  flex: 1;
+  min-width: 260px;
+}
+
+.cert-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 10px;
+  background: #f5f6f8;
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  color: #676879;
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 0;
+}
+
+.cert-step.current {
+  background: #eef5ff;
+  border-color: #0073ea;
+  color: #0073ea;
+}
+
+.cert-step.done {
+  background: #e7f7ef;
+  border-color: #b8ebcf;
+  color: #0b7841;
+}
+
+.cert-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1.5px solid currentColor;
+  font-size: 11px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.cert-step-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cert-step-panel {
+  background: #fff;
+  border: 1px solid #e6e9ef;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.cert-step-title {
+  margin: 0 0 6px 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: #323338;
+}
+
+.cert-step-desc {
+  margin: 0 0 18px 0;
+  font-size: 13px;
+  color: #676879;
+  line-height: 1.5;
+}
+
+.cert-step-panel code {
+  background: #f0f2f7;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+}
+
+.cert-warn-box {
+  padding: 12px 16px;
+  background: #fff8e1;
+  border: 1.5px solid #f59e0b;
+  border-radius: 8px;
+  color: #7c5a00;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.cert-confirm-grid {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.cert-confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px;
+  background: #f8f9fb;
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.cert-confirm-row > span {
+  flex: 0 0 140px;
+  color: #676879;
+  font-weight: 500;
+}
+
+.cert-confirm-row > strong {
+  color: #323338;
+  flex: 1;
+}
+
+.cert-alias-input {
+  flex: 1;
+  max-width: 320px;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+.cert-adhered-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f5f6f8;
+  border-radius: 8px;
+  font-size: 13px;
+  color: #5a6270;
+  margin-bottom: 14px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.cert-adhered-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.cert-instructions {
+  list-style: none;
+  counter-reset: cert-step-counter;
+  margin: 0 0 20px 0;
+  padding: 0;
+}
+
+.cert-instructions li {
+  counter-increment: cert-step-counter;
+  position: relative;
+  padding: 10px 12px 10px 44px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: #323338;
+  border-bottom: 1px solid #eef0f3;
+}
+
+.cert-instructions li:last-child { border-bottom: none; }
+
+.cert-instructions li::before {
+  content: counter(cert-step-counter);
+  position: absolute;
+  left: 10px;
+  top: 10px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #0073ea;
+  color: #fff;
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.cert-instructions a {
+  color: #0073ea;
+  font-weight: 500;
+}
+
+.cert-alias-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  background: #f0f2f7;
+  border-radius: 6px;
+  margin-top: 2px;
+}
+
+.cert-alias-copy code {
+  background: transparent;
+  padding: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* ── Flujo manual ── */
+.cert-manual {
+  margin-top: 8px;
+}
+
+@media (max-width: 720px) {
+  .cert-stepper {
+    flex-wrap: wrap;
+  }
+  .cert-step {
+    flex: 1 1 calc(50% - 4px);
+  }
 }
 
 @keyframes toast-slide-in {
