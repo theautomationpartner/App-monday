@@ -11,6 +11,7 @@
 'use strict';
 
 const PDFDocument = require('pdfkit');
+const QRCode = require('qrcode');
 const invoiceRules = require('./invoiceRules');
 
 // Códigos AFIP de comprobante (siempre 2 dígitos en el cabezal según ARCA).
@@ -89,7 +90,84 @@ function calcularDesgloseIva(draft) {
     };
 }
 
+// ─── Helpers de marca/branding ──────────────────────────────────────────
+// Facturación electrónica con CAE: la factura digital es el "original" único
+// válido ante AFIP, por lo que no hace falta generar DUPLICADO ni TRIPLICADO.
+// Si en el futuro hace falta volver a las 3 copias tradicionales, agregar
+// 'DUPLICADO' y 'TRIPLICADO' a este array y el resto del código se adapta solo.
+const INVOICE_COPIES = ['ORIGINAL'];
+
+// Normaliza una URL para mostrar: saca "https://" (no aporta info visual).
+// NO hace pre-truncate — drawKV se encarga del auto-shrink y truncate final,
+// aprovechando todo el ancho disponible de la columna.
+function truncateWeb(url) {
+    if (!url) return '';
+    return String(url).replace(/^https?:\/\//, '');
+}
+
+// Dibuja "Label: Value" en UNA sola línea en Y fija, con auto-shrink del
+// fontSize si el texto no entra. Escalona fontSize de `fontSize` → `minFont`
+// (0.5pt por iteración) y sólo si todavía no entra al mínimo, trunca con "…".
+// Crítico para que las filas del emisor se alineen con el comprobante
+// (no wrapear nunca a 2 líneas) conservando el dato completo cuando se pueda.
+function drawKV(doc, x, y, width, label, value, fontSize = 8, minFont = 6.5) {
+    let v = String(value ?? '-');
+    let f = fontSize;
+
+    doc.font('Helvetica-Bold').fontSize(f);
+    let labelW = doc.widthOfString(label);
+    doc.font('Helvetica').fontSize(f);
+    let vw = doc.widthOfString(v);
+
+    while (labelW + vw + 2 > width && f > minFont) {
+        f = Math.max(minFont, f - 0.5);
+        doc.font('Helvetica-Bold').fontSize(f);
+        labelW = doc.widthOfString(label);
+        doc.font('Helvetica').fontSize(f);
+        vw = doc.widthOfString(v);
+    }
+
+    if (labelW + vw + 2 > width) {
+        while (v.length > 3 && doc.widthOfString(v + '…') > width - labelW - 2) {
+            v = v.slice(0, -1);
+        }
+        v = v + '…';
+    }
+
+    doc.fontSize(f);
+    doc.font('Helvetica-Bold').text(label, x, y, { lineBreak: false });
+    doc.font('Helvetica').text(v, x + labelW, y, { lineBreak: false });
+}
+
+// Intenta convertir el logo de la empresa (base64 + mime desde DB) a un
+// Buffer utilizable por pdfkit. SVG y formatos no soportados → null.
+function decodeCompanyLogo(company) {
+    if (!company?.logo_base64) return null;
+    const mime = String(company.logo_mime_type || '').toLowerCase();
+    // pdfkit soporta PNG y JPG nativos. SVG/WebP no.
+    if (mime !== 'image/png' && mime !== 'image/jpeg' && mime !== 'image/jpg') return null;
+    try {
+        return Buffer.from(company.logo_base64, 'base64');
+    } catch {
+        return null;
+    }
+}
+
+// Dibuja un logo centrado dentro de una caja (w × h). Si falla silently
+// retorna false para que el caller pueda renderear el emisor sin logo.
+function drawLogo(doc, x, y, w, h, logoBuffer) {
+    if (!logoBuffer) return false;
+    try {
+        doc.image(logoBuffer, x, y, { fit: [w, h], align: 'center', valign: 'center' });
+        return true;
+    } catch (err) {
+        console.warn('[pdf] No se pudo insertar logo de empresa:', err.message);
+        return false;
+    }
+}
+
 async function fetchQrImage({ company, draft, afipResult }) {
+    const tStart = Date.now();
     try {
         const qrData = {
             ver: 1,
@@ -108,28 +186,61 @@ async function fetchQrImage({ company, draft, afipResult }) {
         };
         const base64Payload = Buffer.from(JSON.stringify(qrData)).toString('base64');
         const arcaUrl = `https://www.afip.gob.ar/fe/qr/?p=${base64Payload}`;
-        // size=600 → PNG nítido al escalarlo en el PDF.
-        // margin=4 → quiet zone obligatoria para que los lectores detecten los patrones a distancia.
-        // ecc=M → 15% de corrección de errores (default L = 7% es muy frágil).
-        const qrApiUrl = `https://api.qrserver.com/v1/create-qr-code/?size=600x600&margin=4&ecc=M&data=${encodeURIComponent(arcaUrl)}`;
-        const qrResp = await fetch(qrApiUrl);
-        if (qrResp.ok) return Buffer.from(await qrResp.arrayBuffer());
+
+        // Generamos el QR LOCALMENTE (librería qrcode, 100% in-process).
+        // Antes llamábamos a api.qrserver.com (externo gratuito, latencia
+        // variable 200ms-30s, potencial SPOF). Ahora es ~10-30ms siempre.
+        //   width: 600 → PNG nítido al escalar en el PDF
+        //   margin: 4  → quiet zone obligatoria para lectura a distancia
+        //   errorCorrectionLevel: 'M' → 15% (default L es muy frágil a 7%)
+        const buf = await QRCode.toBuffer(arcaUrl, {
+            type: 'png',
+            width: 600,
+            margin: 4,
+            errorCorrectionLevel: 'M',
+        });
+        console.log(`[timing] pdf_qr_fetch: ${Date.now() - tStart}ms status=ok (local)`);
+        return buf;
     } catch (err) {
-        console.warn('[pdf] No se pudo generar QR:', err.message);
+        console.warn(`[pdf] QR falló tras ${Date.now() - tStart}ms: ${err.message}`);
     }
     return null;
 }
 
 async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId */ }) {
+    const tQrStart = Date.now();
     const qrImageBuffer = await fetchQrImage({ company, draft, afipResult });
+    const tLogoStart = Date.now();
+    const logoBuffer = decodeCompanyLogo(company);
+    const tRenderStart = Date.now();
+    console.log(`[timing] pdf_logo_decode: ${tRenderStart - tLogoStart}ms qr_total=${tLogoStart - tQrStart}ms`);
+
+    // Sub-timers del render: puntos clave para detectar qué sección tarda.
+    const marks = [];
+    const mark = (label) => marks.push({ label, t: Date.now() });
+    mark('start');
 
     return new Promise((resolve, reject) => {
         try {
-            const M = 28;
+            const M = 18; // margen reducido (antes 28pt) — recuadro más ancho
             const doc = new PDFDocument({ size: 'A4', margin: M });
+            mark('doc_init');
             const buffers = [];
             doc.on('data', (chunk) => buffers.push(chunk));
-            doc.on('end', () => resolve(Buffer.concat(buffers)));
+            doc.on('end', () => {
+                const buf = Buffer.concat(buffers);
+                mark('stream_end');
+                // Calcular deltas relativos al inicio y al anterior
+                const baseT = marks[0].t;
+                const deltas = marks.map((m, i) => {
+                    const dPrev = i > 0 ? m.t - marks[i-1].t : 0;
+                    const dTotal = m.t - baseT;
+                    return `${m.label}:+${dPrev}ms(${dTotal}ms)`;
+                }).join(' | ');
+                console.log(`[timing] pdf_render_breakdown: ${deltas}`);
+                console.log(`[timing] pdf_render: ${Date.now() - tRenderStart}ms bytes=${buf.length}`);
+                resolve(buf);
+            });
             doc.on('error', reject);
 
             const W = 595.28 - M * 2;
@@ -139,6 +250,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const tipoLetra = draft.tipo_comprobante || 'C';
             const tipoCod = TIPO_COD[tipoLetra] || '11';
             const isFacturaA = tipoLetra === 'A';
+            const isFacturaB = tipoLetra === 'B';
 
             const pv = padNum(draft.punto_venta, 5);
             const nroComp = padNum(afipResult?.numero_comprobante, 8);
@@ -146,88 +258,188 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const caeVto = fmtDate(afipResult?.cae_vencimiento);
             const startDate = fmtDate(company.start_date);
 
-            // Borde exterior. La altura final del bloque depende del pie de
-            // totales: Factura A necesita más alto para el desglose de IVA.
-            const totalesH = isFacturaA ? 142 : 50;
+            // Loop por las 3 copias tradicionales: ORIGINAL / DUPLICADO / TRIPLICADO.
+            // Cada copia es una página idéntica salvo por el tag superior y la
+            // numeración del footer. Aplica igual para A, B y C.
+            mark('prep_done');
+            const totalPages = INVOICE_COPIES.length;
+            for (let copyIdx = 0; copyIdx < totalPages; copyIdx++) {
+                if (copyIdx > 0) doc.addPage();
+                const copyTag = INVOICE_COPIES[copyIdx];
+                const pageNum = copyIdx + 1;
+
+            // Borde exterior. La altura final del bloque depende del pie de totales:
+            // - A: desglose de IVA por alícuota
+            // - B: agrega leyenda Régimen de Transparencia Fiscal + IVA Contenido (RG 5614/2024)
+            // - C: solo subtotal y total
+            const totalesH = isFacturaA ? 142 : (isFacturaB ? 90 : 50);
             const boxTop = M;
-            const boxH = 700;
+            const boxH = 720; // header creció de 110 a 145pt — compensamos con 20pt extra
             doc.rect(colLeft, boxTop, W, boxH).stroke('#000');
 
-            // ── ORIGINAL tag ─────────────────────────────────────
+            // ── Copy tag (ORIGINAL / DUPLICADO / TRIPLICADO) ─────
             let y = boxTop;
             doc.rect(colLeft, y, W, 16).stroke('#000');
             doc.fontSize(8).font('Helvetica-Bold')
-               .text('O R I G I N A L', colLeft, y + 4, { width: W, align: 'center', characterSpacing: 3 });
+               .text(copyTag.split('').join(' '), colLeft, y + 4, { width: W, align: 'center', characterSpacing: 3 });
             y += 16;
 
-            // ── HEADER ROW ───────────────────────────────────────
-            const headerH = 110;
+            // ── HEADER V2 ─────────────────────────────────────────
+            // Layout:
+            //   ┌──────────────────────────────────────────────────┐
+            //   │ [LOGO]  NOMBRE     [A]        FACTURA              │  ← Banner (60pt)
+            //   ├──────────────────────────────────────────────────┤
+            //   │ Razón Social: ...             Punto de Venta: ...  │
+            //   │ Domicilio: ...                Fecha de Emisión: .. │
+            //   │ Cond. IVA: ...                CUIT: ...            │  ← Data rows
+            //   │ Tel: ...                      Ingresos Brutos: ... │    (emisor y
+            //   │ Email: ...                    Fecha Inicio: ...    │     comprobante
+            //   │ Web: ...                                           │     full-width
+            //   └──────────────────────────────────────────────────┘     en su columna)
+            const headerH = 145;
+            const BANNER_H = 60; // banner con logo/nombre/letraA/FACTURA
             doc.rect(colLeft, y, W, headerH).stroke('#000');
 
-            const leftW = W * 0.46;
+            // Columnas: emisor y comprobante del mismo ancho geométrico
             const centerW = W * 0.08;
-
-            // Emisor (izquierda)
-            let ey = y + 12;
-            doc.fontSize(12).font('Helvetica-Bold')
-               .text((company.business_name || '').toUpperCase(), colLeft + 8, ey, { width: leftW - 16, align: 'center' });
-            ey += 22;
-            doc.fontSize(8).font('Helvetica');
-            doc.font('Helvetica-Bold').text('Razón Social: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text((company.business_name || '').toUpperCase());
-            ey += 12;
-            doc.font('Helvetica-Bold').text('Domicilio Comercial: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text((company.address || '-').toUpperCase());
-            ey += 12;
-            doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, ey, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.condicionLabel(draft.emisorCondicion || ''));
-
-            // Centro — caja con letra de comprobante (A=01, B=06, C=11)
+            const leftW = (W - centerW) / 2;
             const centerX = colLeft + leftW;
-            const boxSize = 42;
-            const boxX = centerX + (centerW - boxSize) / 2;
-            doc.rect(boxX, y, boxSize, boxSize).stroke('#000');
-            doc.fontSize(26).font('Helvetica-Bold')
-               .text(tipoLetra, boxX, y + 6, { width: boxSize, align: 'center' });
-            doc.fontSize(6).font('Helvetica-Bold')
-               .text(`COD. ${tipoCod}`, boxX, y + 34, { width: boxSize, align: 'center' });
-            doc.moveTo(centerX + centerW / 2, y + boxSize).lineTo(centerX + centerW / 2, y + headerH).stroke('#000');
+            const pad = 8;
+            const contentX = colLeft + pad;
+            const contentW = leftW - pad * 2;
 
-            // Comprobante (derecha)
-            const rx = centerX + centerW + 8;
-            let ry = y + 12;
-            doc.fontSize(16).font('Helvetica-Bold').text('FACTURA', rx, ry);
-            ry += 22;
-            doc.fontSize(8).font('Helvetica-Bold')
-               .text(`Punto de Venta: ${pv}    Comp. Nro: ${nroComp}`, rx, ry);
-            ry += 12;
-            doc.font('Helvetica-Bold').text('Fecha de Emisión: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(fechaEmision);
-            ry += 12;
-            doc.font('Helvetica-Bold').text('CUIT: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(fmtCuit(company.cuit));
-            ry += 12;
-            doc.font('Helvetica-Bold').text('Ingresos Brutos: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(fmtCuit(company.cuit));
-            ry += 12;
-            doc.font('Helvetica-Bold').text('Fecha de Inicio de Actividades: ', rx, ry, { continued: true });
-            doc.font('Helvetica').text(startDate);
+            // ── BANNER SUPERIOR ───────────────────────────────────
+            const bannerCenterY = y + BANNER_H / 2;
+
+            // Logo (izquierda, centrado vertical en banner)
+            const LOGO_SIZE = 50;
+            const hasLogo = Boolean(logoBuffer);
+            let nameX = contentX;
+            let nameMaxW = contentW;
+            if (hasLogo) {
+                drawLogo(doc, contentX, y + (BANNER_H - LOGO_SIZE) / 2, LOGO_SIZE, LOGO_SIZE, logoBuffer);
+                nameX = contentX + LOGO_SIZE + 10;
+                nameMaxW = contentW - LOGO_SIZE - 10;
+            }
+
+            // Nombre comercial (trade_name) arriba del banner — cae a business_name
+            // si la empresa todavía no migró al campo de "Nombre de fantasía".
+            const displayName = (company.trade_name || company.business_name || '').toUpperCase();
+            const nameFontSize = 14;
+            doc.fontSize(nameFontSize).font('Helvetica-Bold')
+               .text(displayName,
+                     nameX, bannerCenterY - nameFontSize / 2,
+                     { width: nameMaxW, align: hasLogo ? 'left' : 'center', lineBreak: false });
+
+            // Letra A/B/C (pegada al borde superior del header, como AFIP clásico)
+            const BOX_SIZE = 42;
+            const boxX = centerX + (centerW - BOX_SIZE) / 2;
+            const boxY = y;
+            doc.rect(boxX, boxY, BOX_SIZE, BOX_SIZE).stroke('#000');
+            doc.fontSize(26).font('Helvetica-Bold')
+               .text(tipoLetra, boxX, boxY + 6, { width: BOX_SIZE, align: 'center' });
+            doc.fontSize(6).font('Helvetica-Bold')
+               .text(`COD. ${tipoCod}`, boxX, boxY + 34, { width: BOX_SIZE, align: 'center' });
+
+            // FACTURA (centrado horizontalmente en su columna, vertical con nombre/logo)
+            const rx = centerX + centerW;
+            const rightColW = colRight - rx - 8;
+            const facturaFontSize = 16;
+            doc.fontSize(facturaFontSize).font('Helvetica-Bold')
+               .text('FACTURA', rx, bannerCenterY - facturaFontSize / 2,
+                     { width: rightColW, align: 'center', lineBreak: false });
+
+            // Línea vertical desde bottom del cuadro de la letra hasta bottom del header
+            doc.moveTo(centerX + centerW / 2, boxY + BOX_SIZE)
+               .lineTo(centerX + centerW / 2, y + headerH).stroke('#000');
+
+            // ── SECCIÓN DE DATOS (debajo del banner) ──────────────
+            // Emisor (izquierda, full-width en su columna) y comprobante (derecha,
+            // también full-width) arrancan en la misma Y → grilla vertical perfecta.
+            //   Razón Social    ↔  Punto de Venta
+            //   Domicilio       ↔  Fecha de Emisión
+            //   Cond. IVA       ↔  CUIT
+            //   Tel (opcional)  ↔  Ingresos Brutos
+            //   Email (opcional)↔  Fecha de Inicio
+            //   Web (opcional)  ↔  (sin par)
+            const dataStartY = y + BANNER_H + 12;
+            const STEP = 12;
+
+            // Emisor
+            let dy = dataStartY;
+            drawKV(doc, contentX, dy, contentW,
+                'Razón Social: ', (company.business_name || '').toUpperCase());
+            dy += STEP;
+            drawKV(doc, contentX, dy, contentW,
+                'Domicilio: ', (company.address || '-').toUpperCase());
+            dy += STEP;
+            drawKV(doc, contentX, dy, contentW,
+                'Cond. IVA: ', invoiceRules.condicionLabel(draft.emisorCondicion || ''));
+            if (company.phone) {
+                dy += STEP;
+                drawKV(doc, contentX, dy, contentW, 'Tel: ', company.phone);
+            }
+            if (company.email) {
+                dy += STEP;
+                drawKV(doc, contentX, dy, contentW, 'Email: ', company.email);
+            }
+            if (company.website) {
+                dy += STEP;
+                drawKV(doc, contentX, dy, contentW, 'Web: ', truncateWeb(company.website));
+            }
+
+            // Comprobante (arranca en la misma Y que Razón Social → grilla)
+            const compX = centerX + centerW + 8;
+            const compW = colRight - compX - 8;
+            let cry = dataStartY;
+            drawKV(doc, compX, cry, compW, 'Punto de Venta: ', `${pv}   Comp. Nro: ${nroComp}`);
+            cry += STEP;
+            drawKV(doc, compX, cry, compW, 'Fecha de Emisión: ', fechaEmision);
+            cry += STEP;
+            drawKV(doc, compX, cry, compW, 'CUIT: ', fmtCuit(company.cuit));
+            cry += STEP;
+            drawKV(doc, compX, cry, compW, 'Ingresos Brutos: ', fmtCuit(company.cuit));
+            cry += STEP;
+            drawKV(doc, compX, cry, compW, 'Fecha de Inicio de Actividades: ', startDate);
 
             y += headerH;
+            mark(`header_done_c${copyIdx}`);
 
             // ── PERÍODO (solo servicios o productos+servicios) ────
+            // Layout: izquierda | centro geométrico | derecha alineado
+            //   Período Facturado Desde: ...   Hasta: ...   Fecha de Vto. para el pago: ...
             if (draft.concepto_afip === 2 || draft.concepto_afip === 3) {
                 const periodoH = 18;
                 doc.rect(colLeft, y, W, periodoH).stroke('#000');
-                doc.fontSize(7.5);
                 const periodoY = y + 5;
-                const thirdW = W / 3;
-                doc.font('Helvetica-Bold').text('Período Facturado Desde: ', colLeft + 8, periodoY, { continued: true });
-                doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_desde) || fechaEmision);
-                doc.font('Helvetica-Bold').text('Hasta: ', colLeft + thirdW + 8, periodoY, { continued: true });
-                doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_hasta) || fechaEmision);
-                doc.font('Helvetica-Bold').text('Fecha de Vto. para el pago: ', colLeft + thirdW * 2 + 8, periodoY, { continued: true });
-                doc.font('Helvetica').text(fmtDate(draft.fecha_vto_pago) || fechaEmision);
+                doc.fontSize(7.5);
+
+                // Izquierda: Período Facturado Desde
+                doc.font('Helvetica-Bold').text('Período Facturado Desde: ', colLeft + 8, periodoY, { continued: true, lineBreak: false });
+                doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_desde) || fechaEmision, { lineBreak: false });
+
+                // Centro: Hasta (geométricamente centrado en W/2)
+                const hastaLabel = 'Hasta: ';
+                const hastaValue = fmtDate(draft.fecha_servicio_hasta) || fechaEmision;
+                doc.font('Helvetica-Bold');
+                const hastaLabelW = doc.widthOfString(hastaLabel);
+                doc.font('Helvetica');
+                const hastaValueW = doc.widthOfString(hastaValue);
+                const hastaX = colLeft + (W - hastaLabelW - hastaValueW) / 2;
+                doc.font('Helvetica-Bold').text(hastaLabel, hastaX, periodoY, { lineBreak: false });
+                doc.font('Helvetica').text(hastaValue, hastaX + hastaLabelW, periodoY, { lineBreak: false });
+
+                // Derecha: Fecha de Vto. para el pago (alineado a la derecha)
+                const vtoLabel = 'Fecha de Vto. para el pago: ';
+                const vtoValue = fmtDate(draft.fecha_vto_pago) || fechaEmision;
+                doc.font('Helvetica-Bold');
+                const vtoLabelW = doc.widthOfString(vtoLabel);
+                doc.font('Helvetica');
+                const vtoValueW = doc.widthOfString(vtoValue);
+                const vtoX = colRight - 8 - vtoLabelW - vtoValueW;
+                doc.font('Helvetica-Bold').text(vtoLabel, vtoX, periodoY, { lineBreak: false });
+                doc.font('Helvetica').text(vtoValue, vtoX + vtoLabelW, periodoY, { lineBreak: false });
+
                 y += periodoH;
             }
 
@@ -250,6 +462,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text((draft.condicion_venta || 'Contado').toUpperCase());
             y += receptorH;
+            mark(`receptor_done_c${copyIdx}`);
 
             // ── TABLA DE ITEMS ───────────────────────────────────
             // Factura A: agrega Alícuota IVA + Subtotal c/IVA (RG 1415 Ap. A.IV.a).
@@ -290,35 +503,58 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
 
             const lineas = draft.lineas || [];
             const fallbackAlicuota = normalizeAlicuota(draft.alicuota_iva_pct) || '21';
+            mark(`table_header_done_c${copyIdx}`);
 
             for (const line of lineas) {
                 const qty = Number(line.quantity || line.cantidad || 0);
                 const price = Number(line.unit_price || line.precio_unitario || 0);
                 const subtotal = qty * price;
                 const ali = normalizeAlicuota(line.alicuota_iva) || fallbackAlicuota;
-                const subtotalConIva = subtotal * (1 + Number(ali) / 100);
+                const aliRate = Number(ali) / 100;
+                const priceConIva    = price * (1 + aliRate);
+                const subtotalConIva = subtotal * (1 + aliRate);
 
                 cx = colLeft;
-                const vals = isFacturaA ? [
-                    '',
-                    line.concept || line.descripcion || '',
-                    String(qty),
-                    (line.unidad_medida || 'unidades').toLowerCase(),
-                    fmtMoney(price),
-                    '0,00',
-                    fmtMoney(subtotal),
-                    `${ali}%`,
-                    fmtMoney(subtotalConIva),
-                ] : [
-                    '',
-                    line.concept || line.descripcion || '',
-                    String(qty),
-                    (line.unidad_medida || 'unidades').toLowerCase(),
-                    fmtMoney(price),
-                    '0,00',
-                    '0,00',
-                    fmtMoney(subtotal),
-                ];
+                let vals;
+                if (isFacturaA) {
+                    // A: discrimina IVA — precio neto + col de alícuota + col subtotal c/IVA
+                    vals = [
+                        '',
+                        line.concept || line.descripcion || '',
+                        String(qty),
+                        (line.unidad_medida || 'unidades').toLowerCase(),
+                        fmtMoney(price),
+                        '0,00',
+                        fmtMoney(subtotal),
+                        `${ali}%`,
+                        fmtMoney(subtotalConIva),
+                    ];
+                } else if (isFacturaB) {
+                    // B: IVA incluido en el precio (el consumidor paga lo que ve).
+                    // El desglose va al pie como "IVA Contenido" (RG 5614/2024).
+                    vals = [
+                        '',
+                        line.concept || line.descripcion || '',
+                        String(qty),
+                        (line.unidad_medida || 'unidades').toLowerCase(),
+                        fmtMoney(priceConIva),
+                        '0,00',
+                        '0,00',
+                        fmtMoney(subtotalConIva),
+                    ];
+                } else {
+                    // C: emisor Monotributo/Exento, no factura IVA — precio neto sin más.
+                    vals = [
+                        '',
+                        line.concept || line.descripcion || '',
+                        String(qty),
+                        (line.unidad_medida || 'unidades').toLowerCase(),
+                        fmtMoney(price),
+                        '0,00',
+                        '0,00',
+                        fmtMoney(subtotal),
+                    ];
+                }
                 for (let i = 0; i < cols.length; i++) {
                     doc.rect(cx, y, cols[i].w, rowH).stroke('#000');
                     doc.fontSize(7).font('Helvetica')
@@ -328,6 +564,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 y += rowH;
             }
 
+            mark(`table_rows_done_c${copyIdx}`);
             // Espacio vacío restante hasta totales
             const totalsY = boxTop + boxH - totalesH;
             if (y < totalsY) {
@@ -378,9 +615,24 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 ty += 14;
                 doc.font('Helvetica-Bold').text('Importe Total: $', totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
+
+                // Régimen de Transparencia Fiscal al Consumidor — RG 5614/2024 (Ley 27.743).
+                // Obligatorio en Factura B desde 01/04/2025: leyenda + IVA contenido en el precio.
+                if (isFacturaB) {
+                    ty += 16;
+                    doc.moveTo(colLeft, ty - 4).lineTo(colRight, ty - 4).stroke('#000');
+                    doc.fontSize(8).font('Helvetica-BoldOblique')
+                       .text('Régimen de Transparencia Fiscal al Consumidor (Ley 27.743)',
+                             colLeft + 8, ty, { width: W - 16 });
+                    ty += 12;
+                    const ivaContenido = Number(draft.importe_iva || 0);
+                    doc.font('Helvetica-Bold').text('IVA Contenido: $', totLabelX, ty, { width: labelW, align: 'right' });
+                    doc.font('Helvetica-Bold').text(fmtMoney(ivaContenido), totValueX, ty, { width: valueW, align: 'right' });
+                }
             }
 
             y = boxTop + boxH;
+            mark(`totals_done_c${copyIdx}`);
 
             // ── FOOTER (fuera del borde) ─────────────────────────
             y += 8;
@@ -413,9 +665,14 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                .text(`Fecha de Vto. de CAE: ${caeVto}`, colRight - 180, footerY + 30, { width: 180, align: 'right' });
 
             doc.fontSize(8).font('Helvetica')
-               .text('Pág. 1/1', colLeft + W / 2 - 20, footerY + 24);
+               .text(`Pág. ${pageNum}/${totalPages}`, colLeft + W / 2 - 20, footerY + 24);
 
+            mark(`footer_done_c${copyIdx}`);
+            } // end for copyIdx (loop por ORIGINAL / DUPLICADO / TRIPLICADO)
+
+            mark('before_doc_end');
             doc.end();
+            mark('after_doc_end');
         } catch (err) {
             reject(err);
         }

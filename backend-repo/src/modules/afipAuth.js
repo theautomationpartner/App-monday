@@ -15,6 +15,23 @@ const config = require('../config');
 // ─── Caché en memoria: { [cacheKey]: { token, sign, expiresAt } } ─────────────
 const _cache = {};
 
+// ─── Storage opcional (DB) — inyectado desde server.js al arrancar ────────
+// Permite persistir tokens más allá del ciclo de vida del proceso. Si no está
+// configurado, afipAuth funciona 100% igual que antes (solo cache in-memory).
+//
+// Shape esperado:
+//   _dbStorage = {
+//     load({ service, companyId }) -> Promise<{token, sign, expiresAt} | null>,
+//     save({ service, companyId, token, sign, expiresAt }) -> Promise<void>,
+//     invalidate({ service, companyId }) -> Promise<void>
+//   }
+let _dbStorage = null;
+
+/** Configura (o remueve pasando null) el storage persistente de tokens. */
+function setDbStorage(storage) {
+    _dbStorage = storage;
+}
+
 /** Devuelve la clave de caché para un servicio + CUIT emisor */
 function cacheKey(service, cuit) {
     return `${service}::${cuit}`;
@@ -111,13 +128,29 @@ function parseLoginResponse(xmlText) {
  *
  * @returns {Promise<{token: string, sign: string}>}
  */
-async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false }) {
+async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false, companyId = null }) {
     const key = cacheKey(service, cuit);
     const cached = _cache[key];
 
-    // Reutilizar si queda más de 5 minutos de vida
+    // Capa 1: cache in-memory. Reutilizar si queda más de 5 minutos de vida.
     if (!force && cached && cached.expiresAt > Date.now() + 5 * 60 * 1000) {
         return { token: cached.token, sign: cached.sign };
+    }
+
+    // Capa 2: DB storage (si está inyectado). Sobrevive reinicios del container.
+    // Refresh ahead: si está próximo a expirar (<2h vida restante), la función
+    // load devuelve null y caemos a regenerar.
+    if (!force && _dbStorage?.load) {
+        try {
+            const dbToken = await _dbStorage.load({ service, companyId });
+            if (dbToken && dbToken.expiresAt > Date.now() + 5 * 60 * 1000) {
+                _cache[key] = { token: dbToken.token, sign: dbToken.sign, expiresAt: dbToken.expiresAt };
+                console.log(`[wsaa] cache HIT DB (service=${service}, cuit=${cuit})`);
+                return { token: dbToken.token, sign: dbToken.sign };
+            }
+        } catch (dbErr) {
+            console.warn(`[wsaa] db load error (service=${service}): ${dbErr.message}`);
+        }
     }
 
     const tra    = buildTra(service);
@@ -177,18 +210,26 @@ async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false
     const { token, sign } = parseLoginResponse(xmlText);
 
     // El token dura 12 horas; cacheamos por 11 para estar seguros
-    _cache[key] = {
-        token,
-        sign,
-        expiresAt: Date.now() + 11 * 60 * 60 * 1000,
-    };
+    const expiresAt = Date.now() + 11 * 60 * 60 * 1000;
+    _cache[key] = { token, sign, expiresAt };
 
+    // Persistir en DB si hay storage configurado (fire-and-forget — no bloquea).
+    if (_dbStorage?.save) {
+        _dbStorage.save({ service, companyId, token, sign, expiresAt })
+            .catch((err) => console.warn(`[wsaa] db save error (service=${service}): ${err.message}`));
+    }
+
+    console.log(`[wsaa] token GENERADO fresh (service=${service}, cuit=${cuit})`);
     return { token, sign };
 }
 
 /** Invalida el caché de un servicio (por ej. si AFIP devuelve error de token expirado) */
-function invalidateToken(service, cuit) {
+function invalidateToken(service, cuit, companyId = null) {
     delete _cache[cacheKey(service, cuit)];
+    if (_dbStorage?.invalidate) {
+        _dbStorage.invalidate({ service, companyId })
+            .catch((err) => console.warn(`[wsaa] db invalidate error (service=${service}): ${err.message}`));
+    }
 }
 
-module.exports = { getToken, invalidateToken, buildTra, signTra };
+module.exports = { getToken, invalidateToken, buildTra, signTra, setDbStorage };

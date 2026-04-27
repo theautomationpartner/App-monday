@@ -72,7 +72,7 @@ const lineas = [
 
 const importeNeto = lineas.reduce((s, l) => s + l.quantity * l.unit_price, 0);
 const ivaRate = tipoArg === 'C' ? 0 : 0.21;
-const importeIva = tipoArg === 'A' ? Number((importeNeto * ivaRate).toFixed(2)) : 0;
+const importeIva = Number((importeNeto * ivaRate).toFixed(2));
 const importeTotal = Number((importeNeto + importeIva).toFixed(2));
 
 const draft = {
