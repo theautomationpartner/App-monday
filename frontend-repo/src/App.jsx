@@ -107,6 +107,27 @@ const TEMPLATE_STATUS_COLUMN_ID = "status";
 // ID de la columna File donde se sube el PDF emitido. Cuando un cliente clona
 // la plantilla, monday preserva este ID, así que el match exacto funciona.
 const TEMPLATE_PDF_COLUMN_ID = "file_mm1tg5w5";
+// Detector de la columna de Estado (trigger de la receta). El board puede
+// tener varias columnas tipo status/dropdown (Condición de Venta, etc.) y
+// si solo agarramos la primera podemos caer en la equivocada.
+const STATUS_COL_TYPES = ["status", "color", "dropdown"];
+const STATUS_COL_NAME_REGEX = /estado.*comprobante|comprobante|^estado$/i;
+
+// Busca la columna de "Estado Comprobante" priorizando match exacto:
+//   1. ID hardcoded "status".
+//   2. Nombre que matchee /estado.*comprobante|comprobante|^estado$/i + tipo status/color/dropdown.
+//   3. Fallback estricto: primera columna tipo `status` o `color` (NO dropdown,
+//      porque hay muchas dropdowns que no son de status).
+function findStatusColumn(cols) {
+  if (!Array.isArray(cols) || cols.length === 0) return null;
+  const byId = cols.find((c) => c.value === TEMPLATE_STATUS_COLUMN_ID);
+  if (byId) return byId;
+  const byName = cols.find((c) =>
+    STATUS_COL_TYPES.includes(c.type) && STATUS_COL_NAME_REGEX.test(c.label || "")
+  );
+  if (byName) return byName;
+  return cols.find((c) => c.type === "status" || c.type === "color") || null;
+}
 // Todos los IDs de item para detectar si es tablero de plantilla
 const TEMPLATE_BOARD_COLUMN_IDS = ["date", "numeric_mm0yadnb", "dropdown_mm2ged22", "date_mm2gyjvw", "date_mm2g8n2n", "date_mm2gp00f"];
 const TEMPLATE_SUBITEM_COLUMN_IDS = ["numeric_mm1srkr2", "numeric_mm1swnhz", "dropdown_mm2fyez4", "dropdown_mm2gk2mv", "dropdown_mm2g198w"];
@@ -626,11 +647,13 @@ const App = () => {
       if (byName) {
         detectedMapping = byName;
         detectionMethod = "by-name";
-        // Detectar la columna de status real del board (puede no llamarse "status")
-        const statusCol = columns.find((c) => c.type === "status" || c.type === "color");
-        if (statusCol) detectedStatusColumnId = statusCol.value;
       }
     }
+    // Detectar la columna de status real (priorizando "Estado Comprobante"
+    // por nombre, no la primera dropdown que aparezca — antes agarraba
+    // "Condición de Venta" cuando esa estaba antes en la lista).
+    const statusColForConfig = findStatusColumn(columns);
+    if (statusColForConfig) detectedStatusColumnId = statusColForConfig.value;
 
     if (!detectedMapping) {
       console.log("[auto-mapeo] no se detectó plantilla (ni por IDs ni por nombre) — el cliente debe mapear manualmente");
@@ -703,13 +726,19 @@ const App = () => {
   }, [columns, subitemColumns, isFetchingSavedData, context, boardId, hasSavedFiscalData]);
 
   useEffect(() => {
-    if (boardConfig.status_column_id || statusColumns.length === 0) return;
+    if (boardConfig.status_column_id || columns.length === 0) return;
+
+    // Buscar primero por nombre/ID exacto. Si no hay match, fallback a la
+    // primera de tipo "status" o "color" (NO dropdown — había muchas
+    // dropdowns que no eran de estado y el código viejo las agarraba).
+    const statusCol = findStatusColumn(columns);
+    if (!statusCol) return;
 
     setBoardConfig((prev) => ({
       ...prev,
-      status_column_id: statusColumns[0].value,
+      status_column_id: statusCol.value,
     }));
-  }, [boardConfig.status_column_id, statusColumns]);
+  }, [boardConfig.status_column_id, columns]);
 
   // Auto-detect: si el tablero tiene una sola columna file, la usamos como PDF por default.
   useEffect(() => {
