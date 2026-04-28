@@ -585,6 +585,15 @@ const App = () => {
     if (isFetchingSavedData) return;
     if (columns.length === 0) return;
     if (!context?.account?.id || !boardId) return;
+    // Importante: el endpoint POST /api/mappings exige que exista la company
+    // (Datos Fiscales). Si todavía no se cargaron, el POST tira 404 y el
+    // auto-mapeo queda solo en state local, dejando la DB inconsistente con
+    // el frontend que igual muestra "14/14 Listo". Salimos temprano y dejamos
+    // que el useEffect se re-ejecute cuando hasSavedFiscalData pase a true.
+    if (!hasSavedFiscalData) {
+      console.log("[auto-mapeo] datos fiscales todavía no cargados — postergando auto-mapeo");
+      return;
+    }
     // Solo auto-mapear si el mapping está vacío (no hay mapeo guardado)
     const hasAnyMapping = Object.values(mapping).some(v => Boolean(v));
     if (hasAnyMapping) return;
@@ -691,7 +700,7 @@ const App = () => {
       }
     };
     autoSaveMapping();
-  }, [columns, subitemColumns, isFetchingSavedData, context, boardId]);
+  }, [columns, subitemColumns, isFetchingSavedData, context, boardId, hasSavedFiscalData]);
 
   useEffect(() => {
     if (boardConfig.status_column_id || statusColumns.length === 0) return;
