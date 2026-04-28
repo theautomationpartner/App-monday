@@ -625,7 +625,18 @@ const App = () => {
       return;
     }
 
+    // Detectar la columna File donde se va a subir el PDF de la factura emitida.
+    // Tipos posibles según monday: file, files, document, doc.
+    // Tomamos la primera que encuentre (la plantilla trae solo una columna File).
+    const fileCol = columns.find((c) => ["file", "files", "document", "doc"].includes(c.type));
+    const detectedRequiredColumns = fileCol
+      ? [{ key: "invoice_pdf", resolved_column_id: fileCol.value }]
+      : [];
+
     console.log(`[auto-mapeo] tablero de plantilla detectado (${detectionMethod}). Guardando mapeo automático...`);
+    if (fileCol) console.log(`[auto-mapeo] columna PDF detectada: ${fileCol.label} (id=${fileCol.value}, type=${fileCol.type})`);
+    else console.log("[auto-mapeo] no se detectó columna File para PDF — el cliente la va a tener que mapear manualmente");
+
     setMapping(detectedMapping);
     setSavedMappingSnapshot(detectedMapping);
     setHasSavedMapping(true);
@@ -644,7 +655,7 @@ const App = () => {
         });
         console.log("[auto-mapeo] Mapeo de plantilla guardado en DB exitosamente");
 
-        // También guardar el board config con la columna de status detectada
+        // También guardar el board config con la columna de status + PDF detectadas
         await api.post(`/board-config`, {
           monday_account_id: context.account.id.toString(),
           board_id: boardId,
@@ -654,9 +665,13 @@ const App = () => {
           trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
           success_label: COMPROBANTE_STATUS_FLOW.success,
           error_label: COMPROBANTE_STATUS_FLOW.error,
-          required_columns: [],
+          required_columns: detectedRequiredColumns,
         });
-        setBoardConfig((prev) => ({ ...prev, status_column_id: detectedStatusColumnId }));
+        setBoardConfig((prev) => ({
+          ...prev,
+          status_column_id: detectedStatusColumnId,
+          invoice_pdf_column_id: fileCol ? fileCol.value : prev.invoice_pdf_column_id,
+        }));
         console.log("[auto-mapeo] Board config de plantilla guardado en DB exitosamente");
 
         monday.execute("notice", {
