@@ -4190,9 +4190,17 @@ async function renameMondayItem({ apiToken, boardId, itemId, newName }) {
 
 async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnId, label }) {
     if (!apiToken || !boardId || !itemId || !statusColumnId || !label) return;
-    try {
-        // change_column_value espera value como JSON string: "{\"label\":\"...\"}""
-        const valueJson = JSON.stringify(JSON.stringify({ label }));
+
+    // La columna mapeada como "trigger" puede ser tipo `status` o `dropdown`,
+    // según cómo monday haya tipado la columna al crear/clonar el tablero.
+    // Cada tipo espera un formato distinto en change_column_value:
+    //   - status   → { "label": "Comprobante Creado" }
+    //   - dropdown → { "labels": ["Comprobante Creado"] }
+    // Estrategia: intentar status primero (caso más común) y si monday tira
+    // el error de "dropdown column parameters...", reintentar con formato
+    // dropdown. Así cubrimos ambos sin tener que consultar el tipo antes.
+    const sendChange = async (valueObject) => {
+        const valueJson = JSON.stringify(JSON.stringify(valueObject));
         const mutation = `mutation {
             change_column_value(
                 board_id: ${Number(boardId)},
@@ -4208,8 +4216,21 @@ async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnI
             body: JSON.stringify({ query: mutation }),
         });
         const data = await res.json();
-        if (data?.errors?.length) {
-            console.error(`[status] Error cambiando status a "${label}":`, data.errors[0].message);
+        return { ok: !data?.errors?.length, errorMsg: data?.errors?.[0]?.message || null };
+    };
+
+    try {
+        // Intento 1: formato de columna `status`.
+        let result = await sendChange({ label });
+
+        if (!result.ok && /dropdown\s+column/i.test(result.errorMsg || '')) {
+            // Reintento con formato `dropdown` (array de labels).
+            console.log(`[status] columna "${statusColumnId}" es tipo dropdown, reintentando con formato adecuado`);
+            result = await sendChange({ labels: [label] });
+        }
+
+        if (!result.ok) {
+            console.error(`[status] Error cambiando status a "${label}":`, result.errorMsg);
         } else {
             console.log(`[status] Status cambiado a "${label}" OK`);
         }
