@@ -4155,8 +4155,6 @@ async function fetchMondayItem({ apiToken, itemId }) {
     };
 }
 
-// Actualizar el estado de un item en Monday (columna de status).
-// Usa create_labels_if_missing para crear el label automáticamente si no existe.
 // Cambia el nombre de un item de Monday usando change_simple_column_value
 // con la columna especial "name". Es la forma oficial de renombrar items.
 // Usa reintentos: si Monday responde 5xx o falla la conexión, reintenta una vez.

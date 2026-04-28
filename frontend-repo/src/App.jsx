@@ -247,7 +247,10 @@ const App = () => {
 
     monday.get("context").then((res) => {
       console.log("Contexto inicial:", res.data);
-      if (res.data?.account?.id) {
+      // Solo en desarrollo: imprime el Account ID en consola para que el dev
+      // pueda agregarlo a VITE_DEBUG_ACCOUNT_IDS y ver la franja de debug.
+      // En producción NO se loguea para no exponer información del cliente.
+      if (import.meta.env.DEV && res.data?.account?.id) {
         console.log("%c👤 Monday account ID:", "color:#F0CA29;font-weight:bold", res.data.account.id, "— agregalo a VITE_DEBUG_ACCOUNT_IDS en .env para ver la franja de debug");
       }
       setContext(res.data);
