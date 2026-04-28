@@ -1,5 +1,5 @@
 /* global __APP_BUILD_VERSION__ */
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import mondaySdk from "monday-sdk-js";
 import axios from "axios";
 import "monday-ui-react-core/tokens";
@@ -185,6 +185,11 @@ const App = () => {
   const [locationData, setLocationData] = useState(null);
   const [activeSection, setActiveSection] = useState("datos");
   const [toast, setToast] = useState(null);
+
+  // Guard del auto-mapeo: para no postear varias veces a la DB cuando el
+  // useEffect se re-ejecuta (cosa que pasa cada vez que cambia una dependencia).
+  // Lo usamos como un flag de "ya fui posteado en esta sesión".
+  const autoMappingPostedRef = useRef(false);
 
   const showToast = (type, message) => {
     setToast({ type, message });
@@ -606,18 +611,6 @@ const App = () => {
     if (isFetchingSavedData) return;
     if (columns.length === 0) return;
     if (!context?.account?.id || !boardId) return;
-    // Importante: el endpoint POST /api/mappings exige que exista la company
-    // (Datos Fiscales). Si todavía no se cargaron, el POST tira 404 y el
-    // auto-mapeo queda solo en state local, dejando la DB inconsistente con
-    // el frontend que igual muestra "14/14 Listo". Salimos temprano y dejamos
-    // que el useEffect se re-ejecute cuando hasSavedFiscalData pase a true.
-    if (!hasSavedFiscalData) {
-      console.log("[auto-mapeo] datos fiscales todavía no cargados — postergando auto-mapeo");
-      return;
-    }
-    // Solo auto-mapear si el mapping está vacío (no hay mapeo guardado)
-    const hasAnyMapping = Object.values(mapping).some(v => Boolean(v));
-    if (hasAnyMapping) return;
 
     // Si los subitems aún no cargaron, esperar (los necesitamos para el match completo)
     if (subitemColumns.length === 0) return;
@@ -672,14 +665,44 @@ const App = () => {
       ? [{ key: "invoice_pdf", resolved_column_id: fileCol.value }]
       : [];
 
-    console.log(`[auto-mapeo] tablero de plantilla detectado (${detectionMethod}). Guardando mapeo automático...`);
+    console.log(`[auto-mapeo] tablero de plantilla detectado (${detectionMethod}).`);
     if (fileCol) console.log(`[auto-mapeo] columna PDF detectada: ${fileCol.label} (id=${fileCol.value}, type=${fileCol.type})`);
     else console.log("[auto-mapeo] no se detectó columna File para PDF — el cliente la va a tener que mapear manualmente");
 
-    setMapping(detectedMapping);
-    setSavedMappingSnapshot(detectedMapping);
-    setHasSavedMapping(true);
-    setIsMappingEditMode(false);
+    // PASO 1: pre-llenar state local SIEMPRE (independiente de Datos Fiscales).
+    // Esto hace que el frontend muestre "14/14 Listo" desde el primer momento,
+    // aunque el cliente todavía no haya cargado Datos Fiscales y la fila en DB
+    // no exista. Cuando el cliente complete los datos, el POST a DB se hace en
+    // el bloque de abajo (que sí depende de hasSavedFiscalData).
+    // Nota: setMapping con un objeto nuevo causa re-render. Para evitar loops,
+    // sólo seteamos si todavía no hay nada en el state local.
+    const hasAnyMapping = Object.values(mapping).some(v => Boolean(v));
+    if (!hasAnyMapping) {
+      setMapping(detectedMapping);
+      setSavedMappingSnapshot(detectedMapping);
+      setHasSavedMapping(true);
+      setIsMappingEditMode(false);
+      setBoardConfig((prev) => ({
+        ...prev,
+        status_column_id: detectedStatusColumnId,
+        invoice_pdf_column_id: fileCol ? fileCol.value : prev.invoice_pdf_column_id,
+      }));
+    }
+
+    // PASO 2: si todavía no hay Datos Fiscales, no podemos postear a DB
+    // (el endpoint POST /api/mappings tira 404 sin company). Salimos y dejamos
+    // que el useEffect se vuelva a ejecutar cuando hasSavedFiscalData cambie.
+    if (!hasSavedFiscalData) {
+      console.log("[auto-mapeo] Datos Fiscales todavía no cargados — state local seteado, POST diferido");
+      return;
+    }
+
+    // Evitar postear múltiples veces (el useEffect se vuelve a ejecutar por
+    // cualquier cambio de dependencias). Usamos un ref como guard.
+    if (autoMappingPostedRef.current) return;
+    autoMappingPostedRef.current = true;
+
+    console.log("[auto-mapeo] Datos Fiscales cargados — guardando mapeo en DB...");
 
     // Guardar en la DB automáticamente
     const autoSaveMapping = async () => {
