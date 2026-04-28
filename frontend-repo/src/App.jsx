@@ -104,6 +104,9 @@ const TEMPLATE_MAPPING = {
 };
 // Column IDs de la plantilla que no son de mapeo visual pero sí de config
 const TEMPLATE_STATUS_COLUMN_ID = "status";
+// ID de la columna File donde se sube el PDF emitido. Cuando un cliente clona
+// la plantilla, monday preserva este ID, así que el match exacto funciona.
+const TEMPLATE_PDF_COLUMN_ID = "file_mm1tg5w5";
 // Todos los IDs de item para detectar si es tablero de plantilla
 const TEMPLATE_BOARD_COLUMN_IDS = ["date", "numeric_mm0yadnb", "dropdown_mm2ged22", "date_mm2gyjvw", "date_mm2g8n2n", "date_mm2gp00f"];
 const TEMPLATE_SUBITEM_COLUMN_IDS = ["numeric_mm1srkr2", "numeric_mm1swnhz", "dropdown_mm2fyez4", "dropdown_mm2gk2mv", "dropdown_mm2g198w"];
@@ -626,9 +629,13 @@ const App = () => {
     }
 
     // Detectar la columna File donde se va a subir el PDF de la factura emitida.
-    // Tipos posibles según monday: file, files, document, doc.
-    // Tomamos la primera que encuentre (la plantilla trae solo una columna File).
-    const fileCol = columns.find((c) => ["file", "files", "document", "doc"].includes(c.type));
+    // Estrategia:
+    //   1. Match exacto por ID hardcoded (la plantilla preserva ese ID al clonarla).
+    //   2. Si no, primera columna tipo file/files/document/doc (fallback robusto
+    //      por si el cliente personalizó el board).
+    const fileColById = columns.find((c) => c.value === TEMPLATE_PDF_COLUMN_ID);
+    const fileColByType = columns.find((c) => ["file", "files", "document", "doc"].includes(c.type));
+    const fileCol = fileColById || fileColByType;
     const detectedRequiredColumns = fileCol
       ? [{ key: "invoice_pdf", resolved_column_id: fileCol.value }]
       : [];
