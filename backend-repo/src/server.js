@@ -1163,7 +1163,6 @@ async function ensureInvoiceEmissionsTable() {
             request_json JSONB,
             draft_json JSONB,
             afip_result_json JSONB,
-            pdf_base64 TEXT,
             error_message TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
