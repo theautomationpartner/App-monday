@@ -838,7 +838,7 @@ async function getUserTokenSchemaDiagnostics() {
         companies_monday_account_id_type: null,
         user_api_tokens_monday_user_id_type: null,
         user_api_tokens_v2_encrypted_api_token_type: null,
-        user_api_tokens_v3_monday_account_id_type: null,
+        user_api_tokens_monday_account_id_type: null,
     };
 
     try {
@@ -851,7 +851,7 @@ async function getUserTokenSchemaDiagnostics() {
         const columnTypesResult = await db.query(
             `SELECT table_name, column_name, data_type
              FROM information_schema.columns
-                         WHERE table_name IN ('companies', 'user_api_tokens', 'user_api_tokens_v2', 'user_api_tokens_v3')
+                         WHERE table_name IN ('companies', 'user_api_tokens', 'user_api_tokens_v2')
                              AND column_name IN ('monday_account_id', 'monday_user_id', 'encrypted_api_token')`
         );
 
@@ -865,8 +865,8 @@ async function getUserTokenSchemaDiagnostics() {
             if (row.table_name === 'user_api_tokens_v2' && row.column_name === 'encrypted_api_token') {
                 diagnostics.user_api_tokens_v2_encrypted_api_token_type = row.data_type;
             }
-            if (row.table_name === 'user_api_tokens_v3' && row.column_name === 'monday_account_id') {
-                diagnostics.user_api_tokens_v3_monday_account_id_type = row.data_type;
+            if (row.table_name === 'user_api_tokens' && row.column_name === 'monday_account_id') {
+                diagnostics.user_api_tokens_monday_account_id_type = row.data_type;
             }
         }
     } catch (diagErr) {
@@ -1224,7 +1224,7 @@ async function ensureUserApiTokensV2Table() {
 
 async function ensureUserApiTokensV3Table() {
     await db.query(
-        `CREATE TABLE IF NOT EXISTS user_api_tokens_v3 (
+        `CREATE TABLE IF NOT EXISTS user_api_tokens (
             id SERIAL PRIMARY KEY,
             monday_account_id TEXT NOT NULL UNIQUE,
             encrypted_api_token TEXT NOT NULL,
@@ -1673,7 +1673,7 @@ async function getStoredMondayUserApiToken({ mondayAccountId }) {
 
     const result = await db.query(
         `SELECT encrypted_api_token
-         FROM user_api_tokens_v3
+         FROM user_api_tokens
          WHERE monday_account_id = $1
          LIMIT 1`,
         [String(mondayAccountId)]
@@ -2181,7 +2181,7 @@ const getUserApiTokenHandler = async (req, res) => {
         await ensureUserApiTokensV3Table();
         const tokenResult = await db.query(
             `SELECT id
-             FROM user_api_tokens_v3
+             FROM user_api_tokens
              WHERE monday_account_id = $1
              LIMIT 1`,
             [String(accountId)]
@@ -2233,7 +2233,7 @@ const saveUserApiTokenHandler = async (req, res) => {
         const encryptedToken = CryptoJS.AES.encrypt(String(api_token).trim(), process.env.ENCRYPTION_KEY).toString();
 
         await db.query(
-            `INSERT INTO user_api_tokens_v3 (monday_account_id, encrypted_api_token)
+            `INSERT INTO user_api_tokens (monday_account_id, encrypted_api_token)
              VALUES ($1, $2)
              ON CONFLICT (monday_account_id)
              DO UPDATE SET
@@ -2245,7 +2245,7 @@ const saveUserApiTokenHandler = async (req, res) => {
         console.log('✅ saveUserApiToken success', {
             debug_id: debugId,
             company_id: company.id,
-            storage: 'user_api_tokens_v3',
+            storage: 'user_api_tokens',
         });
 
         return res.json({
