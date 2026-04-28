@@ -108,6 +108,54 @@ const TEMPLATE_STATUS_COLUMN_ID = "status";
 const TEMPLATE_BOARD_COLUMN_IDS = ["date", "numeric_mm0yadnb", "dropdown_mm2ged22", "date_mm2gyjvw", "date_mm2g8n2n", "date_mm2gp00f"];
 const TEMPLATE_SUBITEM_COLUMN_IDS = ["numeric_mm1srkr2", "numeric_mm1swnhz", "dropdown_mm2fyez4", "dropdown_mm2gk2mv", "dropdown_mm2g198w"];
 
+// Detectores por nombre + tipo, fallback robusto cuando los IDs cambian
+// (porque monday genera IDs nuevos al clonar el tablero desde la plantilla
+// en otra cuenta). Si todos los detectores encuentran una columna, podemos
+// armar el mapeo con los IDs reales del cliente sin depender de hardcodes.
+const TEMPLATE_COLUMN_DETECTORS_ITEM = {
+  fecha_emision:        { type: "date",     nameRegex: /fecha.*emisi[oó]n|emisi[oó]n/i },
+  receptor_cuit:        { type: "numbers",  nameRegex: /cuit/i },
+  condicion_venta:      { type: "dropdown", nameRegex: /condici[oó]n.*venta|venta/i },
+  fecha_servicio_desde: { type: "date",     nameRegex: /servic.*desde|desde.*servic/i },
+  fecha_servicio_hasta: { type: "date",     nameRegex: /servic.*hasta|hasta.*servic/i },
+  fecha_vto_pago:       { type: "date",     nameRegex: /vto|venc/i },
+};
+const TEMPLATE_COLUMN_DETECTORS_SUBITEM = {
+  cantidad:        { type: "numbers",  nameRegex: /cantidad/i },
+  precio_unitario: { type: "numbers",  nameRegex: /precio|unitario/i },
+  prod_serv:       { type: "dropdown", nameRegex: /producto|servic/i },
+  unidad_medida:   { type: "dropdown", nameRegex: /unidad|medida/i },
+  alicuota_iva:    { type: "dropdown", nameRegex: /al[ií]cuota|iva/i },
+};
+
+// Busca la primera columna que matchee tipo + regex de nombre.
+function findColumnByDetector(cols, detector) {
+  return cols.find((c) => c.type === detector.type && detector.nameRegex.test(c.label || ""));
+}
+
+// Intenta armar un mapping completo a partir de las columnas reales del board
+// del cliente, matcheando por nombre + tipo. Devuelve null si falta alguna.
+function buildAutoMappingFromColumns(itemCols, subitemCols) {
+  const result = { concepto: "name" };
+  for (const [key, detector] of Object.entries(TEMPLATE_COLUMN_DETECTORS_ITEM)) {
+    const col = findColumnByDetector(itemCols, detector);
+    if (!col) {
+      console.log(`[auto-mapeo-byname] no se encontró columna para "${key}" (type=${detector.type})`);
+      return null;
+    }
+    result[key] = col.value;
+  }
+  for (const [key, detector] of Object.entries(TEMPLATE_COLUMN_DETECTORS_SUBITEM)) {
+    const col = findColumnByDetector(subitemCols, detector);
+    if (!col) {
+      console.log(`[auto-mapeo-byname] no se encontró columna subitem para "${key}" (type=${detector.type})`);
+      return null;
+    }
+    result[key] = col.value;
+  }
+  return result;
+}
+
 const App = () => {
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
@@ -538,31 +586,48 @@ const App = () => {
     const hasAnyMapping = Object.values(mapping).some(v => Boolean(v));
     if (hasAnyMapping) return;
 
-    // Verificar si las columnas del tablero coinciden con los IDs de la plantilla
-    const columnIds = columns.map(c => c.value);
-    const isTemplateBoardMatch = TEMPLATE_BOARD_COLUMN_IDS.every(id => columnIds.includes(id));
-    if (!isTemplateBoardMatch) {
-      console.log("[auto-mapeo] No es tablero de plantilla, IDs no coinciden");
-      return;
-    }
-
-    // Verificar subitems si están cargados
-    const subitemIds = subitemColumns.map(c => c.value);
-    const isTemplateSubitemMatch = subitemColumns.length > 0 &&
-      TEMPLATE_SUBITEM_COLUMN_IDS.every(id => subitemIds.includes(id));
-
-    if (subitemColumns.length > 0 && !isTemplateSubitemMatch) {
-      console.log("[auto-mapeo] Subitems no coinciden con plantilla");
-      return;
-    }
-
-    // Si los subitems aún no cargaron, esperar
+    // Si los subitems aún no cargaron, esperar (los necesitamos para el match completo)
     if (subitemColumns.length === 0) return;
 
-    // Tablero de plantilla detectado — usar mapeo fijo
-    console.log("[auto-mapeo] Tablero de plantilla detectado. Guardando mapeo automático...");
-    setMapping(TEMPLATE_MAPPING);
-    setSavedMappingSnapshot(TEMPLATE_MAPPING);
+    // ── Detección de plantilla ────────────────────────────────────────────────
+    // Estrategia en 2 pasos:
+    //   1. Match por IDs hardcoded (rápido, funciona en boards no clonados).
+    //   2. Match por nombre + tipo (fallback robusto cuando se clona el board
+    //      desde la feature "Plantilla de espacio de trabajo" — monday genera
+    //      IDs nuevos al clonar, entonces los hardcodes no sirven).
+    let detectedMapping = null;
+    let detectedStatusColumnId = TEMPLATE_STATUS_COLUMN_ID;
+    let detectionMethod = null;
+
+    const columnIds = columns.map((c) => c.value);
+    const subitemIds = subitemColumns.map((c) => c.value);
+    const isTemplateBoardMatch = TEMPLATE_BOARD_COLUMN_IDS.every((id) => columnIds.includes(id));
+    const isTemplateSubitemMatch = TEMPLATE_SUBITEM_COLUMN_IDS.every((id) => subitemIds.includes(id));
+
+    if (isTemplateBoardMatch && isTemplateSubitemMatch) {
+      // 1. Match exacto por IDs hardcoded
+      detectedMapping = TEMPLATE_MAPPING;
+      detectionMethod = "by-ids";
+    } else {
+      // 2. Match por nombre + tipo (resuelve el caso de board clonado en otra cuenta)
+      const byName = buildAutoMappingFromColumns(columns, subitemColumns);
+      if (byName) {
+        detectedMapping = byName;
+        detectionMethod = "by-name";
+        // Detectar la columna de status real del board (puede no llamarse "status")
+        const statusCol = columns.find((c) => c.type === "status" || c.type === "color");
+        if (statusCol) detectedStatusColumnId = statusCol.value;
+      }
+    }
+
+    if (!detectedMapping) {
+      console.log("[auto-mapeo] no se detectó plantilla (ni por IDs ni por nombre) — el cliente debe mapear manualmente");
+      return;
+    }
+
+    console.log(`[auto-mapeo] tablero de plantilla detectado (${detectionMethod}). Guardando mapeo automático...`);
+    setMapping(detectedMapping);
+    setSavedMappingSnapshot(detectedMapping);
     setHasSavedMapping(true);
     setIsMappingEditMode(false);
 
@@ -574,24 +639,24 @@ const App = () => {
           board_id: boardId,
           view_id: viewIdFromHref,
           app_feature_id: appFeatureId,
-          mapping: TEMPLATE_MAPPING,
+          mapping: detectedMapping,
           is_locked: true,
         });
         console.log("[auto-mapeo] Mapeo de plantilla guardado en DB exitosamente");
 
-        // También guardar el board config con la columna de status
+        // También guardar el board config con la columna de status detectada
         await api.post(`/board-config`, {
           monday_account_id: context.account.id.toString(),
           board_id: boardId,
           view_id: viewIdFromHref,
           app_feature_id: appFeatureId,
-          status_column_id: TEMPLATE_STATUS_COLUMN_ID,
+          status_column_id: detectedStatusColumnId,
           trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
           success_label: COMPROBANTE_STATUS_FLOW.success,
           error_label: COMPROBANTE_STATUS_FLOW.error,
           required_columns: [],
         });
-        setBoardConfig(prev => ({ ...prev, status_column_id: TEMPLATE_STATUS_COLUMN_ID }));
+        setBoardConfig((prev) => ({ ...prev, status_column_id: detectedStatusColumnId }));
         console.log("[auto-mapeo] Board config de plantilla guardado en DB exitosamente");
 
         monday.execute("notice", {
