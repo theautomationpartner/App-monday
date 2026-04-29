@@ -198,6 +198,11 @@ const App = () => {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isFetchingSavedData, setIsFetchingSavedData] = useState(false);
+  // Gate del primer render: arranca en false y se marca true cuando el primer fetch
+  // de /setup termina (success o fail), o tras un safety timeout si el context de
+  // monday nunca llega. Mientras esté false, mostramos un splash en vez de la UI con
+  // datos vacíos — evita el flash de "no tenés nada configurado" al abrir la vista.
+  const [isInitialDataReady, setIsInitialDataReady] = useState(false);
   const [apiStatus, setApiStatus] = useState("checking");
   const [apiError, setApiError] = useState("");
   const [sessionToken, setSessionToken] = useState("");
@@ -599,11 +604,20 @@ const App = () => {
         setApiError(err?.response?.data?.error || err?.message || "Error consultando setup");
       } finally {
         setIsFetchingSavedData(false);
+        setIsInitialDataReady(true);
       }
     };
 
     fetchSavedSetup();
   }, [context, boardId, viewIdFromHref, appFeatureId, sessionToken]);
+
+  // Safety net: si el context de monday tarda demasiado o nunca llega, igual
+  // mostramos la UI después de 10s para no dejar al usuario en splash infinito.
+  useEffect(() => {
+    if (isInitialDataReady) return;
+    const safety = setTimeout(() => setIsInitialDataReady(true), 10000);
+    return () => clearTimeout(safety);
+  }, [isInitialDataReady]);
 
   // Auto-mapeo por plantilla: si no hay mapeo guardado y las columnas coinciden
   // con los IDs fijos de la plantilla, guardar el mapeo automáticamente en la DB.
@@ -1269,6 +1283,18 @@ const App = () => {
     const found = options.find((o) => o.value === selectedValue);
     return found?.label || selectedValue;
   };
+
+  if (!isInitialDataReady) {
+    return (
+      <div className="gd-frame gd-frame-splash">
+        <div className="gd-splash">
+          <div className="loader" />
+          <div className="gd-splash-title">Cargando tu app…</div>
+          <div className="gd-splash-sub">Conectando con monday y trayendo tu configuración.</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="gd-frame">

@@ -1083,6 +1083,43 @@ body {
   100% { transform: rotate(360deg); }
 }
 
+.gd-frame-splash {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+}
+
+.gd-splash {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+  animation: gd-splash-fadein 200ms ease-out;
+}
+
+.gd-splash .loader {
+  margin-bottom: 8px;
+}
+
+.gd-splash-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #323338;
+}
+
+.gd-splash-sub {
+  font-size: 13px;
+  color: #676879;
+}
+
+@keyframes gd-splash-fadein {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
 /* ─── Mapping Selection & Additional Views ─── */
 .mapping-list {
   display: flex;
