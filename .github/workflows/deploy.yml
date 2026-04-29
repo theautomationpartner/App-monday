@@ -1,0 +1,130 @@
+name: Deploy a DigitalOcean
+
+# Se ejecuta automáticamente en cada push a main.
+# También se puede disparar a mano desde la UI de Actions ("Run workflow").
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout código
+        uses: actions/checkout@v4
+        with:
+          # Necesitamos al menos 2 commits para poder ver qué cambió
+          fetch-depth: 2
+
+      - name: Detectar qué cambió
+        uses: dorny/paths-filter@v3
+        id: changes
+        with:
+          filters: |
+            frontend_src:
+              - 'frontend-repo/src/**'
+              - 'frontend-repo/index.html'
+              - 'frontend-repo/vite.config.js'
+            frontend_deps:
+              - 'frontend-repo/package.json'
+              - 'frontend-repo/package-lock.json'
+            backend_src:
+              - 'backend-repo/src/**'
+              - 'backend-repo/ecosystem.config.js'
+            backend_deps:
+              - 'backend-repo/package.json'
+              - 'backend-repo/package-lock.json'
+
+      # ─── Build del frontend (solo si cambió) ────────────────────────────────
+      - name: Setup Node 20
+        if: steps.changes.outputs.frontend_src == 'true' || steps.changes.outputs.frontend_deps == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'frontend-repo/package-lock.json'
+
+      - name: Install + build frontend
+        if: steps.changes.outputs.frontend_src == 'true' || steps.changes.outputs.frontend_deps == 'true'
+        working-directory: frontend-repo
+        run: |
+          npm ci
+          npm run build
+          ls -la dist/
+
+      # ─── Setup SSH ──────────────────────────────────────────────────────────
+      - name: Configurar SSH al droplet
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DROPLET_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.DROPLET_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
+
+      # ─── Pull del código en el droplet ──────────────────────────────────────
+      - name: git pull en el droplet
+        run: |
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
+            "cd /opt/apps/App-monday && git pull --ff-only origin main"
+
+      # ─── Deploy del frontend (solo si se buildeó) ──────────────────────────
+      - name: Subir frontend al droplet (atomic swap)
+        if: steps.changes.outputs.frontend_src == 'true' || steps.changes.outputs.frontend_deps == 'true'
+        run: |
+          # Limpiar dir temporal en el droplet
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
+            "rm -rf /tmp/dist_new && mkdir -p /tmp/dist_new"
+
+          # Subir el dist
+          scp -r frontend-repo/dist/* \
+            ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}:/tmp/dist_new/
+
+          # Atomic swap: mover el viejo, mover el nuevo, borrar el viejo
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} '
+            cd /opt/apps/App-monday/backend-repo
+            rm -rf public_old
+            mv public public_old 2>/dev/null || true
+            mv /tmp/dist_new public
+            rm -rf public_old
+            echo "[deploy] frontend swap OK — hash:"
+            ls public/assets/ | grep ".js$"
+          '
+
+      # ─── Backend deps (solo si cambió package.json) ────────────────────────
+      - name: Reinstalar deps del backend
+        if: steps.changes.outputs.backend_deps == 'true'
+        run: |
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
+            "cd /opt/apps/App-monday/backend-repo && npm install --omit=dev"
+
+      # ─── Reload PM2 (solo si cambió código del backend) ─────────────────────
+      - name: Reload PM2
+        if: steps.changes.outputs.backend_src == 'true' || steps.changes.outputs.backend_deps == 'true'
+        run: |
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
+            "pm2 reload tap-monday --update-env && sleep 2 && pm2 list | grep tap-monday"
+
+      # ─── Smoke test ────────────────────────────────────────────────────────
+      - name: Verificar que la app responde
+        run: |
+          sleep 3
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://134-122-5-114.sslip.io/)
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ App devolvió HTTP $STATUS"
+            exit 1
+          fi
+          echo "✅ App respondiendo OK (HTTP $STATUS)"
+
+      # ─── Resumen ───────────────────────────────────────────────────────────
+      - name: Resumen del deploy
+        if: always()
+        run: |
+          echo "════════════════════════════════════════"
+          echo "  RESUMEN DEL DEPLOY"
+          echo "════════════════════════════════════════"
+          echo "Frontend src cambió: ${{ steps.changes.outputs.frontend_src }}"
+          echo "Frontend deps cambió: ${{ steps.changes.outputs.frontend_deps }}"
+          echo "Backend src cambió: ${{ steps.changes.outputs.backend_src }}"
+          echo "Backend deps cambió: ${{ steps.changes.outputs.backend_deps }}"
+          echo "════════════════════════════════════════"
