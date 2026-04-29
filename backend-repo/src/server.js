@@ -481,17 +481,62 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
-async function getCompanyByMondayAccountId(mondayAccountId) {
-    const companyQuery = `
-        SELECT id, monday_account_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date,
+// Lookup de la empresa que corresponde a un boardId de monday. Útil cuando se
+// emite una factura: el JOIN con board_automation_configs garantiza que se
+// devuelve la empresa CONFIGURADA en ese board, sin importar cuántas empresas
+// distintas tenga la cuenta. Si el board no tiene config (caso edge), cae al
+// fallback legacy de getCompanyByMondayAccountId.
+async function getCompanyForBoard(mondayAccountId, boardId) {
+    if (!mondayAccountId || !boardId) return null;
+    const r = await db.query(
+        `SELECT c.id, c.monday_account_id, c.workspace_id, c.business_name,
+                c.trade_name, c.cuit, c.default_point_of_sale, c.address,
+                c.start_date, c.phone, c.email, c.website, c.logo_base64,
+                c.logo_mime_type, c.padron_condicion, c.padron_nombre,
+                c.padron_tipo_persona, c.padron_domicilio, c.padron_fetched_at
+         FROM companies c
+         JOIN board_automation_configs bac ON bac.company_id = c.id
+         WHERE c.monday_account_id::text = $1
+           AND bac.board_id = $2
+         ORDER BY bac.updated_at DESC
+         LIMIT 1`,
+        [String(mondayAccountId), String(boardId)]
+    );
+    if (r.rows[0]) return r.rows[0];
+    // Fallback: sin board_config ya configurado, probamos la lookup legacy.
+    return getCompanyByMondayAccountId(mondayAccountId);
+}
+
+// Lookup de la empresa que corresponde a un (monday_account_id, workspace_id).
+// Si workspaceId es null/undefined → fallback a comportamiento legacy: trae la
+// primera empresa de la cuenta priorizando la "legacy" (workspace_id NULL),
+// que sostiene compatibilidad con clientes con frontend viejo que todavía no
+// manda workspace_id.
+async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) {
+    const baseSelect = `
+        SELECT id, monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date,
                phone, email, website, logo_base64, logo_mime_type,
                padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio, padron_fetched_at
-        FROM companies
-        WHERE monday_account_id::text = $1
-        LIMIT 1;
-    `;
-    const companyResult = await db.query(companyQuery, [String(mondayAccountId)]);
-    return companyResult.rows[0] || null;
+        FROM companies`;
+    if (workspaceId) {
+        // Match exacto al workspace solicitado.
+        const r = await db.query(
+            `${baseSelect} WHERE monday_account_id::text = $1 AND workspace_id = $2 LIMIT 1`,
+            [String(mondayAccountId), String(workspaceId)]
+        );
+        return r.rows[0] || null;
+    }
+    // Sin workspace en el request: priorizamos la legacy (workspace_id NULL),
+    // luego la más vieja por created_at. Esto preserva el comportamiento que
+    // tenía la app antes del cambio multi-empresa.
+    const r = await db.query(
+        `${baseSelect}
+         WHERE monday_account_id::text = $1
+         ORDER BY (workspace_id IS NULL) DESC, created_at ASC
+         LIMIT 1`,
+        [String(mondayAccountId)]
+    );
+    return r.rows[0] || null;
 }
 
 /**
@@ -1289,7 +1334,19 @@ async function ensureCompaniesExtraColumns() {
             ADD COLUMN IF NOT EXISTS padron_nombre VARCHAR(255),
             ADD COLUMN IF NOT EXISTS padron_tipo_persona VARCHAR(20),
             ADD COLUMN IF NOT EXISTS padron_domicilio VARCHAR(500),
-            ADD COLUMN IF NOT EXISTS padron_fetched_at TIMESTAMP
+            ADD COLUMN IF NOT EXISTS padron_fetched_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS workspace_id TEXT
+    `);
+    // Índice de búsqueda y UNIQUE compuesto para soportar varias empresas
+    // por cuenta de monday (una por workspace). El COALESCE permite que la
+    // company "legacy" (workspace_id NULL) sea única dentro de la cuenta.
+    await db.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS companies_account_workspace_unique
+        ON companies(monday_account_id, COALESCE(workspace_id, '__legacy__'))
+    `);
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS companies_lookup_idx
+        ON companies(monday_account_id, workspace_id)
     `);
 }
 
@@ -1386,6 +1443,14 @@ async function ensureAuditLogItemsTable() {
             UNIQUE (monday_account_id, client_item_id)
         )
     `);
+    // Multi-empresa: agregamos el workspace_id y company_id de la empresa
+    // que emitió la factura, para diferenciar facturas de distintas empresas
+    // que viven dentro de la misma cuenta monday.
+    await db.query(`
+        ALTER TABLE audit_log_items
+            ADD COLUMN IF NOT EXISTS workspace_id TEXT,
+            ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE SET NULL
+    `);
     _auditLogItemsTableEnsured = true;
 }
 
@@ -1400,15 +1465,23 @@ async function findAuditItemId(accountId, clientItemId) {
     } catch (_) { return null; }
 }
 
-async function recordAuditMapping(accountId, clientItemId, auditItemId) {
+async function recordAuditMapping(accountId, clientItemId, auditItemId, opts = {}) {
     if (!accountId || !clientItemId || !auditItemId) return;
+    // company_id y workspace_id son opcionales (multi-empresa). Si vienen, los
+    // guardamos para poder filtrar el audit log por empresa después.
+    const companyId = opts.companyId || null;
+    const workspaceId = opts.workspaceId || null;
     try {
         await db.query(
-            `INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id)
-             VALUES ($1, $2, $3)
+            `INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id, company_id, workspace_id)
+             VALUES ($1, $2, $3, $4, $5)
              ON CONFLICT (monday_account_id, client_item_id)
-             DO UPDATE SET audit_item_id = EXCLUDED.audit_item_id, updated_at = CURRENT_TIMESTAMP`,
-            [String(accountId), String(clientItemId), String(auditItemId)]
+             DO UPDATE SET
+                audit_item_id = EXCLUDED.audit_item_id,
+                company_id    = COALESCE(EXCLUDED.company_id, audit_log_items.company_id),
+                workspace_id  = COALESCE(EXCLUDED.workspace_id, audit_log_items.workspace_id),
+                updated_at    = CURRENT_TIMESTAMP`,
+            [String(accountId), String(clientItemId), String(auditItemId), companyId, workspaceId]
         );
     } catch (err) { console.warn('[audit-log] error guardando mapeo:', err.message); }
 }
@@ -1799,12 +1872,17 @@ app.get('/api/health', async (req, res) => {
 
 app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
-    const { board_id, view_id, app_feature_id } = req.query;
+    const { board_id, view_id, app_feature_id, workspace_id } = req.query;
+    // workspace_id: opcional. Si llega, busca la empresa específica de ese
+    // workspace; sino cae al comportamiento legacy (la primera empresa de la
+    // cuenta, priorizando la de workspace_id NULL).
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!ensureAccountMatch(req, res, mondayAccountId)) return;
 
     console.log('🔎 setup request', {
         mondayAccountId,
+        workspace_id: workspaceId,
         board_id: board_id || null,
         view_id: view_id || null,
         app_feature_id: app_feature_id || null
@@ -1815,7 +1893,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
     // El cron diario (2am AR) cubre la mayoría de los casos; esto es backup.
     setImmediate(async () => {
         try {
-            const company = await getCompanyByMondayAccountId(mondayAccountId);
+            const company = await getCompanyByMondayAccountId(mondayAccountId, workspaceId);
             if (!company?.cuit) return;
             const fetchedAt = company.padron_fetched_at
                 ? new Date(company.padron_fetched_at).getTime() : 0;
@@ -1834,7 +1912,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
     // Así la primera factura después de abrir la app tampoco paga el costo.
     setImmediate(async () => {
         try {
-            const company = await getCompanyByMondayAccountId(mondayAccountId);
+            const company = await getCompanyByMondayAccountId(mondayAccountId, workspaceId);
             if (!company?.id) return;
             await pregenerateWsfeTokenForCompanyId(company.id);
         } catch (err) {
@@ -1844,7 +1922,29 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
 
     try {
         await ensureCompaniesExtraColumns();
-        const company = await getCompanyByMondayAccountId(mondayAccountId);
+        let company = await getCompanyByMondayAccountId(mondayAccountId, workspaceId);
+
+        // Fallback legacy: si la request trae workspaceId y no hay match, pero
+        // existe UNA sola company legacy (workspace_id NULL) para esta cuenta
+        // y ninguna otra company para otros workspaces, asumimos que es el
+        // mismo cliente abriendo desde un workspace diferente al original y
+        // devolvemos sus datos. El próximo POST /companies va a hacer la
+        // migración via "claim on first save".
+        if (!company && workspaceId) {
+            const counts = await db.query(
+                `SELECT
+                    COUNT(*) FILTER (WHERE workspace_id IS NULL) AS legacy_count,
+                    COUNT(*) FILTER (WHERE workspace_id IS NOT NULL) AS scoped_count
+                   FROM companies
+                  WHERE monday_account_id::text = $1`,
+                [String(mondayAccountId)]
+            );
+            const { legacy_count, scoped_count } = counts.rows[0] || {};
+            if (Number(legacy_count) === 1 && Number(scoped_count) === 0) {
+                console.log(`[multi-tenant] devolviendo company legacy a workspace=${workspaceId} (single-company fallback)`);
+                company = await getCompanyByMondayAccountId(mondayAccountId, null);
+            }
+        }
 
         if (!company) {
             return res.json({
@@ -1857,6 +1957,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                 boardConfig: null,
                 identifiers: {
                     monday_account_id: mondayAccountId,
+                    workspace_id: workspaceId,
                     board_id: board_id || null,
                     view_id: view_id || null,
                     app_feature_id: app_feature_id || null
@@ -2067,6 +2168,7 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
 app.post('/api/board-config', requireMondaySession, async (req, res) => {
     const {
         monday_account_id,
+        workspace_id,
         board_id,
         view_id,
         app_feature_id,
@@ -2075,6 +2177,7 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
     } = req.body;
 
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!accountId || !board_id || !status_column_id) {
         return res.status(400).json({ error: 'monday_account_id, board_id y status_column_id son obligatorios' });
@@ -2087,7 +2190,7 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
     }
 
     try {
-        const company = await getCompanyByMondayAccountId(accountId);
+        const company = await getCompanyByMondayAccountId(accountId, workspaceId);
         if (!company) {
             return res.status(404).json({ error: 'Empresa no encontrada' });
         }
@@ -2104,6 +2207,7 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
                  success_label = $7,
                  error_label = $8,
                  required_columns_json = $9,
+                 workspace_id = $10,
                  updated_at = CURRENT_TIMESTAMP
              WHERE company_id = $1
                AND board_id = $2
@@ -2117,7 +2221,8 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
                 COMPROBANTE_STATUS_FLOW.trigger,
                 COMPROBANTE_STATUS_FLOW.success,
                 COMPROBANTE_STATUS_FLOW.error,
-                JSON.stringify(required_columns)
+                JSON.stringify(required_columns),
+                workspaceId
             ]
         );
 
@@ -2128,6 +2233,7 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
         const insertResult = await db.query(
             `INSERT INTO board_automation_configs (
                 company_id,
+                workspace_id,
                 board_id,
                 view_id,
                 app_feature_id,
@@ -2136,10 +2242,11 @@ app.post('/api/board-config', requireMondaySession, async (req, res) => {
                 success_label,
                 error_label,
                 required_columns_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
             RETURNING *`,
             [
                 company.id,
+                workspaceId,
                 String(board_id),
                 view_id || null,
                 app_feature_id || null,
@@ -2324,6 +2431,7 @@ app.get('/api/mappings/:mondayAccountId', requireMondaySession, async (req, res)
 app.post('/api/mappings', requireMondaySession, async (req, res) => {
     const {
         monday_account_id,
+        workspace_id,
         board_id,
         view_id,
         app_feature_id,
@@ -2332,6 +2440,7 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
     } = req.body;
 
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!accountId || !board_id) {
         return res.status(400).json({ error: 'monday_account_id y board_id son obligatorios' });
@@ -2344,7 +2453,7 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
     }
 
     try {
-        const company = await getCompanyByMondayAccountId(accountId);
+        const company = await getCompanyByMondayAccountId(accountId, workspaceId);
         if (!company) {
             return res.status(404).json({ error: 'Empresa no encontrada' });
         }
@@ -2353,6 +2462,7 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
             `UPDATE visual_mappings
              SET mapping_json = $5,
                  is_locked = COALESCE($6, is_locked),
+                 workspace_id = $7,
                  updated_at = CURRENT_TIMESTAMP,
                  version = version + 1
              WHERE company_id = $1
@@ -2366,7 +2476,8 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
                 view_id || null,
                 app_feature_id || null,
                 JSON.stringify(mapping),
-                typeof is_locked === 'boolean' ? is_locked : null
+                typeof is_locked === 'boolean' ? is_locked : null,
+                workspaceId
             ]
         );
 
@@ -2377,15 +2488,17 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
         const insertResult = await db.query(
             `INSERT INTO visual_mappings (
                 company_id,
+                workspace_id,
                 board_id,
                 view_id,
                 app_feature_id,
                 mapping_json,
                 is_locked
-            ) VALUES ($1, $2, $3, $4, $5, COALESCE($6, TRUE))
+            ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
             RETURNING *`,
             [
                 company.id,
+                workspaceId,
                 String(board_id),
                 view_id || null,
                 app_feature_id || null,
@@ -2407,10 +2520,13 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
 
 app.post('/api/companies', requireMondaySession, async (req, res) => {
     const {
-        monday_account_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
+        monday_account_id, workspace_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
         phone, email, website
     } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
+    // workspace_id es opcional. Si no llega, la empresa queda como "legacy"
+    // (workspace_id NULL), compatible con clientes con frontend viejo.
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!accountId) {
         return res.status(400).json({ error: 'monday_account_id es obligatorio' });
@@ -2435,10 +2551,39 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
 
     try {
         await ensureCompaniesExtraColumns();
+
+        // Migración self-healing para clientes legacy: si llega un workspace_id
+        // y NO existe una company para (account, workspace), pero SÍ existe una
+        // legacy con workspace_id=NULL, "claim" esa fila asignándole el
+        // workspace actual. Así el primer save desde el frontend nuevo migra
+        // automáticamente la company existente, sin perder cert ni mapeo.
+        if (workspaceId) {
+            const claimRes = await db.query(
+                `UPDATE companies
+                    SET workspace_id = $2,
+                        updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1
+                    AND workspace_id IS NULL
+                    AND NOT EXISTS (
+                        SELECT 1 FROM companies c2
+                         WHERE c2.monday_account_id = $1
+                           AND c2.workspace_id = $2
+                    )
+                  RETURNING id`,
+                [accountId, workspaceId]
+            );
+            if (claimRes.rowCount > 0) {
+                console.log(`[multi-tenant] legacy company ${claimRes.rows[0].id} migrada al workspace ${workspaceId}`);
+            }
+        }
+
+        // UPSERT por (monday_account_id, workspace_id). El UNIQUE INDEX
+        // companies_account_workspace_unique soporta el ON CONFLICT con la
+        // expresión COALESCE para que NULL se trate de forma determinística.
         const query = `
-            INSERT INTO companies (monday_account_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-            ON CONFLICT (monday_account_id)
+            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            ON CONFLICT (monday_account_id, COALESCE(workspace_id, '__legacy__'))
             DO UPDATE SET
                 business_name = EXCLUDED.business_name,
                 trade_name = EXCLUDED.trade_name,
@@ -2453,7 +2598,7 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
             RETURNING *;
         `;
         const result = await db.query(query, [
-            accountId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
+            accountId, workspaceId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
             phoneNorm.value, emailNorm.value, websiteNorm.value
         ]);
         // Datos fiscales cambiaron → invalidar cache del padrón en DB.
@@ -2474,6 +2619,7 @@ app.post('/api/companies', requireMondaySession, async (req, res) => {
 // 500 KB y a tipos de imagen comunes. La empresa ya tiene que estar creada.
 app.post('/api/companies/logo', requireMondaySession, upload.single('logo'), async (req, res) => {
     const accountId = String(req.body.monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = req.body.workspace_id ? String(req.body.workspace_id) : null;
 
     if (!accountId) return res.status(400).json({ error: 'monday_account_id es obligatorio' });
     if (!ensureAccountMatch(req, res, accountId)) return;
@@ -2495,14 +2641,18 @@ app.post('/api/companies/logo', requireMondaySession, upload.single('logo'), asy
 
     try {
         await ensureCompaniesExtraColumns();
+        // Multi-tenant: si viene workspace_id matcheamos por (account, workspace);
+        // si NO viene (cliente legacy o app antigua) caemos al match por solo account
+        // exigiendo workspace_id IS NULL para no pisar otra company.
         const result = await db.query(
             `UPDATE companies
                 SET logo_base64 = $2,
                     logo_mime_type = $3,
                     updated_at = CURRENT_TIMESTAMP
               WHERE monday_account_id = $1
+                AND COALESCE(workspace_id, '__legacy__') = COALESCE($4, '__legacy__')
               RETURNING id`,
-            [accountId, buffer.toString('base64'), mimetype]
+            [accountId, buffer.toString('base64'), mimetype, workspaceId]
         );
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Empresa no encontrada. Guardá los datos fiscales primero.' });
@@ -2519,6 +2669,7 @@ app.post('/api/companies/logo', requireMondaySession, upload.single('logo'), asy
 
 app.delete('/api/companies/logo/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
+    const workspaceId = req.query.workspace_id ? String(req.query.workspace_id) : null;
     if (!ensureAccountMatch(req, res, mondayAccountId)) return;
 
     try {
@@ -2529,8 +2680,9 @@ app.delete('/api/companies/logo/:mondayAccountId', requireMondaySession, async (
                     logo_mime_type = NULL,
                     updated_at = CURRENT_TIMESTAMP
               WHERE monday_account_id = $1
+                AND COALESCE(workspace_id, '__legacy__') = COALESCE($2, '__legacy__')
               RETURNING id`,
-            [String(mondayAccountId)]
+            [String(mondayAccountId), workspaceId]
         );
         if (result.rowCount === 0) {
             return res.status(404).json({ error: 'Empresa no encontrada' });
@@ -2550,8 +2702,9 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
     { name: 'crt', maxCount: 1 },
     { name: 'key', maxCount: 1 }
 ]), async (req, res) => {
-    const { monday_account_id } = req.body;
+    const { monday_account_id, workspace_id } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!accountId) {
         return res.status(400).json({ error: 'monday_account_id es obligatorio' });
@@ -2568,7 +2721,12 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
     try {
         await ensureAfipCredentialsColumns();
 
-        const companyRes = await db.query('SELECT id, cuit FROM companies WHERE monday_account_id = $1', [accountId]);
+        const companyRes = await db.query(
+            `SELECT id, cuit FROM companies
+              WHERE monday_account_id = $1
+                AND COALESCE(workspace_id, '__legacy__') = COALESCE($2, '__legacy__')`,
+            [accountId, workspaceId]
+        );
         if (companyRes.rows.length === 0) return res.status(404).json({ error: 'Empresa no encontrada' });
 
         const companyId = companyRes.rows[0].id;
@@ -2646,8 +2804,9 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
 // descargue y lo suba al portal de ARCA. Status queda en 'pending_crt' hasta
 // que el usuario vuelva con el .crt.
 app.post('/api/certificates/csr/generate', requireMondaySession, async (req, res) => {
-    const { monday_account_id, alias } = req.body || {};
+    const { monday_account_id, workspace_id, alias } = req.body || {};
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!accountId) {
         return res.status(400).json({ error: 'monday_account_id es obligatorio' });
@@ -2657,7 +2816,7 @@ app.post('/api/certificates/csr/generate', requireMondaySession, async (req, res
     try {
         await ensureAfipCredentialsColumns();
 
-        const company = await getCompanyByMondayAccountId(accountId);
+        const company = await getCompanyByMondayAccountId(accountId, workspaceId);
         if (!company) {
             return res.status(400).json({
                 error: 'Primero cargá los datos fiscales de tu empresa',
@@ -2713,13 +2872,14 @@ app.post('/api/certificates/csr/generate', requireMondaySession, async (req, res
 // después. Devuelve el CSR guardado como archivo descargable.
 app.get('/api/certificates/csr/download', requireMondaySession, async (req, res) => {
     const accountId = String(req.query.monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = req.query.workspace_id ? String(req.query.workspace_id) : null;
     if (!accountId) return res.status(400).json({ error: 'monday_account_id es obligatorio' });
     if (!ensureAccountMatch(req, res, accountId)) return;
 
     try {
         await ensureAfipCredentialsColumns();
 
-        const company = await getCompanyByMondayAccountId(accountId);
+        const company = await getCompanyByMondayAccountId(accountId, workspaceId);
         if (!company) return res.status(404).json({ error: 'Empresa no encontrada' });
 
         const result = await db.query(
@@ -2746,8 +2906,9 @@ app.get('/api/certificates/csr/download', requireMondaySession, async (req, res)
 // que matchee la private key que guardamos en el paso 1 y marcamos el
 // certificado como activo.
 app.post('/api/certificates/csr/finalize', requireMondaySession, upload.single('crt'), async (req, res) => {
-    const { monday_account_id } = req.body;
+    const { monday_account_id, workspace_id } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
+    const workspaceId = workspace_id ? String(workspace_id) : null;
 
     if (!accountId) return res.status(400).json({ error: 'monday_account_id es obligatorio' });
     if (!ensureAccountMatch(req, res, accountId)) return;
@@ -2758,7 +2919,7 @@ app.post('/api/certificates/csr/finalize', requireMondaySession, upload.single('
     try {
         await ensureAfipCredentialsColumns();
 
-        const company = await getCompanyByMondayAccountId(accountId);
+        const company = await getCompanyByMondayAccountId(accountId, workspaceId);
         if (!company) return res.status(404).json({ error: 'Empresa no encontrada' });
 
         const existing = await db.query(
@@ -3343,9 +3504,17 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
             //      readiness (si ya tenemos boardId upfront) ─────────────────────
             // Estas 4 operaciones son independientes entre sí. Antes corrían
             // en serie y sumaban ~3s; ahora manda la más lenta (fetchMondayItem).
+            //
+            // Multi-empresa: para resolver la empresa correcta usamos
+            // getCompanyForBoard cuando ya tenemos el boardId (case normal en
+            // la receta de monday — el payload trae boardId). Si por algún
+            // motivo no lo tenemos al inicio (caso edge), caemos al lookup
+            // legacy que trae la primera empresa de la cuenta.
             const hasBoardIdUpfront = Boolean(boardId);
             const [company, itemData, , readinessEarly] = await Promise.all([
-                getCompanyByMondayAccountId(accountId),
+                hasBoardIdUpfront
+                    ? getCompanyForBoard(accountId, boardId)
+                    : getCompanyByMondayAccountId(accountId),
                 fetchMondayItem({ apiToken: mondayToken, itemId }),
                 ensureInvoiceEmissionsTable(),
                 hasBoardIdUpfront
@@ -3894,6 +4063,7 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                 durationMs: tTotal,
                 pdfBuffer,
                 receptorRazonSocial: receptorInfo?.nombre || draft?.receptor_nombre || null,
+                company,
             }).catch((e) => console.warn('[audit-log] fire-and-forget falló:', e.message));
 
         } catch (err) {
@@ -3951,6 +4121,7 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
                     tipo: typeof resolvedType !== 'undefined' ? resolvedType : null,
                     error: err,
                     durationMs: Date.now() - tIncoming,
+                    company: typeof company !== 'undefined' ? company : null,
                 }).catch((e) => console.warn('[audit-log] fire-and-forget falló:', e.message));
             } else {
                 console.log('[audit-log] skip (factura ya emitida — el audit item ya está actualizado del intento exitoso)');
@@ -4353,7 +4524,7 @@ async function notifySlackSystemError({ accountId, clientItemName, errorMessage,
 // Cobertura ante fallas: si es Error sistema, se dispara Slack EN PARALELO con
 // el create/update del audit item. Así, aunque Monday API esté caída, igual
 // llega la alerta a Slack.
-async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, pdfBuffer, receptorRazonSocial }) {
+async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, pdfBuffer, receptorRazonSocial, company }) {
     const boardId = process.env.MONDAY_AUDIT_BOARD_ID;
     const token   = process.env.DEV_MONDAY_TOKEN;
     if (!boardId || !token) {
@@ -4481,7 +4652,10 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
                 console.log(`[audit-log] item creado: ${auditItemId} estado="${cv[AUDIT_COLS.estado].label}" account=${accountId}`);
 
                 if (auditItemId && clientItemId) {
-                    await recordAuditMapping(accountId, clientItemId, auditItemId);
+                    await recordAuditMapping(accountId, clientItemId, auditItemId, {
+                        companyId: company?.id || null,
+                        workspaceId: company?.workspace_id || null,
+                    });
                 }
             }
         }

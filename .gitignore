@@ -25,3 +25,6 @@ uploads/
 
 # Claude sessions
 .claude/
+
+# Scripts ad-hoc de inspect/migración (no son parte del runtime)
+db-backups/

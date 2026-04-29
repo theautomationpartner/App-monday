@@ -261,6 +261,9 @@ const App = () => {
   // Mapeo
   const [columns, setColumns] = useState([]);
   const [subitemColumns, setSubitemColumns] = useState([]);
+  // workspace_id del board actual — el monday SDK lo expone vía GraphQL `boards { workspace { id } }`.
+  // Se usa para multi-tenant: cada (account, workspace) tiene su propia company/fiscal/cert.
+  const [workspaceId, setWorkspaceId] = useState(null);
   const [mapping, setMapping] = useState({});
   const [missingMappingFields, setMissingMappingFields] = useState([]);
   const [columnsLoadError, setColumnsLoadError] = useState(null);
@@ -392,22 +395,22 @@ const App = () => {
     const strategies = [
       {
         name: "variables-ID!",
-        query: `query ($boardIds: [ID!]) { boards(ids: $boardIds) { columns { id title type settings_str } } }`,
+        query: `query ($boardIds: [ID!]) { boards(ids: $boardIds) { workspace { id name } columns { id title type settings_str } } }`,
         options: { variables: { boardIds: [boardIdStr] } },
       },
       {
         name: "variables-Int!",
-        query: `query ($boardIds: [Int!]) { boards(ids: $boardIds) { columns { id title type settings_str } } }`,
+        query: `query ($boardIds: [Int!]) { boards(ids: $boardIds) { workspace { id name } columns { id title type settings_str } } }`,
         options: { variables: { boardIds: [Number(boardIdStr)] } },
       },
       {
         name: "inline-number",
-        query: `query { boards(ids: [${Number(boardIdStr)}]) { columns { id title type settings_str } } }`,
+        query: `query { boards(ids: [${Number(boardIdStr)}]) { workspace { id name } columns { id title type settings_str } } }`,
         options: undefined,
       },
       {
         name: "inline-string",
-        query: `query { boards(ids: ["${boardIdStr}"]) { columns { id title type settings_str } } }`,
+        query: `query { boards(ids: ["${boardIdStr}"]) { workspace { id name } columns { id title type settings_str } } }`,
         options: undefined,
       },
     ];
@@ -449,7 +452,15 @@ const App = () => {
           return;
         }
         const res = result.res;
-        const boardColumns = res.data?.boards?.[0]?.columns || [];
+        const boardData = res.data?.boards?.[0] || {};
+        const boardColumns = boardData.columns || [];
+        const wsId = boardData.workspace?.id ? String(boardData.workspace.id) : null;
+        if (wsId) {
+          console.log(`[mapeo] workspace detectado: ${boardData.workspace?.name || ""} (id=${wsId})`);
+          setWorkspaceId(wsId);
+        } else {
+          console.warn("[mapeo] el board no devolvió workspace.id — multi-tenant degradará a legacy (NULL)");
+        }
         console.log("[mapeo] Columnas cargadas:", boardColumns.length, boardColumns.map(c => c.title));
 
         if (!boardColumns.length) {
@@ -526,6 +537,7 @@ const App = () => {
             board_id: boardId,
             view_id: viewIdFromHref,
             app_feature_id: appFeatureId,
+            workspace_id: workspaceId || undefined,
           }
         });
         const data = response.data;
@@ -609,7 +621,7 @@ const App = () => {
     };
 
     fetchSavedSetup();
-  }, [context, boardId, viewIdFromHref, appFeatureId, sessionToken]);
+  }, [context, boardId, viewIdFromHref, appFeatureId, sessionToken, workspaceId]);
 
   // Safety net: si el context de monday tarda demasiado o nunca llega, igual
   // mostramos la UI después de 10s para no dejar al usuario en splash infinito.
@@ -723,6 +735,7 @@ const App = () => {
       try {
         await api.post(`/mappings`, {
           monday_account_id: context.account.id.toString(),
+          workspace_id: workspaceId || null,
           board_id: boardId,
           view_id: viewIdFromHref,
           app_feature_id: appFeatureId,
@@ -734,6 +747,7 @@ const App = () => {
         // También guardar el board config con la columna de status + PDF detectadas
         await api.post(`/board-config`, {
           monday_account_id: context.account.id.toString(),
+          workspace_id: workspaceId || null,
           board_id: boardId,
           view_id: viewIdFromHref,
           app_feature_id: appFeatureId,
@@ -880,6 +894,7 @@ const App = () => {
       const accountId = context.account.id.toString();
       const payload = {
         monday_account_id: accountId,
+        workspace_id: workspaceId || null,
         board_id: boardId,
         view_id: viewIdFromHref,
         app_feature_id: appFeatureId,
@@ -901,6 +916,7 @@ const App = () => {
         const fd = new FormData();
         fd.append("logo", logoFile);
         fd.append("monday_account_id", accountId);
+        if (workspaceId) fd.append("workspace_id", workspaceId);
         const logoRes = await api.post(`/companies/logo`, fd, {
           headers: { "Content-Type": "multipart/form-data" }
         });
@@ -908,7 +924,9 @@ const App = () => {
         setLogoFile(null);
         setLogoPreviewUrl(null);
       } else if (removeLogoOnSave) {
-        await api.delete(`/companies/logo/${accountId}`);
+        await api.delete(`/companies/logo/${accountId}`, {
+          params: { workspace_id: workspaceId || undefined }
+        });
         setSavedLogoDataUrl(null);
         setRemoveLogoOnSave(false);
       }
@@ -937,6 +955,7 @@ const App = () => {
     formData.append("crt", crtFile);
     formData.append("key", keyFile);
     formData.append("monday_account_id", context.account.id.toString());
+    if (workspaceId) formData.append("workspace_id", workspaceId);
     formData.append("board_id", boardId || "");
     formData.append("view_id", viewIdFromHref || "");
     formData.append("app_feature_id", appFeatureId || "");
@@ -996,6 +1015,7 @@ const App = () => {
     try {
       const res = await api.post(`/certificates/csr/generate`, {
         monday_account_id: context.account.id.toString(),
+        workspace_id: workspaceId || null,
         alias: aliasFinal
       });
       const csrPem = res.data?.csrPem || "";
@@ -1028,7 +1048,10 @@ const App = () => {
     try {
       setIsLoading(true);
       const res = await api.get(`/certificates/csr/download`, {
-        params: { monday_account_id: context.account.id.toString() },
+        params: {
+          monday_account_id: context.account.id.toString(),
+          workspace_id: workspaceId || undefined,
+        },
         responseType: "text"
       });
       const csrPem = typeof res.data === "string" ? res.data : "";
@@ -1054,6 +1077,7 @@ const App = () => {
     const formData = new FormData();
     formData.append("crt", finalCrtFile);
     formData.append("monday_account_id", context.account.id.toString());
+    if (workspaceId) formData.append("workspace_id", workspaceId);
     try {
       const res = await api.post(`/certificates/csr/finalize`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
@@ -1194,6 +1218,7 @@ const App = () => {
       // 1) Guardar el mapeo visual de campos
       await api.post(`/mappings`, {
         monday_account_id: context.account.id.toString(),
+        workspace_id: workspaceId || null,
         board_id: boardId,
         view_id: viewIdFromHref,
         app_feature_id: appFeatureId,
@@ -1204,6 +1229,7 @@ const App = () => {
       // 2) Guardar el board-config con las columnas de operación (status + PDF)
       await api.post(`/board-config`, {
         monday_account_id: context.account.id.toString(),
+        workspace_id: workspaceId || null,
         board_id: boardId,
         view_id: viewIdFromHref,
         app_feature_id: appFeatureId,
