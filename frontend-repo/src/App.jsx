@@ -432,6 +432,28 @@ const App = () => {
     };
   }, []);
 
+  // Notifica a monday cuando el usuario completa el setup de la app
+  // (datos fiscales + certificados + mapeo). Se dispara una vez por sesión.
+  // Requerido por el review (Product checklist): "implementa el método de
+  // evento de valor creado en tu código".
+  const valueCreatedFiredRef = useRef(false);
+  useEffect(() => {
+    if (
+      hasSavedFiscalData &&
+      hasSavedCertificates &&
+      hasSavedMapping &&
+      !valueCreatedFiredRef.current
+    ) {
+      valueCreatedFiredRef.current = true;
+      try {
+        monday.execute("valueCreatedForUser");
+        console.log("[monday] valueCreatedForUser disparado");
+      } catch (err) {
+        console.warn("[monday] no se pudo disparar valueCreatedForUser:", err);
+      }
+    }
+  }, [hasSavedFiscalData, hasSavedCertificates, hasSavedMapping]);
+
   useEffect(() => {
     const checkApi = async () => {
       try {
