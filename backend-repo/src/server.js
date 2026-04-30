@@ -1595,6 +1595,15 @@ function buildLeadColumnValues(eventType, data) {
     if (sub.days_left != null)     cv[LEADS_COLS.diasRestantes]      = String(sub.days_left);
     if (sub.max_units != null)     cv[LEADS_COLS.seatsPlan]          = String(sub.max_units);
 
+    // Anonimización en uninstall: vaciar PII del item para cumplir con la
+    // política de privacidad de monday. Conservamos account_id, plan, país y
+    // fechas para métricas agregadas. En reinstall se repuebla con data fresca.
+    if (eventType === 'uninstall') {
+        cv[LEADS_COLS.email]   = { email: '', text: '' };
+        cv[LEADS_COLS.name]    = '';
+        cv[LEADS_COLS.idAdmin] = '';
+    }
+
     return cv;
 }
 
