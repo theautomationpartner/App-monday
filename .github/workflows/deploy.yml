@@ -68,6 +68,18 @@ jobs:
           ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
             "cd /opt/apps/App-monday && git pull --ff-only origin main"
 
+      # ─── Sincronizar env vars del droplet desde GitHub Secrets ──────────────
+      # Mantiene el .env del droplet alineado con los secrets de GitHub. Es
+      # idempotente: si la línea ya existe, la sobrescribe; si no, la agrega.
+      - name: Sincronizar MONDAY_CLIENT_ID en el droplet
+        run: |
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
+            "cd /opt/apps/App-monday/backend-repo && \
+             sed -i '/^MONDAY_CLIENT_ID=/d' .env 2>/dev/null; \
+             echo 'MONDAY_CLIENT_ID=${{ secrets.MONDAY_CLIENT_ID }}' >> .env && \
+             pm2 restart tap-monday --update-env && \
+             echo '[deploy] MONDAY_CLIENT_ID sincronizado + pm2 reload'"
+
       # ─── Deploy del frontend (solo si se buildeó) ──────────────────────────
       - name: Subir frontend al droplet (atomic swap)
         if: steps.changes.outputs.frontend_src == 'true' || steps.changes.outputs.frontend_deps == 'true'
