@@ -3317,21 +3317,100 @@ app.post('/api/webhooks/monday-lifecycle', async (req, res) => {
     }
 });
 
+// Borra todos los datos operativos de una cuenta en una transacción atómica.
+// Requerido por la política de monday: eliminar datos del cliente en ≤10 días
+// post-uninstall (https://developer.monday.com/apps/docs/privacy-and-security).
+async function deleteAccountData(accountId) {
+    if (!accountId) return null;
+
+    const client = await db.pool.connect();
+    const stats = {};
+
+    try {
+        await client.query('BEGIN');
+
+        const companies = await client.query(
+            `SELECT id FROM companies WHERE monday_account_id::text = $1`,
+            [accountId]
+        );
+        const companyIds = companies.rows.map(r => r.id);
+
+        if (companyIds.length > 0) {
+            stats.afip_credentials = (await client.query(
+                `DELETE FROM afip_credentials WHERE company_id = ANY($1::uuid[])`,
+                [companyIds]
+            )).rowCount;
+            stats.invoice_emissions = (await client.query(
+                `DELETE FROM invoice_emissions WHERE company_id = ANY($1::uuid[])`,
+                [companyIds]
+            )).rowCount;
+            stats.board_automation_configs = (await client.query(
+                `DELETE FROM board_automation_configs WHERE company_id = ANY($1::uuid[])`,
+                [companyIds]
+            )).rowCount;
+            stats.visual_mappings = (await client.query(
+                `DELETE FROM visual_mappings WHERE company_id = ANY($1::uuid[])`,
+                [companyIds]
+            )).rowCount;
+        }
+
+        stats.audit_log_items = (await client.query(
+            `DELETE FROM audit_log_items WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
+        stats.user_api_tokens = (await client.query(
+            `DELETE FROM user_api_tokens WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
+        stats.trigger_subscriptions = (await client.query(
+            `DELETE FROM trigger_subscriptions WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
+        stats.companies = (await client.query(
+            `DELETE FROM companies WHERE monday_account_id::text = $1`,
+            [accountId]
+        )).rowCount;
+        // installation_leads NO se borra acá: es metadata operativa interna
+        // (solo monday_account_id + lead_item_id, sin PII) y la usa el
+        // dispatcher para actualizar el item del CRM a "Desinstalada".
+
+        await client.query('COMMIT');
+        return stats;
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 // Dispatcher: en `install` crea item; en cualquier otro evento actualiza el
-// existente. Si no existe item (nunca pasó por install), loggea skip.
+// existente. En `uninstall` además borra todos los datos operativos del cliente
+// (compliance monday/GDPR, ≤10 días).
 async function handleLifecycleEvent(type, data) {
+    const accountId = String(data.account_id || '');
+    if (!accountId) {
+        console.warn(`[lifecycle] ${type} sin account_id — skip`);
+        return;
+    }
+
+    // Borrado de datos del cliente al desinstalar — corre INDEPENDIENTEMENTE
+    // del tracking de CRM (que puede estar deshabilitado por env vars).
+    if (type === 'uninstall') {
+        try {
+            const stats = await deleteAccountData(accountId);
+            console.log(`[lifecycle] Datos borrados account=${accountId}:`, stats);
+        } catch (err) {
+            console.error(`[lifecycle] Error borrando datos account=${accountId}:`, err);
+        }
+    }
+
     await ensureInstallationLeadsTable();
 
     const devToken = process.env.DEV_MONDAY_TOKEN;
     const leadsBoardId = process.env.DEV_LEADS_BOARD_ID;
     if (!devToken || !leadsBoardId) {
-        console.warn('[lifecycle] DEV_MONDAY_TOKEN o DEV_LEADS_BOARD_ID no configurados — skip');
-        return;
-    }
-
-    const accountId = String(data.account_id || '');
-    if (!accountId) {
-        console.warn(`[lifecycle] ${type} sin account_id — skip`);
+        console.warn('[lifecycle] DEV_MONDAY_TOKEN o DEV_LEADS_BOARD_ID no configurados — skip CRM tracking');
         return;
     }
 
