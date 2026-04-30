@@ -106,15 +106,23 @@ jobs:
             "pm2 reload tap-monday --update-env && sleep 2 && pm2 list | grep tap-monday"
 
       # ─── Smoke test ────────────────────────────────────────────────────────
+      # Poll en vez de un único curl: PM2 reload puede tardar 5-10s en que el
+      # proceso nuevo escuche, sobre todo si el server.js corre migraciones
+      # de DB en startup. Reintentamos cada 3s hasta 45s totales.
       - name: Verificar que la app responde
         run: |
-          sleep 3
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://134-122-5-114.sslip.io/)
-          if [ "$STATUS" != "200" ]; then
-            echo "❌ App devolvió HTTP $STATUS"
-            exit 1
-          fi
-          echo "✅ App respondiendo OK (HTTP $STATUS)"
+          ENDPOINT="https://arca.theautomationpartner.com/api/health"
+          for i in $(seq 1 15); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$ENDPOINT" || echo "000")
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ App respondiendo OK (HTTP $STATUS) en intento $i"
+              exit 0
+            fi
+            echo "  intento $i: HTTP $STATUS — reintento en 3s"
+            sleep 3
+          done
+          echo "❌ App no respondió 200 en 45s (último: HTTP $STATUS)"
+          exit 1
 
       # ─── Resumen ───────────────────────────────────────────────────────────
       - name: Resumen del deploy
