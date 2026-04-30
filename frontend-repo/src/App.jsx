@@ -25,6 +25,11 @@ const DEBUG_ACCOUNT_IDS = (import.meta.env.VITE_DEBUG_ACCOUNT_IDS || "")
 // reemplazá esta constante por tu URL de YouTube/Loom/etc.
 const CERT_TUTORIAL_URL = "https://www.youtube.com/results?search_query=certificado+digital+ARCA+AFIP+paso+a+paso";
 
+// URL de la página de "Cómo usar la app" — visible desde el header.
+// Reemplazá por la URL definitiva cuando esté lista la página de docs en
+// theautomationpartner.com/arca/como-usar (ver checklist Documentation §6).
+const HOW_TO_USE_URL = "https://theautomationpartner.com/arca/como-usar";
+
 // URL del backend. En monday code el frontend y backend comparten dominio,
 // así que usamos una ruta relativa "/api" que siempre resuelve a la versión actual.
 const configuredApiUrl = (import.meta.env.VITE_BACKEND_URL || "/api").trim();
@@ -1556,6 +1561,33 @@ const App = () => {
             <p className="gd-header-sub">
               Configurá tu app una vez. Después cada cambio de estado en el tablero dispara una factura AFIP automática.
             </p>
+            <a
+              href={HOW_TO_USE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                marginTop: 12,
+                padding: "6px 12px",
+                background: "rgba(255,255,255,0.15)",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,0.35)",
+                borderRadius: 6,
+                fontSize: 13,
+                fontWeight: 500,
+                textDecoration: "none",
+                width: "fit-content",
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              Cómo usar la app
+            </a>
           </div>
           <div className="gd-header-progress">
             <div className="gd-header-progress-circle">
