@@ -1426,6 +1426,24 @@ const App = () => {
     return found?.label || selectedValue;
   };
 
+  // Viewers de monday no pueden acceder a la API, así que no pueden usar la app.
+  // Requisito del review de monday: mostrar un mensaje claro en vez de dejar
+  // que toquen la UI y se rompa al guardar.
+  if (context?.user?.isViewOnly) {
+    return (
+      <div className="gd-frame gd-frame-splash">
+        <div className="gd-splash" style={{ maxWidth: 480 }}>
+          <div className="gd-splash-title">Acceso de solo lectura</div>
+          <div className="gd-splash-sub">
+            Como viewer en monday no tenés permisos para usar ARCA Facturación.
+            Pedile a un administrador del workspace que te asigne permisos de
+            miembro para configurar y emitir facturas.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!isInitialDataReady) {
     return (
       <div className="gd-frame gd-frame-splash">
