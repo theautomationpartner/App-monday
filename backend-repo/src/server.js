@@ -468,6 +468,20 @@ try {
 
 const app = express();
 
+// ─── Security headers ───────────────────────────────────────────────────────
+// Requeridos por el privacy & security review de monday:
+// - HSTS: forzar HTTPS por 1 año (la app ya es HTTPS-only, refuerza a nivel browser)
+// - CSP frame-ancestors: solo permite que la embeben subdominios de monday.com
+// - X-Content-Type-Options: previene MIME-sniffing
+// - Referrer-Policy: no filtra paths/queries a sitios externos
+app.use((req, res, next) => {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('Content-Security-Policy', "frame-ancestors https://*.monday.com https://monday.com");
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+});
+
 // Middlewares
 app.use(cors({
     origin: '*', // Permitir cualquier origen (necesario para repos separados)
