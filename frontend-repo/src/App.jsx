@@ -331,6 +331,11 @@ const App = () => {
   // workspace_id del board actual — el monday SDK lo expone vía GraphQL `boards { workspace { id } }`.
   // Se usa para multi-tenant: cada (account, workspace) tiene su propia company/fiscal/cert.
   const [workspaceId, setWorkspaceId] = useState(null);
+  // Flag para evitar race condition: el fetch de /api/setup espera a que la
+  // detección del workspace termine (sea exitosa o no). Sin esto, /setup se
+  // dispara con workspace_id=null y el backend cae al fallback legacy → flash
+  // de datos de OTRA company antes de que workspaceId se resuelva.
+  const [workspaceCheckDone, setWorkspaceCheckDone] = useState(false);
   const [mapping, setMapping] = useState({});
   const [missingMappingFields, setMissingMappingFields] = useState([]);
   const [columnsLoadError, setColumnsLoadError] = useState(null);
@@ -523,6 +528,9 @@ const App = () => {
       .then(async (result) => {
         if (!result.ok) {
           setColumnsLoadError("Todas las estrategias fallaron:\n" + result.attempts.join("\n"));
+          // Aún en falla: marcamos workspace check como done para no bloquear
+          // /setup indefinidamente — caerá al modo legacy.
+          setWorkspaceCheckDone(true);
           return;
         }
         const res = result.res;
@@ -535,6 +543,8 @@ const App = () => {
         } else {
           console.warn("[mapeo] el board no devolvió workspace.id — multi-tenant degradará a legacy (NULL)");
         }
+        // Marcamos done para destrabar /setup ahora que tenemos la info.
+        setWorkspaceCheckDone(true);
         console.log("[mapeo] Columnas cargadas:", boardColumns.length, boardColumns.map(c => c.title));
 
         if (!boardColumns.length) {
@@ -596,12 +606,32 @@ const App = () => {
       .catch((err) => {
         console.error("[mapeo] Error cargando columnas del tablero:", err);
         setColumnsLoadError(err?.message || String(err));
+        setWorkspaceCheckDone(true);
       });
   }, [context]);
+
+  // Safety: si por algún motivo la detección del workspace nunca termina
+  // (problema de red, monday API caída, etc.), no queremos bloquear /setup
+  // para siempre. A los 5s lo destrabamos y caemos al modo legacy.
+  useEffect(() => {
+    if (workspaceCheckDone) return;
+    if (!context?.account?.id) return;
+    const t = setTimeout(() => {
+      setWorkspaceCheckDone((prev) => {
+        if (!prev) console.warn("[mapeo] safety timeout: destrabando /setup sin workspace_id");
+        return true;
+      });
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [context, workspaceCheckDone]);
 
   useEffect(() => {
     const fetchSavedSetup = async () => {
       if (!context?.account?.id) return;
+      // Esperar a que la detección del workspace termine antes de pegarle a
+      // /setup. Sin esto, el primer fetch va con workspace_id=null y el
+      // backend cae al fallback legacy → flash de datos de OTRA company.
+      if (!workspaceCheckDone) return;
 
       setIsFetchingSavedData(true);
 
@@ -698,7 +728,7 @@ const App = () => {
     };
 
     fetchSavedSetup();
-  }, [context, boardId, viewIdFromHref, appFeatureId, sessionToken, workspaceId]);
+  }, [context, boardId, viewIdFromHref, appFeatureId, sessionToken, workspaceId, workspaceCheckDone]);
 
   // Safety net: si el context de monday tarda demasiado o nunca llega, igual
   // mostramos la UI después de 10s para no dejar al usuario en splash infinito.
