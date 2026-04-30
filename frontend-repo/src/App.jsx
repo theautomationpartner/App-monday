@@ -118,6 +118,16 @@ const STATUS_COL_NAME_REGEX = /estado.*comprobante|comprobante|^estado$/i;
 //   2. Nombre que matchee /estado.*comprobante|comprobante|^estado$/i + tipo status/color/dropdown.
 //   3. Fallback estricto: primera columna tipo `status` o `color` (NO dropdown,
 //      porque hay muchas dropdowns que no son de status).
+// Formatea una fecha YYYY-MM-DD (o ISO con tiempo) como DD/MM/YYYY sin pasar
+// por new Date() — evita el shift por timezone (en Argentina UTC-3, midnight UTC
+// del 2025-01-01 se interpreta como 21:00 del 2024-12-31).
+function formatDateAR(dateStr) {
+  if (!dateStr) return "";
+  const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return "";
+  return `${m[3]}/${m[2]}/${m[1]}`;
+}
+
 function findStatusColumn(cols) {
   if (!Array.isArray(cols) || cols.length === 0) return null;
   const byId = cols.find((c) => c.value === TEMPLATE_STATUS_COLUMN_ID);
@@ -191,9 +201,66 @@ const App = () => {
   // Lo usamos como un flag de "ya fui posteado en esta sesión".
   const autoMappingPostedRef = useRef(false);
 
-  const showToast = (type, message) => {
+  const showToast = (type, message, opts = {}) => {
     setToast({ type, message });
-    setTimeout(() => setToast(null), 3500);
+    // Errores se quedan 7s para que dé tiempo a leer la sugerencia.
+    const ms = opts.durationMs ?? (type === "error" ? 7000 : 3500);
+    setTimeout(() => setToast(null), ms);
+  };
+
+  // Valida los datos fiscales antes de enviarlos al backend. Devuelve
+  // { msg, hint } del primer error encontrado o null si está todo OK.
+  // Cada error explica QUÉ está mal y CÓMO arreglarlo.
+  const validateFiscal = (f) => {
+    const cuitDigits = String(f.cuit || "").replace(/\D/g, "");
+    if (!f.razonSocial?.trim()) {
+      return { msg: "Falta la razón social", hint: "Cargá la razón social registrada en AFIP (la que figura en tu constancia)." };
+    }
+    if (!f.nombreFantasia?.trim()) {
+      return { msg: "Falta el nombre de fantasía", hint: "Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné lo mismo que la razón social." };
+    }
+    if (cuitDigits.length !== 11) {
+      return { msg: "CUIT inválido", hint: "El CUIT debe tener 11 dígitos. Sin guiones ni puntos. Ejemplo: 20327446348." };
+    }
+    if (!f.puntoVenta || parseInt(f.puntoVenta) < 1) {
+      return { msg: "Falta el punto de venta", hint: "Ingresá el número de punto de venta habilitado en AFIP/ARCA. Es un número (ej: 1, 2, 5)." };
+    }
+    if (!f.fechaInicio) {
+      return { msg: "Falta la fecha de inicio de actividades", hint: "La fecha que figura en tu constancia de inscripción de AFIP." };
+    }
+    if (!f.domicilio?.trim()) {
+      return { msg: "Falta el domicilio comercial", hint: "El domicilio fiscal registrado en AFIP. Aparece en el PDF de la factura." };
+    }
+    if (f.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) {
+      return { msg: "Email con formato inválido", hint: "Revisá que tenga el formato correcto, ej: ventas@empresa.com.ar" };
+    }
+    return null;
+  };
+
+  // Traduce errores del backend (con código y mensaje) a algo amigable
+  // con sugerencia de solución concreta.
+  const friendlyApiError = (err) => {
+    const code = err?.response?.data?.code;
+    const backendMsg = err?.response?.data?.error;
+    const status = err?.response?.status;
+    const map = {
+      MISSING_TRADE_NAME:   { msg: "Falta el nombre de fantasía",     hint: "Cargálo arriba del CUIT. Puede ser igual a la razón social si no tenés uno comercial." },
+      MISSING_FISCAL_DATA:  { msg: "Faltan datos fiscales",            hint: "Cargá razón social, CUIT y punto de venta antes de continuar." },
+      INVALID_EMAIL:        { msg: "Email con formato inválido",       hint: "Tiene que tener un @ y un dominio válido (ej: ventas@empresa.com)." },
+      INVALID_WEBSITE:      { msg: "Sitio web con formato inválido",   hint: "Empezá con http:// o https:// (ej: https://empresa.com)." },
+      INVALID_LOGO_MIME:    { msg: "Formato de logo no soportado",     hint: "Usá PNG, JPG, SVG o WebP. Otros formatos no se aceptan." },
+      LOGO_TOO_LARGE:       { msg: "El logo es muy grande",            hint: "Reducilo a menos de 500 KB (podés comprimirlo en tinypng.com)." },
+      KEY_CRT_MISMATCH:     { msg: "El .crt y el .key no son pareja",  hint: "Bajaste el cert correspondiente a otra solicitud. Volvé a generar el CSR y descargá el .crt nuevo de ARCA." },
+      CRT_EXPIRED:          { msg: "El certificado venció",            hint: "Generá uno nuevo en ARCA con el mismo alias y volvé a subirlo." },
+      NO_PENDING_CSR:       { msg: "No hay una solicitud pendiente",   hint: "Generá primero el CSR desde el paso 1 antes de subir el .crt." },
+    };
+    if (code && map[code]) return map[code];
+    if (status === 401)    return { msg: "Tu sesión expiró",        hint: "Cerrá la pestaña de monday y volvé a abrir la app." };
+    if (status === 403)    return { msg: "No tenés permisos",       hint: "Pedíle al admin de monday que te de permisos sobre este tablero." };
+    if (status === 404)    return { msg: "No se encontró la empresa", hint: "Cargá primero los Datos Fiscales antes de hacer esta acción." };
+    if (status === 413)    return { msg: "El archivo es muy grande", hint: "Subí uno más liviano." };
+    if (backendMsg)        return { msg: backendMsg,                  hint: "Si persiste, contactá soporte." };
+    return { msg: err?.message || "Error desconocido", hint: "Intentá de nuevo en unos segundos. Si sigue fallando, contactá soporte." };
   };
 
   const [isLoading, setIsLoading] = useState(false);
@@ -553,8 +620,11 @@ const App = () => {
           const hydratedFiscal = {
             puntoVenta: data.fiscalData.default_point_of_sale?.toString() || "",
             cuit: data.fiscalData.cuit || "",
+            // Tomar solo la parte YYYY-MM-DD del string que devuelve el backend
+            // (puede venir como "2025-01-01" o "2025-01-01T00:00:00.000Z").
+            // No pasar por new Date() porque shift de timezone arruina la fecha.
             fechaInicio: data.fiscalData.fecha_inicio
-              ? new Date(data.fiscalData.fecha_inicio).toISOString().split("T")[0]
+              ? String(data.fiscalData.fecha_inicio).slice(0, 10)
               : "",
             razonSocial: data.fiscalData.business_name || "",
             nombreFantasia: data.fiscalData.nombre_fantasia || data.fiscalData.business_name || "",
@@ -896,6 +966,15 @@ const App = () => {
     console.log("🚀 Iniciando guardado de datos fiscales...");
     console.log("📦 Contexto actual:", context);
     if (!context || !context.account) return;
+
+    // Validación previa: chequea campos obligatorios y formatos antes de
+    // golpear al backend. Da feedback inmediato con explicación + solución.
+    const v = validateFiscal(fiscal);
+    if (v) {
+      showToast("error", `${v.msg} — ${v.hint}`);
+      return;
+    }
+
     setIsLoading(true);
     try {
       const accountId = context.account.id.toString();
@@ -944,8 +1023,8 @@ const App = () => {
       setIsFiscalEditMode(false);
       setApiStatus("ok");
     } catch (err) {
-      const errorMsg = err.response?.data?.error || err.message;
-      showToast("error", "Error al guardar: " + errorMsg);
+      const { msg, hint } = friendlyApiError(err);
+      showToast("error", `${msg} — ${hint}`);
     } finally {
       setIsLoading(false);
     }
@@ -991,10 +1070,10 @@ const App = () => {
       );
       setApiStatus("ok");
     } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error al subir certificados";
-      showToast("error", errorMsg);
+      const { msg, hint } = friendlyApiError(err);
+      showToast("error", `${msg} — ${hint}`);
       setApiStatus("error");
-      setApiError(errorMsg);
+      setApiError(msg);
     } finally {
       setIsLoading(false);
     }
@@ -1036,8 +1115,8 @@ const App = () => {
       showToast("success", "Solicitud generada y descargada");
       setGuidedStep(3);
     } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error generando la solicitud";
-      showToast("error", errorMsg);
+      const { msg, hint } = friendlyApiError(err);
+      showToast("error", `${msg} — ${hint}`);
     } finally {
       setIsLoading(false);
     }
@@ -1067,8 +1146,8 @@ const App = () => {
       const aliasSafe = (certificateAlias || "monday-facturacion").replace(/[^a-zA-Z0-9_-]/g, "_");
       downloadBlob(csrPem, `${aliasSafe}.csr`);
     } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error descargando el CSR";
-      showToast("error", errorMsg);
+      const { msg, hint } = friendlyApiError(err);
+      showToast("error", `${msg} — ${hint}`);
     } finally {
       setIsLoading(false);
     }
@@ -1102,8 +1181,8 @@ const App = () => {
       setGuidedStep(1);
       setLastGeneratedCsrPem("");
     } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error activando el certificado";
-      showToast("error", errorMsg);
+      const { msg, hint } = friendlyApiError(err);
+      showToast("error", `${msg} — ${hint}`);
     } finally {
       setIsLoading(false);
     }
@@ -1254,8 +1333,8 @@ const App = () => {
       setIsMappingEditMode(false);
       showToast("success", "Mapeo visual guardado correctamente");
     } catch (err) {
-      const errorMsg = err?.response?.data?.error || err?.message || "Error al guardar mapeo visual";
-      showToast("error", errorMsg);
+      const { msg, hint } = friendlyApiError(err);
+      showToast("error", `${msg} — ${hint}`);
     } finally {
       setIsLoading(false);
     }
@@ -1503,7 +1582,7 @@ const App = () => {
                       <span className="data-label">Inicio de actividades</span>
                       <span className={`data-value mono ${!fiscal.fechaInicio ? "empty" : ""}`}>
                         {fiscal.fechaInicio
-                          ? new Date(fiscal.fechaInicio).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
+                          ? formatDateAR(fiscal.fechaInicio)
                           : "—"}
                       </span>
                     </div>
