@@ -4440,7 +4440,7 @@ async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnI
 const AUDIT_COLS = {
     fecha_emision:    'date_mm2ttq29',
     estado:           'color_mm2t2mrr',
-    instalacion:      'board_relation_mm2kxvcj',
+    instalacion:      'board_relation_mm2x7ajc',
     tipo:             'dropdown_mm2ty1vv',
     nro_comprobante:  'numeric_mm2ts2xt',
     punto_venta:      'numeric_mm2wva2f',  // PTO Venta del comprobante
