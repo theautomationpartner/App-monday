@@ -524,7 +524,31 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
             `${baseSelect} WHERE monday_account_id::text = $1 AND workspace_id = $2 LIMIT 1`,
             [String(mondayAccountId), String(workspaceId)]
         );
-        return r.rows[0] || null;
+        if (r.rows[0]) return r.rows[0];
+
+        // Fallback legacy single-company: si no hay match estricto pero existe
+        // EXACTAMENTE 1 company legacy (workspace_id NULL) y NINGUNA company
+        // ya scoped a otro workspace, asumimos que es el mismo cliente
+        // abriendo desde un workspace nuevo y devolvemos esa legacy. Esto
+        // permite que clientes pre-multi-tenant sigan funcionando sin perder
+        // cert ni mapeo. El claim al workspace ocurre en POST /api/companies.
+        const fallback = await db.query(
+            `WITH counts AS (
+                SELECT
+                    COUNT(*) FILTER (WHERE workspace_id IS NULL) AS legacy_count,
+                    COUNT(*) FILTER (WHERE workspace_id IS NOT NULL) AS scoped_count
+                  FROM companies
+                 WHERE monday_account_id::text = $1
+             )
+             ${baseSelect}
+              WHERE monday_account_id::text = $1
+                AND workspace_id IS NULL
+                AND (SELECT legacy_count FROM counts) = 1
+                AND (SELECT scoped_count FROM counts) = 0
+              LIMIT 1`,
+            [String(mondayAccountId)]
+        );
+        return fallback.rows[0] || null;
     }
     // Sin workspace en el request: priorizamos la legacy (workspace_id NULL),
     // luego la más vieja por created_at. Esto preserva el comportamiento que
