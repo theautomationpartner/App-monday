@@ -1916,6 +1916,19 @@ app.get('/api/health', async (req, res) => {
     }
 });
 
+// Domain ownership verification para el privacy & security review de monday.
+// monday hace GET a este path y verifica que el clientID coincide con el de la
+// app registrada — así prueba que somos dueños del dominio.
+// Docs: https://developer.monday.com/apps/docs/privacy-and-security
+app.get('/monday-app-association.json', (req, res) => {
+    const clientID = process.env.MONDAY_CLIENT_ID;
+    if (!clientID) {
+        console.warn('[monday-app-association] MONDAY_CLIENT_ID no configurado');
+        return res.status(500).json({ error: 'MONDAY_CLIENT_ID env var not configured' });
+    }
+    res.json({ apps: [{ clientID }] });
+});
+
 
 app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
