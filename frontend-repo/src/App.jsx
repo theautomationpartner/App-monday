@@ -391,29 +391,36 @@ const App = () => {
     setColumnsLoadError(null);
 
     // Probamos múltiples estrategias en orden hasta que una funcione.
+    // Primero con workspace { id name } (multi-tenant). Si todas fallan
+    // por scope/permission (la app puede no tener workspaces:read), repetimos
+    // sin workspace para que la app siga funcionando en modo legacy.
     const boardIdStr = String(resolvedBoardId);
-    const strategies = [
-      {
-        name: "variables-ID!",
-        query: `query ($boardIds: [ID!]) { boards(ids: $boardIds) { workspace { id name } columns { id title type settings_str } } }`,
-        options: { variables: { boardIds: [boardIdStr] } },
-      },
-      {
-        name: "variables-Int!",
-        query: `query ($boardIds: [Int!]) { boards(ids: $boardIds) { workspace { id name } columns { id title type settings_str } } }`,
-        options: { variables: { boardIds: [Number(boardIdStr)] } },
-      },
-      {
-        name: "inline-number",
-        query: `query { boards(ids: [${Number(boardIdStr)}]) { workspace { id name } columns { id title type settings_str } } }`,
-        options: undefined,
-      },
-      {
-        name: "inline-string",
-        query: `query { boards(ids: ["${boardIdStr}"]) { workspace { id name } columns { id title type settings_str } } }`,
-        options: undefined,
-      },
-    ];
+    const buildStrategies = (withWorkspace) => {
+      const wsField = withWorkspace ? "workspace { id name } " : "";
+      return [
+        {
+          name: `variables-ID!${withWorkspace ? "+ws" : ""}`,
+          query: `query ($boardIds: [ID!]) { boards(ids: $boardIds) { ${wsField}columns { id title type settings_str } } }`,
+          options: { variables: { boardIds: [boardIdStr] } },
+        },
+        {
+          name: `variables-Int!${withWorkspace ? "+ws" : ""}`,
+          query: `query ($boardIds: [Int!]) { boards(ids: $boardIds) { ${wsField}columns { id title type settings_str } } }`,
+          options: { variables: { boardIds: [Number(boardIdStr)] } },
+        },
+        {
+          name: `inline-number${withWorkspace ? "+ws" : ""}`,
+          query: `query { boards(ids: [${Number(boardIdStr)}]) { ${wsField}columns { id title type settings_str } } }`,
+          options: undefined,
+        },
+        {
+          name: `inline-string${withWorkspace ? "+ws" : ""}`,
+          query: `query { boards(ids: ["${boardIdStr}"]) { ${wsField}columns { id title type settings_str } } }`,
+          options: undefined,
+        },
+      ];
+    };
+    const strategies = [...buildStrategies(true), ...buildStrategies(false)];
 
     const tryStrategies = async () => {
       const attempts = [];
