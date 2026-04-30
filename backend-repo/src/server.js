@@ -4443,6 +4443,8 @@ const AUDIT_COLS = {
     instalacion:      'board_relation_mm2kxvcj',
     tipo:             'dropdown_mm2ty1vv',
     nro_comprobante:  'numeric_mm2ts2xt',
+    punto_venta:      'numeric_mm2wva2f',  // PTO Venta del comprobante
+    cuit_emisor:      'numeric_mm2wjc48',  // CUIT del emisor (la company)
     cae:              'numeric_mm2tbp76',
     vto_cae:          'date_mm2tnn5a',
     cuit_receptor:    'numeric_mm2tdk2h',
@@ -4450,7 +4452,6 @@ const AUDIT_COLS = {
     importe_total:    'numeric_mm2t5pm8',
     importe_neto:     'numeric_mm2t5f9x',
     importe_iva:      'numeric_mm2tqb1d',
-    pdf_adjunto:      'file_mm2tyjfw',
     mensaje_error:    'long_text_mm2tx4ka',
     concepto_afip:    'dropdown_mm2tge43',
     condicion_venta:  'dropdown_mm2t75pn',
@@ -4548,7 +4549,7 @@ async function notifySlackSystemError({ accountId, clientItemName, errorMessage,
 // Cobertura ante fallas: si es Error sistema, se dispara Slack EN PARALELO con
 // el create/update del audit item. Así, aunque Monday API esté caída, igual
 // llega la alerta a Slack.
-async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, pdfBuffer, receptorRazonSocial, company }) {
+async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company }) {
     const boardId = process.env.MONDAY_AUDIT_BOARD_ID;
     const token   = process.env.DEV_MONDAY_TOKEN;
     if (!boardId || !token) {
@@ -4576,6 +4577,11 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         if (leadItemId)                              cv[AUDIT_COLS.instalacion]     = { item_ids: [Number(leadItemId)] };
         if (tipo)                                    cv[AUDIT_COLS.tipo]            = { labels: [String(tipo)] };
         if (afipResult?.numero_comprobante != null)  cv[AUDIT_COLS.nro_comprobante] = String(afipResult.numero_comprobante);
+        if (draft?.punto_venta != null)              cv[AUDIT_COLS.punto_venta]     = String(draft.punto_venta);
+        if (company?.cuit) {
+            const emisorDigits = String(company.cuit).replace(/\D/g, '');
+            if (emisorDigits) cv[AUDIT_COLS.cuit_emisor] = emisorDigits;
+        }
         if (afipResult?.cae)                         cv[AUDIT_COLS.cae]             = String(afipResult.cae);
         if (vtoCae)                                  cv[AUDIT_COLS.vto_cae]         = { date: vtoCae };
         const cuitDigits = String(draft?.receptor_cuit_o_dni || '').replace(/\D/g, '');
@@ -4684,16 +4690,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
             }
         }
 
-        // Subir PDF al board de auditoría (solo en éxito y si tenemos buffer).
-        if (success && pdfBuffer && auditItemId) {
-            uploadPdfToMondayFileColumn({
-                apiToken: token,
-                itemId: auditItemId,
-                fileColumnId: AUDIT_COLS.pdf_adjunto,
-                pdfBuffer,
-                filename: `Factura_${tipo || ''}_${afipResult?.numero_comprobante || ''}.pdf`,
-            }).catch((e) => console.warn('[audit-log] PDF upload falló:', e.message));
-        }
+        // PDF: ya no se adjunta al board de auditoría (se sube solo al board del cliente).
     } catch (err) {
         console.warn('[audit-log] error registrando:', err.message);
         // Si el audit log falló pero era Error sistema y todavía no disparamos Slack
