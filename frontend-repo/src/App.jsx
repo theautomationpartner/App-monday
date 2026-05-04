@@ -5,6 +5,7 @@ import axios from "axios";
 import "monday-ui-react-core/tokens";
 import "monday-ui-react-core/dist/main.css";
 import "./App.css";
+import WelcomePage from "./WelcomePage";
 
 const monday = mondaySdk();
 
@@ -275,6 +276,10 @@ const App = () => {
   // monday nunca llega. Mientras esté false, mostramos un splash en vez de la UI con
   // datos vacíos — evita el flash de "no tenés nada configurado" al abrir la vista.
   const [isInitialDataReady, setIsInitialDataReady] = useState(false);
+  // Welcome page override: se setea a true cuando el user toca "Empezar" o
+  // "Ya configuré, no mostrar" — permite saltar el welcome dentro de la sesion
+  // sin tener que volver a chequear localStorage.
+  const [showWelcomeOverride, setShowWelcomeOverride] = useState(false);
   const [apiStatus, setApiStatus] = useState("checking");
   const [apiError, setApiError] = useState("");
   const [sessionToken, setSessionToken] = useState("");
@@ -1468,6 +1473,28 @@ const App = () => {
           </div>
         </div>
       </div>
+    );
+  }
+
+  // Welcome page: aparece la primera vez que el user abre la app, antes del
+  // flow de configuración. Requerido por monday para Board Views.
+  // Visible si NO hay setup completo Y el user no la dismissó previamente.
+  const welcomeDismissedKey = `arca-welcome-dismissed-${context?.account?.id || "default"}`;
+  const welcomeDismissed = (() => {
+    try { return localStorage.getItem(welcomeDismissedKey) === "1"; }
+    catch { return false; }
+  })();
+  const setupComplete = hasSavedFiscalData && hasSavedCertificates && hasSavedMapping;
+  const shouldShowWelcome = isInitialDataReady && !setupComplete && !welcomeDismissed && !showWelcomeOverride;
+  if (shouldShowWelcome) {
+    return (
+      <WelcomePage
+        onStart={() => setShowWelcomeOverride(true)}
+        onDismiss={() => {
+          try { localStorage.setItem(welcomeDismissedKey, "1"); } catch {}
+          setShowWelcomeOverride(true);
+        }}
+      />
     );
   }
 
