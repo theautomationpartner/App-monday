@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Cómo usar Factura ARCA</title>
+    <style>
+        :root {
+            --navy: #071F32;
+            --navy-600: #0D2D48;
+            --navy-500: #163F5E;
+            --yellow: #F0CA29;
+            --bg: #F3F6FA;
+            --text: #1a202c;
+            --text-light: #4a5568;
+            --border: #e2e8f0;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: var(--text);
+            background: var(--bg);
+            line-height: 1.55;
+            -webkit-font-smoothing: antialiased;
+        }
+        a { color: var(--navy-500); }
+        a:hover { color: var(--navy); }
+
+        .page {
+            max-width: 920px;
+            margin: 0 auto;
+            padding: 24px 20px 80px;
+        }
+        .hero {
+            background: linear-gradient(135deg, var(--navy) 0%, var(--navy-500) 100%);
+            color: #fff;
+            padding: 48px 40px;
+            border-radius: 12px;
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .hero-kicker {
+            display: inline-block;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: var(--yellow);
+            margin-bottom: 12px;
+        }
+        .hero h1 {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 12px;
+            line-height: 1.2;
+        }
+        .hero p {
+            font-size: 16px;
+            color: rgba(255, 255, 255, .85);
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .section {
+            background: #fff;
+            border-radius: 12px;
+            padding: 32px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, .04), 0 4px 12px rgba(7, 31, 50, .04);
+        }
+        .section h2 {
+            font-size: 22px;
+            font-weight: 700;
+            color: var(--navy);
+            margin-bottom: 16px;
+            letter-spacing: -0.01em;
+        }
+        .section p {
+            color: var(--text-light);
+            margin-bottom: 14px;
+        }
+        .section p:last-child { margin-bottom: 0; }
+
+        .prereqs {
+            list-style: none;
+            padding: 0;
+            margin: 12px 0 0;
+        }
+        .prereqs li {
+            position: relative;
+            padding: 10px 0 10px 32px;
+            color: var(--text-light);
+            border-bottom: 1px solid var(--border);
+        }
+        .prereqs li:last-child { border-bottom: none; }
+        .prereqs li::before {
+            content: "";
+            position: absolute;
+            left: 0;
+            top: 14px;
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            background: var(--yellow);
+        }
+        .prereqs li::after {
+            content: "✓";
+            position: absolute;
+            left: 4px;
+            top: 12px;
+            color: var(--navy);
+            font-weight: 700;
+            font-size: 13px;
+        }
+
+        .step {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            padding: 28px 0;
+            border-top: 1px solid var(--border);
+        }
+        .step:first-child { border-top: none; padding-top: 8px; }
+        .step-header {
+            display: flex;
+            align-items: flex-start;
+            gap: 16px;
+        }
+        .step-num {
+            flex-shrink: 0;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--yellow);
+            color: var(--navy);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 18px;
+        }
+        .step-title {
+            font-size: 19px;
+            font-weight: 600;
+            color: var(--navy);
+            margin-bottom: 6px;
+        }
+        .step-desc {
+            font-size: 15px;
+            line-height: 1.6;
+            color: var(--text-light);
+        }
+        .step-img-wrap {
+            margin-left: 56px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+            background: var(--bg);
+        }
+        .step-img {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        .footer-note {
+            text-align: center;
+            color: var(--text-light);
+            font-size: 14px;
+            margin-top: 32px;
+            padding: 24px;
+        }
+        .footer-note a { font-weight: 600; }
+
+        @media (max-width: 640px) {
+            .hero { padding: 32px 24px; }
+            .hero h1 { font-size: 24px; }
+            .section { padding: 24px 20px; }
+            .step-img-wrap { margin-left: 0; }
+        }
+    </style>
+</head>
+<body>
+    <main class="page">
+        <header class="hero">
+            <div class="hero-kicker">monday app · Factura ARCA</div>
+            <h1>Cómo usar Factura ARCA</h1>
+            <p>Facturación electrónica AFIP automática desde tus tableros de monday.com. Configurá una vez y olvidate de la carga manual en la web de AFIP.</p>
+        </header>
+
+        <section class="section">
+            <h2>Antes de empezar</h2>
+            <p>Para usar Factura ARCA necesitás tener:</p>
+            <ul class="prereqs">
+                <li>Un CUIT activo de AFIP/ARCA con habilitación para facturación electrónica</li>
+                <li>Certificado digital (.crt y .key) o el alta del servicio en ARCA para generarlo desde la app</li>
+                <li>Un punto de venta habilitado para emitir comprobantes electrónicos</li>
+                <li>Una cuenta de monday.com con permisos para instalar apps en tu workspace</li>
+            </ul>
+        </section>
+
+        <section class="section">
+            <h2>Configurá la app en 3 pasos</h2>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-num">1</div>
+                    <div>
+                        <div class="step-title">Cargá tus datos fiscales</div>
+                        <div class="step-desc">Después de instalar la app en tu workspace, abrila desde el botón "Factura ARCA" del board y cargá los datos de tu empresa: CUIT, razón social, domicilio fiscal y punto de venta. Es la información que va a aparecer en cada comprobante que emitas.</div>
+                    </div>
+                </div>
+                <div class="step-img-wrap">
+                    <img class="step-img" src="/onboarding/step-1-datos.png" alt="Pantalla de Datos Fiscales con CUIT, razón social y punto de venta cargados" />
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-num">2</div>
+                    <div>
+                        <div class="step-title">Conectá tus certificados de ARCA</div>
+                        <div class="step-desc">Subí tus certificados digitales (.crt y .key) o usá el flujo guiado de la app para generarlos sin salir de monday. Los guardamos cifrados con AES-256 y solo se usan para firmar requests al servicio de facturación electrónica de AFIP.</div>
+                    </div>
+                </div>
+                <div class="step-img-wrap">
+                    <img class="step-img" src="/onboarding/step-2-certificados.png" alt="Pantalla de Certificados ARCA con certificado activo y fecha de vencimiento" />
+                </div>
+            </div>
+
+            <div class="step">
+                <div class="step-header">
+                    <div class="step-num">3</div>
+                    <div>
+                        <div class="step-title">Mapeá las columnas del board</div>
+                        <div class="step-desc">Asociá cada columna del board (Cliente, Monto, Fecha, Concepto) con los campos de la factura. La app detecta automáticamente los tipos comunes y propone un mapeo por defecto. Vos confirmás o ajustás.</div>
+                    </div>
+                </div>
+                <div class="step-img-wrap">
+                    <img class="step-img" src="/onboarding/step-3-mapeo.png" alt="Pantalla de Mapeo Visual mostrando columnas asignadas a campos de la factura modelo" />
+                </div>
+            </div>
+        </section>
+
+        <section class="section">
+            <h2>Cómo emitir una factura</h2>
+            <p>Una vez configurada la app, emitir una factura es así:</p>
+            <ol style="padding-left: 20px; color: var(--text-light); line-height: 1.9;">
+                <li>Crear un item nuevo en el tablero con los datos del cliente (CUIT, monto, etc.)</li>
+                <li>Llenar los subitems con cada concepto a facturar (descripción, cantidad, precio, IVA)</li>
+                <li>Cambiar la columna "Estado Comprobante" a <strong>"Crear Comprobante"</strong></li>
+                <li>La automatización dispara la emisión: validación contra padrón AFIP → obtención de CAE → generación de PDF → adjuntado al item</li>
+            </ol>
+            <p style="margin-top: 16px;">Tiempo total por factura: <strong>5-10 segundos</strong>.</p>
+        </section>
+
+        <section class="section">
+            <h2>Soporte y privacidad</h2>
+            <p>¿Tenés dudas o algo no funciona como esperás?</p>
+            <p>Escribinos a <a href="mailto:arca@theautomationpartner.com">arca@theautomationpartner.com</a>. Respondemos en menos de 2 días hábiles.</p>
+            <p style="margin-top: 16px;">Tus certificados y datos fiscales se almacenan cifrados con AES-256, las comunicaciones con ARCA usan los webservices oficiales de AFIP (WSAA + WSFEv1), y cuando desinstales la app todos tus datos operativos se eliminan automáticamente en menos de 10 días.</p>
+        </section>
+
+        <div class="footer-note">
+            Factura ARCA — desarrollado por <a href="https://theautomationpartner.com" target="_blank" rel="noopener">The Automation Partner</a>
+        </div>
+    </main>
+</body>
+</html>

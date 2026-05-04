@@ -8,6 +8,7 @@ const forge = require('node-forge');
 const crypto = require('crypto');
 const PDFDocument = require('pdfkit');
 const FormDataNode = require('form-data');
+const path = require('path');
 const db = require('./db');
 require('dotenv').config();
 
@@ -1975,6 +1976,15 @@ app.get('/monday-app-association.json', (req, res) => {
         return res.status(500).json({ error: 'MONDAY_CLIENT_ID env var not configured' });
     }
     res.json({ apps: [{ clientID }] });
+});
+
+// Pagina publica de "Como usar Factura ARCA" — embebible en iframe de monday.
+// Requerida por el Documentation & Support checklist del review:
+// "Create an instructions page... HTTPS protocol, embeddable iframe link
+//  for *.monday.com domain". Va al campo "How to use Link" del form de
+// submission.
+app.get('/onboarding', (req, res) => {
+    res.sendFile(path.join(__dirname, 'onboarding.html'));
 });
 
 
@@ -4864,7 +4874,6 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
 }
 
 // Servir frontend React desde public/
-const path = require('path');
 const publicPath = path.join(__dirname, '../public');
 // Assets hasheados (Vite) pueden cachearse forever. index.html NO debe cachearse
 // para que el browser siempre lea el bundle más reciente referenciado adentro.
