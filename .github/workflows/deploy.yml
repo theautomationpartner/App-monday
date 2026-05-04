@@ -25,6 +25,7 @@ jobs:
           filters: |
             frontend_src:
               - 'frontend-repo/src/**'
+              - 'frontend-repo/public/**'
               - 'frontend-repo/index.html'
               - 'frontend-repo/vite.config.js'
             frontend_deps:
