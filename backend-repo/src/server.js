@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
+const rateLimit = require('express-rate-limit');
 const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 const forge = require('node-forge');
@@ -501,9 +502,48 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Multer en memoria (en Monday Code no persistimos archivos en disco)
+// ─── Rate limiting ──────────────────────────────────────────────────────────
+// Protege contra abuso/DOS. 3 niveles por criticidad:
+//   - apiLimiter: general para API (300 req / 15 min / IP)
+//   - emitLimiter: estricto para emision de facturas (20 / min / IP)
+//   - webhookLimiter: para endpoints de webhook (60 / min / IP)
+const apiLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 300,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiadas requests, esperá unos minutos.' },
+});
+const emitLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Demasiadas emisiones en poco tiempo.' },
+});
+const webhookLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+// Aplicar limiter general a /api/*
+app.use('/api/', apiLimiter);
+
+// Multer en memoria (en Monday Code no persistimos archivos en disco).
+// Limites estrictos: max 5MB por archivo, max 2 archivos por request, max 20
+// fields. Previene memory exhaustion via uploads gigantes.
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+    storage,
+    limits: {
+        fileSize: 5 * 1024 * 1024,  // 5 MB
+        files: 2,
+        fields: 20,
+        fieldSize: 1 * 1024 * 1024, // 1 MB por campo de texto
+    },
+});
 
 // Lookup de la empresa que corresponde a un boardId de monday. Útil cuando se
 // emite una factura: el JOIN con board_automation_configs garantiza que se
@@ -885,11 +925,9 @@ function requireMondaySession(req, res, next) {
 
     try {
         const decoded = verifyWithAnySecret(token);
-        console.log('[session] verify OK, keys:', Object.keys(decoded).join(','),
-            'exp:', decoded.exp, 'now:', Math.floor(Date.now() / 1000));
         const identity = extractMondayIdentity(decoded);
         if (!identity.accountId) {
-            console.log('[session] FAIL: no accountId in token, payload:', JSON.stringify(decoded).slice(0, 400));
+            console.log('[session] FAIL: no accountId in token');
             return res.status(401).json({ error: 'sessionToken inválido: account_id ausente' });
         }
 
@@ -3218,26 +3256,36 @@ app.post('/api/triggers/status-change/unsubscribe', requireAutomationBlock, asyn
 // ─── Webhook receiver: Monday nos notifica cambios de columna en el board ────
 // Cuando una columna cambia, verificamos si matchea alguna suscripción de trigger
 // y si es así, llamamos al webhookUrl de Monday para disparar la receta.
-app.post('/api/webhooks/monday-trigger', async (req, res) => {
+app.post('/api/webhooks/monday-trigger', webhookLimiter, async (req, res) => {
     const body = req.body || {};
 
-    // Monday envía un challenge la primera vez para verificar la URL
+    // Monday envía un challenge la primera vez para verificar la URL.
+    // Este es el unico path publico — el resto requiere JWT firmado.
     if (body.challenge) {
-        console.log('[webhook-trigger] Challenge recibido, respondiendo...');
         return res.status(200).json({ challenge: body.challenge });
+    }
+
+    // Verificar JWT firmado por monday. Sin firma valida, no procesamos
+    // el evento: previene que un atacante forje eventos de cambio de status
+    // y dispare emisiones de factura para boards de victimas.
+    const token = parseAuthorizationToken(req);
+    if (!token) {
+        console.warn('[webhook-trigger] sin Authorization header — rechazado');
+        return res.status(401).json({ error: 'unauthorized' });
+    }
+    try {
+        verifyWithAnySecret(token);
+    } catch (err) {
+        console.warn('[webhook-trigger] firma invalida — rechazado');
+        return res.status(401).json({ error: 'unauthorized' });
     }
 
     const event = body.event || {};
     const boardId  = String(event.boardId || body.boardId || '');
     const itemId   = String(event.pulseId || event.itemId || '');
     const columnId = String(event.columnId || '');
-    const newValue = event.value?.label?.text || event.value?.label?.index
-        || (typeof event.value === 'string' ? event.value : '');
 
-    console.log('[webhook-trigger] Evento recibido: board=', boardId, 'item=', itemId, 'col=', columnId);
-    console.log('[webhook-trigger] Nuevo valor:', JSON.stringify(event.value));
-
-    // Responder inmediatamente a Monday
+    // Responder inmediatamente a Monday (despues de validar firma)
     res.status(200).json({ ok: true });
 
     if (!boardId || !itemId) {
@@ -3334,7 +3382,7 @@ app.post('/api/webhooks/monday-trigger', async (req, res) => {
 //            account_tier, user_email, user_name, subscription, ... } }
 //
 // Docs: https://developer.monday.com/apps/docs/app-lifecycle-events
-app.post('/api/webhooks/monday-lifecycle', async (req, res) => {
+app.post('/api/webhooks/monday-lifecycle', webhookLimiter, async (req, res) => {
     // Responder inmediatamente (Monday reintenta si tardamos)
     res.status(200).json({ ok: true });
 
@@ -3519,46 +3567,27 @@ async function handleLifecycleEvent(type, data) {
 // El JWT viene firmado con CLIENT_SECRET y contiene shortLivedToken, accountId, userId
 function requireAutomationBlock(req, res, next) {
     req._tIncoming = Date.now();
-    console.log('[automation] ───── incoming request ─────');
-    console.log('[automation] method:', req.method, 'path:', req.path);
-    console.log('[automation] headers keys:', Object.keys(req.headers).join(', '));
-    console.log('[automation] authorization header present:', Boolean(req.headers.authorization || req.headers.Authorization));
-    console.log('[automation] content-type:', req.headers['content-type']);
-    console.log('[automation] body keys:', req.body ? Object.keys(req.body).join(', ') : 'no body');
-    try { console.log('[automation] body preview:', JSON.stringify(req.body).slice(0, 500)); } catch {}
 
     const secrets = getSessionSecrets();
-    console.log('[automation] secrets configured:', secrets.length);
     if (secrets.length === 0) {
-        console.log('[automation] FAIL: no secrets configured');
+        console.error('[automation] FAIL: no secrets configured');
         return res.status(500).json({ error: 'Falta configurar MONDAY_CLIENT_SECRET / MONDAY_SIGNING_SECRET en el backend' });
     }
     const token = parseAuthorizationToken(req);
-    console.log('[automation] token parsed:', Boolean(token), 'length:', token ? token.length : 0, 'preview:', token ? token.slice(0, 30) + '...' : 'none');
     if (!token) {
-        console.log('[automation] FAIL: no token in authorization header');
         return res.status(401).json({ error: 'Falta Authorization Bearer token de monday' });
     }
     try {
         const decoded = verifyWithAnySecret(token);
-        console.log('[automation] JWT verify OK, decoded keys:', Object.keys(decoded).join(', '));
         req.mondayAutomation = {
             accountId: String(decoded.accountId || decoded.dat?.account_id || ''),
             userId: String(decoded.userId || decoded.dat?.user_id || ''),
             shortLivedToken: decoded.shortLivedToken || decoded.shortLivedToken || decoded.dat?.shortLivedToken || null,
         };
-        console.log('[automation] ready, accountId:', req.mondayAutomation.accountId, 'hasShortLivedToken:', Boolean(req.mondayAutomation.shortLivedToken));
         next();
     } catch (err) {
-        console.log('[automation] FAIL: JWT verify threw:', err.message);
-        // Intentar decodificar sin verificar para ver el contenido
-        try {
-            const decodedUnsafe = jwt.decode(token);
-            console.log('[automation] token payload (unsafe decode):', JSON.stringify(decodedUnsafe).slice(0, 400));
-        } catch (decodeErr) {
-            console.log('[automation] no se pudo decodificar ni sin verificar:', decodeErr.message);
-        }
-        return res.status(401).json({ error: 'Token de automatización inválido', details: err.message });
+        console.warn('[automation] JWT verify failed:', err.message);
+        return res.status(401).json({ error: 'Token de automatización inválido' });
     }
 }
 
@@ -3567,7 +3596,7 @@ function requireAutomationBlock(req, res, next) {
 // Flujo:
 //   1. Responde 200 inmediatamente (monday requiere respuesta rápida)
 //   2. En background: consulta padrón → valida tipo → emite → genera PDF → sube a monday
-app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
+app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, res) => {
     const { payload, runtimeMetadata } = req.body || {};
     const inbound      = payload?.inboundFieldValues || {};
     const inputFields  = payload?.inputFields || {};
@@ -3575,13 +3604,10 @@ app.post('/api/invoices/emit', requireAutomationBlock, async (req, res) => {
     const callbackUrl  = payload?.callbackUrl || null;
     const actionUuid   = runtimeMetadata?.actionUuid || null;
 
-    // Log completo del payload para debug
-    console.log('[emit] ── payload completo ──');
-    console.log('[emit] inboundFieldValues:', JSON.stringify(inbound));
-    console.log('[emit] inputFields:', JSON.stringify(inputFields));
-    console.log('[emit] triggerOutputs:', JSON.stringify(triggerOutput));
-    console.log('[emit] payload keys:', Object.keys(payload || {}).join(', '));
-    try { console.log('[emit] payload full (2000 chars):', JSON.stringify(payload).slice(0, 2000)); } catch {}
+    // Log minimo: estructura del payload sin contenido (PII fiscal del cliente).
+    console.log('[emit] received: inbound keys=', Object.keys(inbound).join(','),
+        'inputFields keys=', Object.keys(inputFields).join(','),
+        'triggerOutputs keys=', Object.keys(triggerOutput).join(','));
 
     const accountId   = String(req.mondayAutomation.accountId || inbound.accountId || '');
 
