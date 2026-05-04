@@ -636,7 +636,14 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
  */
 async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
     const missing = [];
-    const company = await getCompanyByMondayAccountId(mondayAccountId);
+    // Multi-empresa: si tenemos boardId, resolver la company configurada para
+    // ESE board via board_automation_configs. Sin boardId, fallback legacy
+    // (compatibilidad con flujos viejos).
+    // Sin esto, en cuentas con varias companies se elige la legacy y se busca
+    // el mapping con la company equivocada → falso "Falta configurar mapeo".
+    const company = boardId
+        ? await getCompanyForBoard(mondayAccountId, boardId)
+        : await getCompanyByMondayAccountId(mondayAccountId);
 
     if (!company) {
         missing.push('datos_fiscales');
