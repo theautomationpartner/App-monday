@@ -1512,6 +1512,165 @@ async function ensureInstallationLeadsTable() {
     `);
 }
 
+// ─── Subscription tracking & enforcement ────────────────────────────────────
+// Requerido por monday: "Your app must verify active subscriptions at runtime.
+// monday.com does not automatically restrict access when a subscription expires
+// or changes."
+//
+// Limites preliminares por plan (ajustar cuando direccion confirme finales):
+const PLAN_LIMITS = {
+    free:       10,    // Free
+    small:      50,    // Small
+    medium:     200,   // Medium (Recomendado)
+    large:      500,   // Large
+    enterprise: null,  // Enterprise = ilimitado
+};
+const DEFAULT_PLAN_ID = 'free';
+
+let _accountSubscriptionsTableEnsured = false;
+async function ensureAccountSubscriptionsTable() {
+    if (_accountSubscriptionsTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS account_subscriptions (
+            monday_account_id TEXT PRIMARY KEY,
+            plan_id           TEXT,
+            monthly_limit     INTEGER,
+            is_trial          BOOLEAN DEFAULT FALSE,
+            days_left         INTEGER,
+            billing_period    TEXT,
+            status            TEXT DEFAULT 'active',
+            raw_subscription  JSONB,
+            created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    _accountSubscriptionsTableEnsured = true;
+}
+
+// Resuelve el limite mensual a partir del plan_id de monday.
+// Si el plan no esta en nuestra config, devuelve el default (free).
+function resolveMonthlyLimit(planId) {
+    if (!planId) return PLAN_LIMITS[DEFAULT_PLAN_ID];
+    const normalized = String(planId).toLowerCase();
+    if (normalized in PLAN_LIMITS) return PLAN_LIMITS[normalized];
+    // Plan ID custom de monday — fallback al default conservador.
+    return PLAN_LIMITS[DEFAULT_PLAN_ID];
+}
+
+// Upsert del estado de subscription de una cuenta. Llamado desde el handler de
+// lifecycle events cuando llega un evento de subscription.
+async function upsertAccountSubscription(accountId, subscriptionData, statusOverride) {
+    if (!accountId) return;
+    await ensureAccountSubscriptionsTable();
+    const sub = subscriptionData || {};
+    const planId        = sub.plan_id || DEFAULT_PLAN_ID;
+    const monthlyLimit  = resolveMonthlyLimit(planId);
+    const isTrial       = Boolean(sub.is_trial);
+    const daysLeft      = sub.days_left != null ? Number(sub.days_left) : null;
+    const billingPeriod = sub.billing_period || null;
+    const status        = statusOverride || (isTrial ? 'trial' : 'active');
+    await db.query(`
+        INSERT INTO account_subscriptions
+            (monday_account_id, plan_id, monthly_limit, is_trial, days_left, billing_period, status, raw_subscription, updated_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, CURRENT_TIMESTAMP)
+        ON CONFLICT (monday_account_id) DO UPDATE SET
+            plan_id          = EXCLUDED.plan_id,
+            monthly_limit    = EXCLUDED.monthly_limit,
+            is_trial         = EXCLUDED.is_trial,
+            days_left        = EXCLUDED.days_left,
+            billing_period   = EXCLUDED.billing_period,
+            status           = EXCLUDED.status,
+            raw_subscription = EXCLUDED.raw_subscription,
+            updated_at       = CURRENT_TIMESTAMP
+    `, [String(accountId), planId, monthlyLimit, isTrial, daysLeft, billingPeriod, status, JSON.stringify(sub)]);
+}
+
+// Marca subscription como cancelada (sin borrar la fila, para historial).
+async function markAccountSubscriptionStatus(accountId, status) {
+    if (!accountId) return;
+    await ensureAccountSubscriptionsTable();
+    await db.query(`
+        UPDATE account_subscriptions
+           SET status = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE monday_account_id = $1
+    `, [String(accountId), status]);
+}
+
+// Devuelve el plan actual de una cuenta. Si no hay registro, devuelve Free
+// (default conservador).
+async function getAccountPlan(accountId) {
+    await ensureAccountSubscriptionsTable();
+    const r = await db.query(
+        'SELECT * FROM account_subscriptions WHERE monday_account_id = $1',
+        [String(accountId)]
+    );
+    if (r.rows.length === 0) {
+        return {
+            plan_id: DEFAULT_PLAN_ID,
+            monthly_limit: PLAN_LIMITS[DEFAULT_PLAN_ID],
+            is_trial: false,
+            status: 'active',
+            days_left: null,
+            billing_period: null,
+        };
+    }
+    return r.rows[0];
+}
+
+// Cuenta facturas EMITIDAS EXITOSAMENTE en el mes calendario actual (UTC).
+// Solo cuentan las que tienen status='success' — los intentos fallidos no
+// consumen quota.
+async function getMonthlyEmissionCount(accountId) {
+    if (!accountId) return 0;
+    const r = await db.query(`
+        SELECT COUNT(*)::int AS n
+          FROM invoice_emissions ie
+          JOIN companies c ON c.id = ie.company_id
+         WHERE c.monday_account_id::text = $1
+           AND ie.status = 'success'
+           AND ie.created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+    `, [String(accountId)]);
+    return r.rows[0]?.n || 0;
+}
+
+// Chequea si una cuenta puede emitir una factura mas en este momento.
+// Devuelve { allowed, plan, used, limit, remaining, reason }.
+async function checkEmissionAllowed(accountId) {
+    const plan = await getAccountPlan(accountId);
+    // Cancelada o trial expirado → sin permiso
+    if (plan.status === 'cancelled' || plan.status === 'trial_expired') {
+        return {
+            allowed: false,
+            plan,
+            used: 0,
+            limit: plan.monthly_limit,
+            remaining: 0,
+            reason: 'subscription_inactive',
+        };
+    }
+    // Plan ilimitado (Enterprise) → siempre permitido
+    if (plan.monthly_limit == null) {
+        return {
+            allowed: true,
+            plan,
+            used: 0,
+            limit: null,
+            remaining: null,
+            reason: null,
+        };
+    }
+    const used = await getMonthlyEmissionCount(accountId);
+    const remaining = Math.max(0, plan.monthly_limit - used);
+    return {
+        allowed: used < plan.monthly_limit,
+        plan,
+        used,
+        limit: plan.monthly_limit,
+        remaining,
+        reason: used >= plan.monthly_limit ? 'monthly_limit_reached' : null,
+    };
+}
+
 // Tabla del audit log: mapea (cuenta de cliente, item del cliente) -> item del
 // board de auditoría de TAP. Garantiza un único item de auditoría por cada item
 // del cliente: los reintentos actualizan el item existente en lugar de crear
@@ -1985,6 +2144,28 @@ app.get('/monday-app-association.json', (req, res) => {
 // submission.
 app.get('/onboarding', (req, res) => {
     res.sendFile(path.join(__dirname, 'onboarding.html'));
+});
+
+// Devuelve el plan y consumo actual del mes para la cuenta autenticada.
+// Lo usa el frontend para mostrar el banner de uso (X / limite facturas).
+app.get('/api/usage', requireMondaySession, async (req, res) => {
+    try {
+        const accountId = String(req.mondayIdentity.accountId || '');
+        if (!accountId) return res.status(400).json({ error: 'account_id ausente' });
+        const check = await checkEmissionAllowed(accountId);
+        res.json({
+            plan_id: check.plan.plan_id,
+            is_trial: check.plan.is_trial,
+            status: check.plan.status,
+            limit: check.limit,
+            used: check.used,
+            remaining: check.remaining,
+            allowed: check.allowed,
+        });
+    } catch (err) {
+        console.error('[usage] error:', err.message);
+        res.status(500).json({ error: 'error consultando usage' });
+    }
 });
 
 
@@ -3470,6 +3651,10 @@ async function deleteAccountData(accountId) {
             `DELETE FROM trigger_subscriptions WHERE monday_account_id = $1`,
             [accountId]
         )).rowCount;
+        stats.account_subscriptions = (await client.query(
+            `DELETE FROM account_subscriptions WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
         stats.companies = (await client.query(
             `DELETE FROM companies WHERE monday_account_id::text = $1`,
             [accountId]
@@ -3507,6 +3692,32 @@ async function handleLifecycleEvent(type, data) {
         } catch (err) {
             console.error(`[lifecycle] Error borrando datos account=${accountId}:`, err);
         }
+    }
+
+    // Tracking del estado de subscription para enforcement de plan limits.
+    // monday no bloquea automaticamente cuando un cliente cancela: nuestra
+    // app tiene que verificar runtime. Estos eventos actualizan la tabla
+    // account_subscriptions que despues se consulta en /api/invoices/emit.
+    try {
+        if (type === 'app_subscription_created' ||
+            type === 'app_subscription_renewed' ||
+            type === 'app_subscription_changed' ||
+            type === 'app_subscription_cancellation_revoked_by_user') {
+            await upsertAccountSubscription(accountId, data.subscription, 'active');
+        } else if (type === 'app_trial_subscription_started') {
+            await upsertAccountSubscription(accountId, data.subscription, 'trial');
+        } else if (type === 'app_trial_subscription_ended') {
+            await markAccountSubscriptionStatus(accountId, 'trial_expired');
+        } else if (type === 'app_subscription_cancelled' ||
+                   type === 'app_subscription_renewal_failed') {
+            await markAccountSubscriptionStatus(accountId, 'cancelled');
+        } else if (type === 'app_subscription_cancelled_by_user') {
+            // Cancelacion programada: el cliente sigue activo hasta el fin del
+            // periodo facturado. NO marcamos cancelled aun.
+            await markAccountSubscriptionStatus(accountId, 'pending_cancellation');
+        }
+    } catch (err) {
+        console.error(`[lifecycle] Error actualizando subscription account=${accountId}:`, err);
     }
 
     await ensureInstallationLeadsTable();
@@ -3620,6 +3831,33 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
         'triggerOutputs keys=', Object.keys(triggerOutput).join(','));
 
     const accountId   = String(req.mondayAutomation.accountId || inbound.accountId || '');
+
+    // Plan limit enforcement — requerido por monday para apps monetizadas.
+    // Si la cuenta esta cancelada o alcanzo su limite mensual, abortamos antes
+    // de tocar AFIP (que cuesta cupo) o el board.
+    if (accountId) {
+        try {
+            const limitCheck = await checkEmissionAllowed(accountId);
+            if (!limitCheck.allowed) {
+                console.warn(`[emit] bloqueado account=${accountId} reason=${limitCheck.reason} used=${limitCheck.used}/${limitCheck.limit}`);
+                return res.status(402).json({
+                    error: 'plan_limit_reached',
+                    reason: limitCheck.reason,
+                    plan: limitCheck.plan.plan_id,
+                    used: limitCheck.used,
+                    limit: limitCheck.limit,
+                    message: limitCheck.reason === 'subscription_inactive'
+                        ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo facturas.'
+                        : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} facturas). Upgradeá tu plan para seguir emitiendo.`,
+                });
+            }
+        } catch (err) {
+            // Si falla el check (ej: tabla no existe todavia), permitimos emitir
+            // para no bloquear al cliente por un bug nuestro. Logueamos para
+            // revisar.
+            console.error('[emit] error chequeando plan limit, permitiendo emit:', err.message);
+        }
+    }
 
     // Buscar itemId en múltiples ubicaciones del payload de Monday
     const itemId = String(
