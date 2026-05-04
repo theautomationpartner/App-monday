@@ -28,3 +28,7 @@ uploads/
 
 # Scripts ad-hoc de inspect/migración (no son parte del runtime)
 db-backups/
+
+# Docs temporales del proceso de submission a monday Marketplace
+# (se elimina la carpeta entera cuando la app este aprobada)
+To Delete after do/
