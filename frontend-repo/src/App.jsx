@@ -1489,8 +1489,7 @@ const App = () => {
   if (shouldShowWelcome) {
     return (
       <WelcomePage
-        onStart={() => setShowWelcomeOverride(true)}
-        onDismiss={() => {
+        onStart={() => {
           try { localStorage.setItem(welcomeDismissedKey, "1"); } catch {}
           setShowWelcomeOverride(true);
         }}

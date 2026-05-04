@@ -5,10 +5,11 @@
 //    first-time-use instructions with screenshots..."
 //
 // Logica:
-//   - Aparece solo si NO hay setup completo
-//   - El user puede skipearla con "Ya configuré, no mostrar" (localStorage)
-//   - Una vez skipeada, no vuelve a aparecer en esa cuenta
+//   - Aparece solo si NO hay setup completo Y no fue dismissada
+//   - Click "Empezar configuración" → guarda dismissed en localStorage
+//   - Click en una imagen → la abre en lightbox a pantalla completa
 
+import { useState } from "react";
 import step1 from "./assets/onboarding/step-1-datos.png";
 import step2 from "./assets/onboarding/step-2-certificados.png";
 import step3 from "./assets/onboarding/step-3-mapeo.png";
@@ -17,24 +18,26 @@ const STEPS = [
   {
     n: 1,
     title: "Datos Fiscales",
-    desc: "Cargá la información de tu empresa: CUIT, razón social, condición fiscal y punto de venta. Es lo que ARCA va a ver en cada comprobante que emitas.",
+    desc: "Cargá los datos de tu empresa (CUIT, razón social, punto de venta). Es la información que va a aparecer en cada factura que emitas.",
     img: step1,
   },
   {
     n: 2,
     title: "Certificados ARCA",
-    desc: "Subí tus certificados digitales (.crt y .key). Los guardamos cifrados con AES-256 y solo se usan para firmar requests a ARCA en tu nombre.",
+    desc: "Conectá tu certificado digital de ARCA. Si ya tenés uno, lo subís. Si no, te guiamos paso a paso para generarlo sin salir de la app.",
     img: step2,
   },
   {
     n: 3,
     title: "Mapeo Visual",
-    desc: "Asociá las columnas de tu board (cliente, monto, fecha) con los campos de la factura. Después, cada cambio de estado dispara la emisión automática.",
+    desc: "Decile a la app qué columna del board representa el cliente, qué columna el monto, etc. Es como armar la plantilla de la factura una sola vez.",
     img: step3,
   },
 ];
 
-export default function WelcomePage({ onStart, onDismiss }) {
+export default function WelcomePage({ onStart }) {
+  const [zoomImg, setZoomImg] = useState(null);
+
   return (
     <div className="welcome-frame">
       <div className="welcome-card">
@@ -57,13 +60,27 @@ export default function WelcomePage({ onStart, onDismiss }) {
                   <div className="welcome-step-desc">{s.desc}</div>
                 </div>
               </div>
-              <div className="welcome-step-img-wrap">
+              <button
+                type="button"
+                className="welcome-step-img-wrap"
+                onClick={() => setZoomImg(s)}
+                aria-label={`Ampliar captura del paso ${s.n}: ${s.title}`}
+              >
                 <img
                   src={s.img}
                   alt={`Paso ${s.n}: ${s.title}`}
                   className="welcome-step-img"
                 />
-              </div>
+                <span className="welcome-step-img-hint">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="11" cy="11" r="8" />
+                    <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                    <line x1="11" y1="8" x2="11" y2="14" />
+                    <line x1="8" y1="11" x2="14" y2="11" />
+                  </svg>
+                  Click para ampliar
+                </span>
+              </button>
             </div>
           ))}
         </div>
@@ -81,16 +98,33 @@ export default function WelcomePage({ onStart, onDismiss }) {
             >
               Empezar configuración
             </button>
-            <button
-              type="button"
-              className="welcome-btn-secondary"
-              onClick={onDismiss}
-            >
-              Ya configuré, no mostrar
-            </button>
           </div>
         </div>
       </div>
+
+      {zoomImg && (
+        <div
+          className="welcome-lightbox"
+          onClick={() => setZoomImg(null)}
+          role="dialog"
+          aria-label="Imagen ampliada"
+        >
+          <button
+            type="button"
+            className="welcome-lightbox-close"
+            onClick={() => setZoomImg(null)}
+            aria-label="Cerrar"
+          >
+            ✕
+          </button>
+          <div className="welcome-lightbox-content" onClick={(e) => e.stopPropagation()}>
+            <div className="welcome-lightbox-caption">
+              Paso {zoomImg.n}: {zoomImg.title}
+            </div>
+            <img src={zoomImg.img} alt={zoomImg.title} className="welcome-lightbox-img" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

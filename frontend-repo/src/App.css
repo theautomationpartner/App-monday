@@ -4524,16 +4524,108 @@ body {
     max-width: 700px;
 }
 .welcome-step-img-wrap {
+    position: relative;
     margin-left: 52px;
     border-radius: 8px;
     overflow: hidden;
     border: 1px solid #e2e8f0;
     background: var(--accent-bg);
+    padding: 0;
+    cursor: zoom-in;
+    transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    width: calc(100% - 52px);
+}
+.welcome-step-img-wrap:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(7, 31, 50, .12);
+    border-color: var(--brand-navy-500);
 }
 .welcome-step-img {
     display: block;
     width: 100%;
     height: auto;
+}
+.welcome-step-img-hint {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: rgba(7, 31, 50, .85);
+    color: #fff;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    pointer-events: none;
+}
+.welcome-step-img-wrap:hover .welcome-step-img-hint {
+    background: var(--brand-navy);
+}
+
+/* Lightbox */
+.welcome-lightbox {
+    position: fixed;
+    inset: 0;
+    background: rgba(7, 31, 50, .92);
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    cursor: zoom-out;
+    animation: welcomeLightboxIn 180ms ease;
+}
+@keyframes welcomeLightboxIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+}
+.welcome-lightbox-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .15);
+    color: #fff;
+    border: none;
+    font-size: 22px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 150ms ease;
+}
+.welcome-lightbox-close:hover {
+    background: rgba(255, 255, 255, .25);
+}
+.welcome-lightbox-content {
+    max-width: min(1400px, 95vw);
+    max-height: 90vh;
+    cursor: default;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.welcome-lightbox-caption {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 500;
+    text-align: center;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, .5);
+}
+.welcome-lightbox-img {
+    display: block;
+    width: 100%;
+    max-height: calc(90vh - 40px);
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
 }
 .welcome-footer {
     padding: 24px 48px 36px;
