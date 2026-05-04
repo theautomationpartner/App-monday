@@ -4446,6 +4446,56 @@ body {
 }
 .gd-frame .gd-upload-change:hover { text-decoration: underline; }
 
+/* ─── Usage banner (plan + consumo del mes) ─────────────────────────────── */
+.usage-banner {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 500;
+    margin-bottom: 16px;
+    border: 1px solid transparent;
+    flex-wrap: wrap;
+}
+.usage-banner-ok {
+    background: #ECFDF5;
+    color: #065F46;
+    border-color: #A7F3D0;
+}
+.usage-banner-warning {
+    background: #FEF3C7;
+    color: #92400E;
+    border-color: #FCD34D;
+}
+.usage-banner-danger {
+    background: #FEF2F2;
+    color: #991B1B;
+    border-color: #FCA5A5;
+}
+.usage-plan-pill {
+    background: rgba(7, 31, 50, .85);
+    color: #fff;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+}
+.usage-banner-ok .usage-plan-pill { background: #047857; }
+.usage-banner-warning .usage-plan-pill { background: #B45309; }
+.usage-banner-danger .usage-plan-pill { background: #B91C1C; }
+.usage-counter {
+    flex: 1;
+    min-width: 0;
+}
+.usage-cta {
+    font-weight: 600;
+    text-decoration: underline;
+    cursor: default;
+}
+
 /* ─── Welcome page ──────────────────────────────────────────────────────── */
 .welcome-frame {
     min-height: 100vh;

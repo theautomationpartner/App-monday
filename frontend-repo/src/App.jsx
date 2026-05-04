@@ -282,6 +282,11 @@ const App = () => {
   const [showWelcomeOverride, setShowWelcomeOverride] = useState(false);
   const [apiStatus, setApiStatus] = useState("checking");
   const [apiError, setApiError] = useState("");
+  // Usage del plan: { plan_id, is_trial, status, limit, used, remaining, allowed }
+  // Se carga al montar la app y al cambiar de cuenta. El banner del header lo
+  // muestra. Si la fetch falla (ej: backend viejo sin /api/usage), queda null
+  // y el banner no se renderiza — degrada gracefully.
+  const [usage, setUsage] = useState(null);
   const [sessionToken, setSessionToken] = useState("");
   // Datos Fiscales usa modo vista/edición (Stripe-style). El resto de las
   // secciones todavía usa el patrón viejo de lock — se migran en próximas etapas.
@@ -441,6 +446,24 @@ const App = () => {
       unsubscribeLocation?.();
     };
   }, []);
+
+  // Cargar consumo / plan del mes actual. Se hace al cargar la app y cuando
+  // cambia el sessionToken (ej: re-auth). El banner del header lo usa para
+  // mostrar "X/limite facturas este mes" + estados visuales.
+  useEffect(() => {
+    if (!sessionToken) return;
+    let cancelled = false;
+    api.get('/usage')
+      .then((res) => {
+        if (!cancelled) setUsage(res.data);
+      })
+      .catch((err) => {
+        // Si /usage no existe (backend viejo) o falla, dejamos usage = null y
+        // el banner no se renderiza. No es bloqueante.
+        console.warn('[usage] no se pudo obtener:', err?.response?.status || err.message);
+      });
+    return () => { cancelled = true; };
+  }, [sessionToken]);
 
   // Notifica a monday cuando el usuario completa el setup de la app
   // (datos fiscales + certificados + mapeo). Se dispara una vez por sesión.
@@ -1572,6 +1595,33 @@ const App = () => {
 
       {/* ─── MAIN: header guiado + contenido ─── */}
       <main className="gd-main">
+        {usage && (() => {
+          const { plan_id, limit, used, remaining, status, is_trial, allowed } = usage;
+          let level = 'ok';
+          if (limit != null) {
+            const pct = limit > 0 ? (used / limit) * 100 : 0;
+            if (pct >= 96) level = 'danger';
+            else if (pct >= 80) level = 'warning';
+          }
+          if (!allowed) level = 'danger';
+          if (status === 'cancelled' || status === 'trial_expired') level = 'danger';
+          const planLabels = { free: 'Free', small: 'Small', medium: 'Medium', large: 'Large', enterprise: 'Enterprise' };
+          const planLabel = planLabels[plan_id] || plan_id;
+          let counterText;
+          if (status === 'cancelled') counterText = 'Suscripción cancelada';
+          else if (status === 'trial_expired') counterText = 'Trial finalizado';
+          else if (limit == null) counterText = 'Facturas ilimitadas este mes';
+          else counterText = `${used}/${limit} facturas este mes`;
+          let cta = null;
+          if (!allowed) cta = (status === 'cancelled' || status === 'trial_expired') ? 'Renová tu plan' : 'Upgradeá tu plan';
+          return (
+            <div className={`usage-banner usage-banner-${level}`}>
+              <span className="usage-plan-pill">Plan {planLabel}{is_trial ? ' · Trial' : ''}</span>
+              <span className="usage-counter">{counterText}</span>
+              {cta && <span className="usage-cta">{cta}</span>}
+            </div>
+          );
+        })()}
         <div className="gd-header">
           <div className="gd-header-main">
             <div className="gd-header-kicker">Monday App · Facturación Electrónica AFIP</div>
