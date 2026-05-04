@@ -16,6 +16,16 @@ const afipPadron        = require('./modules/afipPadron');
 const invoiceRules      = require('./modules/invoiceRules');
 const { generateFacturaPdfBuffer } = require('./modules/invoicePdf');
 
+// ─── Validación de inputs (Zod) ─────────────────────────────────────────────
+const {
+    validateBody,
+    CompanySchema,
+    BoardConfigSchema,
+    MappingSchema,
+    UserApiTokenSchema,
+    CSRGenerateSchema,
+} = require('./validation');
+
 // ─── Cache del padrón del EMISOR en DB ───────────────────────────────────────
 // La condición fiscal propia no cambia seguido y AFIP tarda 24-48h en reflejar
 // cambios en el padrón A5 de todas formas. Guardamos el resultado en la tabla
@@ -2225,7 +2235,7 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
     }
 });
 
-app.post('/api/board-config', requireMondaySession, async (req, res) => {
+app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSchema), async (req, res) => {
     const {
         monday_account_id,
         workspace_id,
@@ -2438,8 +2448,8 @@ const saveUserApiTokenHandler = async (req, res) => {
     }
 };
 
-app.post('/api/user-api-token', requireMondaySession, saveUserApiTokenHandler);
-app.post('/api/user-api-token-v2', requireMondaySession, saveUserApiTokenHandler);
+app.post('/api/user-api-token', requireMondaySession, validateBody(UserApiTokenSchema), saveUserApiTokenHandler);
+app.post('/api/user-api-token-v2', requireMondaySession, validateBody(UserApiTokenSchema), saveUserApiTokenHandler);
 
 app.get('/api/mappings/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
@@ -2488,7 +2498,7 @@ app.get('/api/mappings/:mondayAccountId', requireMondaySession, async (req, res)
     }
 });
 
-app.post('/api/mappings', requireMondaySession, async (req, res) => {
+app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), async (req, res) => {
     const {
         monday_account_id,
         workspace_id,
@@ -2578,7 +2588,7 @@ app.post('/api/mappings', requireMondaySession, async (req, res) => {
     }
 });
 
-app.post('/api/companies', requireMondaySession, async (req, res) => {
+app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), async (req, res) => {
     const {
         monday_account_id, workspace_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
         phone, email, website
@@ -2863,7 +2873,7 @@ app.post('/api/certificates', requireMondaySession, upload.fields([
 // en afip_credentials y devuelve el CSR al frontend para que el usuario lo
 // descargue y lo suba al portal de ARCA. Status queda en 'pending_crt' hasta
 // que el usuario vuelva con el .crt.
-app.post('/api/certificates/csr/generate', requireMondaySession, async (req, res) => {
+app.post('/api/certificates/csr/generate', requireMondaySession, validateBody(CSRGenerateSchema), async (req, res) => {
     const { monday_account_id, workspace_id, alias } = req.body || {};
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
     const workspaceId = workspace_id ? String(workspace_id) : null;
