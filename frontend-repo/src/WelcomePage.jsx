@@ -8,6 +8,7 @@
 //   - Aparece solo si NO hay setup completo Y no fue dismissada
 //   - Click "Empezar configuración" → guarda dismissed en localStorage
 //   - Click en una imagen → la abre en lightbox a pantalla completa
+//   - Las screenshots se cargan via vite import (bundleadas con el JS).
 
 import { useState } from "react";
 import step1 from "./assets/onboarding/step-1-datos.png";
