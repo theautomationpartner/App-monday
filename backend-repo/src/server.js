@@ -758,16 +758,34 @@ function formatMissingConfigError(missing) {
  * que las columnas estén mapeadas en la config) y ANTES de la primera llamada
  * externa. Si algo falla, tira un error con el detalle exacto de qué corregir.
  */
+// Devuelve el nombre que el CLIENTE le puso a una columna en SU board
+// (column.title), con fallback al label canonico si no se pudo recuperar.
+// Formato: si tenemos title, "Mi Columna" (Fecha de emision)
+//          si no tenemos:    "Fecha de emision"
+function getColumnLabel(columnValues, columnId, canonicalLabel) {
+    if (!columnId) return `"${canonicalLabel}"`;
+    const found = (columnValues || []).find(c => c.id === columnId);
+    const realTitle = found?.column?.title;
+    if (realTitle && realTitle !== canonicalLabel) {
+        return `"${realTitle}" (${canonicalLabel})`;
+    }
+    return `"${canonicalLabel}"`;
+}
+
 function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
     const errors = [];
     const VALID_ALICUOTAS = new Set(['0', '2.5', '5', '10.5', '21', '27']);
     const VALID_PROD_SERV = new Set(['servicio', 'producto']);
 
     const fechaEmision = getColumnTextById(mainColumns, mapping.fecha_emision);
-    if (!fechaEmision) errors.push('Item: falta "Fecha de Emisión"');
+    if (!fechaEmision) {
+        errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_emision, 'Fecha de Emisión')}`);
+    }
 
     const condicionVenta = getColumnTextById(mainColumns, mapping.condicion_venta);
-    if (!condicionVenta) errors.push('Item: falta "Condición de Venta"');
+    if (!condicionVenta) {
+        errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.condicion_venta, 'Condición de Venta')}`);
+    }
 
     if (!subitems || subitems.length === 0) {
         errors.push('El item no tiene subitems (al menos uno es obligatorio)');
@@ -779,50 +797,54 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         const name = sub.name || `#${sub.id}`;
 
         if (!sub.name || !String(sub.name).trim()) {
-            errors.push(`Subitem "${name}": falta nombre (concepto)`);
+            errors.push(`Subitem "${name}": falta el nombre (concepto)`);
         }
 
         const unidadMedida = getColumnTextById(sub.column_values, mapping.unidad_medida);
-        if (!unidadMedida) errors.push(`Subitem "${name}": falta "Unidad de Medida"`);
+        if (!unidadMedida) {
+            errors.push(`Subitem "${name}": falta la columna ${getColumnLabel(sub.column_values, mapping.unidad_medida, 'Unidad de Medida')}`);
+        }
 
         const cantNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.cantidad));
         if (cantNum === null || cantNum <= 0) {
-            errors.push(`Subitem "${name}": "Cantidad" inválida (debe ser número > 0)`);
+            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, mapping.cantidad, 'Cantidad')} inválida (debe ser número > 0)`);
         }
 
         const precioNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.precio_unitario));
         if (precioNum === null || precioNum <= 0) {
-            errors.push(`Subitem "${name}": "Precio Unitario" inválido (debe ser número > 0)`);
+            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, mapping.precio_unitario, 'Precio Unitario')} inválida (debe ser número > 0)`);
         }
 
         const prodServRaw = getColumnTextById(sub.column_values, mapping.prod_serv) || '';
         const prodServ = prodServRaw.toLowerCase().trim();
+        const prodServLabel = getColumnLabel(sub.column_values, mapping.prod_serv, 'Prod/Serv');
         if (!prodServ) {
-            errors.push(`Subitem "${name}": falta "Prod/Serv"`);
+            errors.push(`Subitem "${name}": falta la columna ${prodServLabel} — debe decir "producto" o "servicio"`);
         } else if (!VALID_PROD_SERV.has(prodServ)) {
-            errors.push(`Subitem "${name}": "Prod/Serv" debe ser "servicio" o "producto" (actual: "${prodServRaw}")`);
+            errors.push(`Subitem "${name}": columna ${prodServLabel} debe decir "producto" o "servicio" (actual: "${prodServRaw}")`);
         } else if (prodServ === 'servicio') {
             hayServicio = true;
         }
 
         const alicuotaRaw = getColumnTextById(sub.column_values, mapping.alicuota_iva) || '';
         const alicuotaNorm = String(alicuotaRaw).replace(/[^0-9.,]/g, '').replace(',', '.').trim();
+        const alicuotaLabel = getColumnLabel(sub.column_values, mapping.alicuota_iva, 'Alícuota IVA %');
         if (!alicuotaNorm) {
-            errors.push(`Subitem "${name}": falta "Alícuota IVA %"`);
+            errors.push(`Subitem "${name}": falta la columna ${alicuotaLabel}`);
         } else if (!VALID_ALICUOTAS.has(alicuotaNorm)) {
-            errors.push(`Subitem "${name}": "Alícuota IVA" inválida. Permitidas: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`);
+            errors.push(`Subitem "${name}": columna ${alicuotaLabel} inválida. Valores permitidos: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`);
         }
     });
 
     if (hayServicio) {
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_desde)) {
-            errors.push('Item: falta "Fecha Servicio Desde" (hay subitems de servicio)');
+            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_servicio_desde, 'Fecha Servicio Desde')} (obligatoria cuando hay subitems de servicio)`);
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_hasta)) {
-            errors.push('Item: falta "Fecha Servicio Hasta" (hay subitems de servicio)');
+            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_servicio_hasta, 'Fecha Servicio Hasta')} (obligatoria cuando hay subitems de servicio)`);
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_vto_pago)) {
-            errors.push('Item: falta "Fecha Vto. Pago" (hay subitems de servicio)');
+            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_vto_pago, 'Fecha Vto. Pago')} (obligatoria cuando hay subitems de servicio)`);
         }
     }
 
@@ -4880,6 +4902,17 @@ function buildErrorComment(err) {
 
     const KNOWN_ERRORS = [
         {
+            // Item incompleto = la validateItemDataCompleteness fallo. El detalle
+            // de QUE columnas faltan viene en los bullets que arma esa funcion.
+            match: /Item incompleto/i,
+            title: 'Faltan datos en el item',
+            detail: subitemDetails.length > 0
+                ? 'Para que el sistema pueda emitir la factura, completá estas columnas que están vacías o con datos inválidos:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;<b>•</b>&nbsp;${l}`).join('<br/>')
+                : 'Hay campos obligatorios sin completar en el item o en sus subitems.',
+            solucion: 'Abrí el item, completá las columnas listadas arriba con los valores correctos y volvé a disparar la receta. Si una columna no aparece, revisá el <b>Mapeo Visual</b> en la vista de configuración de la app.',
+        },
+        {
             match: /falta.*mapeo|falta.*configurar.*mapeo|falta.*mapping/i,
             title: 'Falta configurar el mapeo de columnas',
             detail: 'El tablero no tiene configurado qué columna corresponde a cada campo de la factura.',
@@ -5035,14 +5068,17 @@ async function notifyCallback(callbackUrl, actionUuid, success, errorMsg = null,
 
 // Obtener datos del item desde la API de Monday
 async function fetchMondayItem({ apiToken, itemId }) {
+    // Traemos column.title (el nombre que el CLIENTE ve en su board) para
+    // que los mensajes de error puedan referirse a las columnas con el nombre
+    // que el cliente reconoce, no con el label canonico interno.
     const query = `query {
         items(ids: [${itemId}]) {
             id name
             board { id }
-            column_values { id text value }
+            column_values { id text value column { id title } }
             subitems {
                 id name
-                column_values { id text value }
+                column_values { id text value column { id title } }
             }
         }
     }`;
