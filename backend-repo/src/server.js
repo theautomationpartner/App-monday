@@ -5803,7 +5803,39 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
     }
 
     const total = ok + mismatch + notFound + errors;
-    if (total === 0) return; // nada que reportar
+    if (total === 0) return; // nada nuevo que reportar tonight
+
+    // Acumulado historico de toda la tabla — incluye lo que se acaba de auditar.
+    // Asi el mensaje muestra "auditadas anoche: X" + "estado del sistema: Y/Z OK".
+    let cum = { ok: 0, mismatch: 0, not_found: 0, errors: 0, total_success: 0 };
+    try {
+        const stats = await db.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE audit_status='ok')                AS ok,
+                COUNT(*) FILTER (WHERE audit_status='mismatch')          AS mismatch,
+                COUNT(*) FILTER (WHERE audit_status='not_found_in_afip') AS not_found,
+                COUNT(*) FILTER (WHERE audit_status='error')             AS errors,
+                COUNT(*) FILTER (WHERE status='success')                 AS total_success
+            FROM invoice_emissions
+        `);
+        const r = stats.rows[0] || {};
+        cum = {
+            ok: Number(r.ok || 0),
+            mismatch: Number(r.mismatch || 0),
+            not_found: Number(r.not_found || 0),
+            errors: Number(r.errors || 0),
+            total_success: Number(r.total_success || 0),
+        };
+    } catch (err) {
+        console.warn('[nightly-audit] no se pudo obtener acumulado:', err.message);
+    }
+
+    const cumIssues = cum.mismatch + cum.not_found;
+    const cumLine = cumIssues > 0
+        ? `*Estado del sistema:* ${cum.ok}/${cum.total_success} OK · ${cumIssues} con discrepancia · ${cum.errors} con error tecnico`
+        : (cum.errors > 0
+            ? `*Estado del sistema:* ${cum.ok}/${cum.total_success} OK · ${cum.errors} con error tecnico`
+            : `*Estado del sistema:* ${cum.ok}/${cum.total_success} OK :white_check_mark:`);
 
     // Fecha "ayer" (en UTC simplificado — 3am AR ~ 6am UTC, asi que la fecha
     // anterior representa el dia auditado).
@@ -5816,19 +5848,21 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
         text = [
             `:white_check_mark: *Auditoria nocturna AFIP — ${auditedDate}*`,
             ``,
-            `Facturas auditadas: *${total}*`,
-            `Estado: *TODAS CORRECTAS*`,
+            `*Auditadas esta noche:* ${total} → TODAS CORRECTAS`,
+            cumLine,
             ``,
             `_Las facturas emitidas por la app coinciden 100% con AFIP (CAE, numero e importe)._`,
-            `_Duracion de la corrida: ${durationStr}_`,
+            `_Duracion: ${durationStr}_`,
         ].join('\n');
     } else if (!hasIssues && errors > 0) {
         text = [
             `:large_yellow_circle: *Auditoria nocturna AFIP — ${auditedDate}*`,
             ``,
-            `Facturas auditadas: *${total}*`,
+            `*Auditadas esta noche:* ${total}`,
             `:white_check_mark: OK: ${ok}`,
             `:warning: Errores tecnicos (no auditables): ${errors}`,
+            ``,
+            cumLine,
             ``,
             `_Sin discrepancias en lo que pudimos consultar. Las ${errors} con error tecnico (cert / red / data faltante) requieren revision manual._`,
         ].join('\n');
@@ -5858,10 +5892,12 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
         text = [
             `:rotating_light: *DISCREPANCIA AFIP — Auditoria nocturna ${auditedDate}*`,
             ``,
-            `Facturas auditadas: *${total}*`,
+            `*Auditadas esta noche:* ${total}`,
             `:white_check_mark: OK: ${ok}`,
             `:rotating_light: Discrepancias criticas: ${notFound + mismatch}`,
             errors > 0 ? `:warning: Errores tecnicos: ${errors}` : null,
+            ``,
+            cumLine,
             ``,
             `*REVISAR MANUALMENTE EN AFIP WEB:*`,
             ``,
