@@ -1488,7 +1488,30 @@ function toNumberOrNull(value) {
 function getColumnTextById(columnValues, columnId) {
     if (!columnId) return '';
     const found = (columnValues || []).find((column) => column.id === columnId);
-    return found?.text || '';
+    if (!found) return '';
+
+    // Para columnas normales el texto displayed esta en `text`.
+    // Para mirror y board_relation el `text` suele venir vacio aunque el
+    // cliente vea el valor en monday: el dato real esta en `display_value`.
+    // Tambien parseamos `value` como ultimo fallback (algunas mirrors viejas).
+    if (found.text) return found.text;
+    if (found.display_value) return found.display_value;
+
+    if (found.value) {
+        try {
+            const parsed = JSON.parse(found.value);
+            if (typeof parsed === 'string') return parsed;
+            if (parsed?.display_value) return String(parsed.display_value);
+            // BoardRelation: array de items con name
+            if (Array.isArray(parsed?.linkedPulseIds) && Array.isArray(parsed?.linkedPulses)) {
+                return parsed.linkedPulses.map(p => p?.name || '').filter(Boolean).join(', ');
+            }
+        } catch (_) {
+            // value no era JSON, lo devolvemos como string puro
+            return String(found.value);
+        }
+    }
+    return '';
 }
 
 async function ensureInvoiceEmissionsTable() {
@@ -5071,14 +5094,29 @@ async function fetchMondayItem({ apiToken, itemId }) {
     // Traemos column.title (el nombre que el CLIENTE ve en su board) para
     // que los mensajes de error puedan referirse a las columnas con el nombre
     // que el cliente reconoce, no con el label canonico interno.
+    //
+    // Para MIRROR columns y BOARD_RELATION usamos inline fragments porque
+    // el campo "text" suele venir vacio (el dato real esta en display_value
+    // del MirrorValue). Sin esto la validacion pensaria que la columna esta
+    // vacia aunque el cliente vea el valor en monday.
     const query = `query {
         items(ids: [${itemId}]) {
             id name
             board { id }
-            column_values { id text value column { id title } }
+            column_values {
+                id text value type
+                column { id title }
+                ... on MirrorValue { display_value }
+                ... on BoardRelationValue { display_value }
+            }
             subitems {
                 id name
-                column_values { id text value column { id title } }
+                column_values {
+                    id text value type
+                    column { id title }
+                    ... on MirrorValue { display_value }
+                    ... on BoardRelationValue { display_value }
+                }
             }
         }
     }`;
