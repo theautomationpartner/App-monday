@@ -1,7 +1,18 @@
 // Configuracion de PM2 para correr el backend en STAGING.
-// Vive en el mismo droplet que prod pero en otro puerto + DB + .env.
 //
-// Uso:
+// Vive en un clon SEPARADO del repo (/opt/apps/App-monday-staging/) que
+// checkea la branch "develop". El clon de prod vive en /opt/apps/App-monday/
+// con la branch "main".
+//
+// Aislamiento total entre ambos:
+//   - Working directory distinto
+//   - Branch distinto (develop vs main)
+//   - Archivo .env distinto (cada clon tiene el suyo)
+//   - PM2 process name distinto
+//   - Puerto distinto (el puerto lo define el .env, default 3001 para staging)
+//
+// Uso (primera vez, manual):
+//   cd /opt/apps/App-monday-staging/backend-repo
 //   pm2 start ecosystem.staging.config.js
 //   pm2 save
 //
@@ -13,23 +24,17 @@ module.exports = {
   apps: [{
     name: "tap-monday-staging",
     script: "./src/server.js",
-    cwd: "/opt/apps/App-monday/backend-repo",
+    cwd: "/opt/apps/App-monday-staging/backend-repo",
     instances: 1,
     exec_mode: "fork",
     autorestart: true,
     watch: false,
-    // Memory budget mas chico para staging (rara vez se usa con carga real).
-    // Margen pensado para que prod siempre tenga prioridad de RAM.
+    // Memory budget mas chico que prod para que prod siempre tenga prioridad
+    // si el droplet esta presionado.
     max_memory_restart: "200M",
     node_args: "--max-old-space-size=200",
     kill_timeout: 5000,
     listen_timeout: 10000,
-    // CRITICO: cargar variables de .env.staging en vez de .env.
-    // server.js usa dotenv.config() que lee .env por defecto, asi que
-    // hacemos que pm2 le inyecte las vars del .env.staging directamente
-    // via cwd + node_args sumando la flag de dotenv-config.
-    // Alternativa simple: usar el campo env de pm2 con las vars criticas.
-    env_file: ".env.staging",
     env: {
       NODE_ENV: "production",
       APP_ENV: "staging"
