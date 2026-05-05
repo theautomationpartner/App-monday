@@ -6283,6 +6283,63 @@ function scheduleReconciliationCron() {
     console.log(`[reconcile-cron] scheduled — corrida cada ${RECONCILE_INTERVAL_MS / 60000} min`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Endpoint admin para disparar la auditoria nocturna a demanda (testing).
+// ─────────────────────────────────────────────────────────────────────────
+// Auth: header `x-admin-token` debe coincidir con DEV_MONDAY_TOKEN del env.
+// Corre el audit sincronicamente y devuelve el resumen en la response.
+// Tambien dispara la notificacion a Slack si hay rows auditadas.
+app.post('/api/admin/run-nightly-audit', async (req, res) => {
+    const adminToken = process.env.DEV_MONDAY_TOKEN;
+    const provided = req.headers['x-admin-token'];
+    if (!adminToken) {
+        return res.status(500).json({ error: 'DEV_MONDAY_TOKEN no configurado en el server' });
+    }
+    if (!provided || provided !== adminToken) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    console.log('[admin] disparando runNightlyAfipAudit a demanda');
+    const startedAt = Date.now();
+    try {
+        // Reusa la logica del cron, incluyendo la notificacion a Slack.
+        await runNightlyAfipAudit();
+
+        // Devolver un snapshot rapido del estado de auditoria como feedback.
+        const stats = await db.query(`
+            SELECT
+                COUNT(*) FILTER (WHERE audit_status='ok')                 AS ok,
+                COUNT(*) FILTER (WHERE audit_status='mismatch')           AS mismatch,
+                COUNT(*) FILTER (WHERE audit_status='not_found_in_afip')  AS not_found,
+                COUNT(*) FILTER (WHERE audit_status='error')              AS errors,
+                COUNT(*) FILTER (WHERE status='success' AND audit_status IS NULL) AS pending,
+                COUNT(*) FILTER (WHERE status='success')                  AS total_success
+            FROM invoice_emissions
+        `);
+        const row = stats.rows[0] || {};
+        return res.status(200).json({
+            status: 'completed',
+            duration_ms: Date.now() - startedAt,
+            audit_table_snapshot: {
+                ok: Number(row.ok || 0),
+                mismatch: Number(row.mismatch || 0),
+                not_found_in_afip: Number(row.not_found || 0),
+                errors: Number(row.errors || 0),
+                pending: Number(row.pending || 0),
+                total_success: Number(row.total_success || 0),
+            },
+            note: 'Slack notificado solo si hubo rows nuevas auditadas en esta corrida. Si pending=0 al inicio, no hay nada que reportar.',
+        });
+    } catch (err) {
+        console.error('[admin] runNightlyAfipAudit fallo:', err.message);
+        return res.status(500).json({
+            status: 'failed',
+            error: err.message,
+            duration_ms: Date.now() - startedAt,
+        });
+    }
+});
+
 // Arranca el servidor (local y monday code)
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
