@@ -1091,6 +1091,76 @@ async function afipGetLastVoucher({ token, sign, cuit, pointOfSale, cbteType }) 
     return parsed;
 }
 
+// Consulta una factura ya emitida en AFIP para verificar su existencia y
+// recuperar sus datos. Se usa para:
+//  1. Verificacion post-emision (Fase 2): confirmar que el CAE recibido
+//     existe efectivamente en AFIP y los datos matchean lo que enviamos.
+//  2. Recuperacion en timeout (Fase 1): si una emision quedo en 'processing'
+//     porque no recibimos response, podemos consultar AFIP para saber si
+//     se llego a emitir y recuperar el CAE.
+//
+// Retorna null si AFIP responde "comprobante no encontrado" (codigo 602/15).
+async function afipConsultarComprobante({ token, sign, cuit, pointOfSale, cbteType, cbteNro }) {
+    const endpoints = getAfipEndpoints();
+    const soapBody = `<?xml version="1.0" encoding="UTF-8"?>\n<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ar="http://ar.gov.afip.dif.FEV1/">\n  <soapenv:Header/>\n  <soapenv:Body>\n    <ar:FECompConsultar>\n      <ar:Auth>\n        <ar:Token>${xmlEscape(token)}</ar:Token>\n        <ar:Sign>${xmlEscape(sign)}</ar:Sign>\n        <ar:Cuit>${xmlEscape(cuit)}</ar:Cuit>\n      </ar:Auth>\n      <ar:FeCompConsReq>\n        <ar:CbteTipo>${xmlEscape(cbteType)}</ar:CbteTipo>\n        <ar:CbteNro>${xmlEscape(cbteNro)}</ar:CbteNro>\n        <ar:PtoVta>${xmlEscape(pointOfSale)}</ar:PtoVta>\n      </ar:FeCompConsReq>\n    </ar:FECompConsultar>\n  </soapenv:Body>\n</soapenv:Envelope>`;
+
+    let response, xml;
+    try {
+        response = await fetch(endpoints.wsfe, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'text/xml; charset=utf-8',
+                SOAPAction: 'http://ar.gov.afip.dif.FEV1/FECompConsultar',
+            },
+            body: soapBody,
+            signal: AbortSignal.timeout(30000),
+        });
+        xml = await response.text();
+    } catch (err) {
+        throw new Error(`FECompConsultar network error: ${err.message}`);
+    }
+
+    if (!response.ok) {
+        throw new Error(`FECompConsultar HTTP ${response.status}: ${xml.slice(0, 300)}`);
+    }
+
+    // Parsear errores. AFIP devuelve en <Errors><Err><Code>X</Code><Msg>...
+    const errBlock = xml.match(/<Errors[^>]*>([\s\S]*?)<\/Errors>/i);
+    if (errBlock) {
+        const errs = errBlock[1].match(/<Err>[\s\S]*?<\/Err>/gi) || [];
+        const codes = errs.map(e => extractXmlTag(e, 'Code')).filter(Boolean);
+        const msgs  = errs.map(e => `[${extractXmlTag(e, 'Code')}] ${extractXmlTag(e, 'Msg')}`).filter(Boolean);
+        // Codigos conocidos de "comprobante no encontrado": 602, 1502, 15.
+        // Cualquier otro error lo propagamos.
+        if (codes.some(c => /^(602|1502|15)$/.test(String(c)))) {
+            return null;
+        }
+        if (codes.length > 0) {
+            throw new Error(`FECompConsultar error AFIP: ${msgs.join(' | ')}`);
+        }
+    }
+
+    // Extraer datos del comprobante encontrado.
+    const cae = extractXmlTag(xml, 'CodAutorizacion') || extractXmlTag(xml, 'CAE');
+    if (!cae) return null; // sin CAE = no encontrado
+
+    return {
+        cae,
+        cae_vencimiento: extractXmlTag(xml, 'FchVto') || null,
+        resultado: extractXmlTag(xml, 'Resultado') || null,
+        cbte_tipo: Number(extractXmlTag(xml, 'CbteTipo') || 0),
+        cbte_nro: Number(extractXmlTag(xml, 'CbteDesde') || extractXmlTag(xml, 'CbteNro') || 0),
+        pto_vta: Number(extractXmlTag(xml, 'PtoVta') || 0),
+        cbte_fecha: extractXmlTag(xml, 'CbteFch') || null,
+        imp_total: Number(extractXmlTag(xml, 'ImpTotal') || 0),
+        imp_neto: Number(extractXmlTag(xml, 'ImpNeto') || 0),
+        imp_iva: Number(extractXmlTag(xml, 'ImpIVA') || 0),
+        doc_tipo: Number(extractXmlTag(xml, 'DocTipo') || 0),
+        doc_nro: Number(extractXmlTag(xml, 'DocNro') || 0),
+        raw_xml_preview: xml.slice(0, 500),
+    };
+}
+
 // Tipos de comprobante AFIP: A=1, B=6, C=11
 const INVOICE_TYPE_CONFIG = {
     A: { cbteType: 1,  ivaRate: 0.21, requiresCuit: true  },
@@ -1264,6 +1334,39 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
         throw new Error(`AFIP rechazó la factura: ${detalle}`);
     }
 
+    // ── Fase 2: verificación post-emisión ────────────────────────────────
+    // Confirmar con FECompConsultar que el comprobante existe en AFIP y que
+    // los datos matchean lo que enviamos. Si hay discrepancia, log warning
+    // (pero no fail — el CAE es valido y la factura existe).
+    let verification = null;
+    let verificationError = null;
+    try {
+        verification = await afipConsultarComprobante({
+            token, sign, cuit,
+            pointOfSale,
+            cbteType,
+            cbteNro: nextVoucher,
+        });
+        if (!verification) {
+            console.warn(`[wsfe] verify: AFIP no encontro el comprobante recien emitido cbteNro=${nextVoucher} (posible delay de propagacion)`);
+        } else {
+            const mismatches = [];
+            if (verification.cae !== cae) mismatches.push(`CAE: emitido=${cae} vs verificado=${verification.cae}`);
+            if (verification.cbte_nro !== nextVoucher) mismatches.push(`cbteNro: emitido=${nextVoucher} vs verificado=${verification.cbte_nro}`);
+            if (Math.abs(verification.imp_total - totalAmount) > 0.01) mismatches.push(`importe: emitido=${totalAmount} vs verificado=${verification.imp_total}`);
+            if (mismatches.length > 0) {
+                console.warn(`[wsfe] verify: MISMATCH detectado para cbteNro=${nextVoucher}: ${mismatches.join(' | ')}`);
+            } else {
+                console.log(`[wsfe] verify: OK cbteNro=${nextVoucher} CAE=${cae}`);
+            }
+        }
+    } catch (verifyErr) {
+        // No bloquear la emision si la verificacion falla (red, AFIP lenta).
+        // Pero loggear con detalle para auditoria.
+        verificationError = verifyErr.message;
+        console.warn(`[wsfe] verify: error consultando cbteNro=${nextVoucher}: ${verifyErr.message}`);
+    }
+
     return {
         resultado: result || 'N/D',
         cae: cae || null,
@@ -1274,6 +1377,12 @@ async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoice
         imp_iva: impIva,
         observacion: observation,
         raw_xml: xml.slice(0, 2000),
+        verification: verification ? {
+            cae_match: verification.cae === cae,
+            cbte_nro_match: verification.cbte_nro === nextVoucher,
+            imp_total_match: Math.abs(verification.imp_total - totalAmount) <= 0.01,
+            checked_at: new Date().toISOString(),
+        } : (verificationError ? { error: verificationError, checked_at: new Date().toISOString() } : { skipped: 'no_response', checked_at: new Date().toISOString() }),
     };
 }
 
