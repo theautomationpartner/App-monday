@@ -1,10 +1,12 @@
 name: Deploy a DigitalOcean
 
-# Se ejecuta automáticamente en cada push a main.
-# También se puede disparar a mano desde la UI de Actions ("Run workflow").
+# Despliega automaticamente segun la branch:
+#   - push a "main"    -> produccion (clon /opt/apps/App-monday, pm2 tap-monday, port 3000)
+#   - push a "develop" -> staging    (clon /opt/apps/App-monday-staging, pm2 tap-monday-staging, port 3001)
+# Tambien se puede disparar a mano desde la UI ("Run workflow").
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   workflow_dispatch:
 
 jobs:
@@ -15,8 +17,27 @@ jobs:
       - name: Checkout código
         uses: actions/checkout@v4
         with:
-          # Necesitamos al menos 2 commits para poder ver qué cambió
           fetch-depth: 2
+
+      # ─── Determinar a que entorno deployamos ───────────────────────────────
+      # Output: name, branch, app_dir, pm2_name, health_url
+      - name: Determinar entorno (prod o staging)
+        id: env
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "name=prod" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
+            echo "app_dir=/opt/apps/App-monday" >> $GITHUB_OUTPUT
+            echo "pm2_name=tap-monday" >> $GITHUB_OUTPUT
+            echo "health_url=https://arca.theautomationpartner.com/api/health" >> $GITHUB_OUTPUT
+          else
+            echo "name=staging" >> $GITHUB_OUTPUT
+            echo "branch=develop" >> $GITHUB_OUTPUT
+            echo "app_dir=/opt/apps/App-monday-staging" >> $GITHUB_OUTPUT
+            echo "pm2_name=tap-monday-staging" >> $GITHUB_OUTPUT
+            echo "health_url=https://staging.theautomationpartner.com/api/health" >> $GITHUB_OUTPUT
+          fi
+          echo "Deploy target: ${{ github.ref }}"
 
       - name: Detectar qué cambió
         uses: dorny/paths-filter@v3
@@ -34,6 +55,7 @@ jobs:
             backend_src:
               - 'backend-repo/src/**'
               - 'backend-repo/ecosystem.config.js'
+              - 'backend-repo/ecosystem.staging.config.js'
             backend_deps:
               - 'backend-repo/package.json'
               - 'backend-repo/package-lock.json'
@@ -63,68 +85,64 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan -H ${{ secrets.DROPLET_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
-      # ─── Pull del código en el droplet ──────────────────────────────────────
+      # ─── Pull del código en el droplet (al clon correcto) ──────────────────
       - name: git pull en el droplet
         run: |
           ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
-            "cd /opt/apps/App-monday && git pull --ff-only origin main"
+            "cd ${{ steps.env.outputs.app_dir }} && git pull --ff-only origin ${{ steps.env.outputs.branch }}"
 
       # ─── Sincronizar env vars del droplet desde GitHub Secrets ──────────────
-      # Mantiene el .env del droplet alineado con los secrets de GitHub. Es
-      # idempotente: si la línea ya existe, la sobrescribe; si no, la agrega.
+      # MONDAY_CLIENT_ID se sincroniza al .env de cada clon.
       - name: Sincronizar MONDAY_CLIENT_ID en el droplet
         run: |
           ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
-            "cd /opt/apps/App-monday/backend-repo && \
+            "cd ${{ steps.env.outputs.app_dir }}/backend-repo && \
              sed -i '/^MONDAY_CLIENT_ID=/d' .env 2>/dev/null; \
              echo 'MONDAY_CLIENT_ID=${{ secrets.MONDAY_CLIENT_ID }}' >> .env && \
-             pm2 restart tap-monday --update-env && \
-             echo '[deploy] MONDAY_CLIENT_ID sincronizado + pm2 reload'"
+             echo '[deploy] MONDAY_CLIENT_ID sincronizado en ${{ steps.env.outputs.name }}'"
 
       # ─── Deploy del frontend (solo si se buildeó) ──────────────────────────
       - name: Subir frontend al droplet (atomic swap)
         if: steps.changes.outputs.frontend_src == 'true' || steps.changes.outputs.frontend_deps == 'true'
         run: |
-          # Limpiar dir temporal en el droplet
+          # dir temporal especifico al entorno para evitar colisiones
+          TMP_DIR="/tmp/dist_new_${{ steps.env.outputs.name }}"
           ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
-            "rm -rf /tmp/dist_new && mkdir -p /tmp/dist_new"
+            "rm -rf $TMP_DIR && mkdir -p $TMP_DIR"
 
-          # Subir el dist
           scp -r frontend-repo/dist/* \
-            ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}:/tmp/dist_new/
+            ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }}:$TMP_DIR/
 
-          # Atomic swap: mover el viejo, mover el nuevo, borrar el viejo
-          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} '
-            cd /opt/apps/App-monday/backend-repo
+          # Atomic swap dentro del clon correcto
+          ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} "
+            cd ${{ steps.env.outputs.app_dir }}/backend-repo
             rm -rf public_old
             mv public public_old 2>/dev/null || true
-            mv /tmp/dist_new public
+            mv $TMP_DIR public
             rm -rf public_old
-            echo "[deploy] frontend swap OK — hash:"
-            ls public/assets/ | grep ".js$"
-          '
+            echo '[deploy] frontend swap OK (${{ steps.env.outputs.name }}) — hash:'
+            ls public/assets/ | grep '.js\$' || true
+          "
 
       # ─── Backend deps (solo si cambió package.json) ────────────────────────
       - name: Reinstalar deps del backend
         if: steps.changes.outputs.backend_deps == 'true'
         run: |
           ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
-            "cd /opt/apps/App-monday/backend-repo && npm install --omit=dev"
+            "cd ${{ steps.env.outputs.app_dir }}/backend-repo && npm install --omit=dev"
 
       # ─── Reload PM2 (solo si cambió código del backend) ─────────────────────
       - name: Reload PM2
         if: steps.changes.outputs.backend_src == 'true' || steps.changes.outputs.backend_deps == 'true'
         run: |
           ssh ${{ secrets.DROPLET_USER }}@${{ secrets.DROPLET_HOST }} \
-            "pm2 reload tap-monday --update-env && sleep 2 && pm2 list | grep tap-monday"
+            "pm2 reload ${{ steps.env.outputs.pm2_name }} --update-env && sleep 2 && pm2 list | grep ${{ steps.env.outputs.pm2_name }}"
 
       # ─── Smoke test ────────────────────────────────────────────────────────
-      # Poll en vez de un único curl: PM2 reload puede tardar 5-10s en que el
-      # proceso nuevo escuche, sobre todo si el server.js corre migraciones
-      # de DB en startup. Reintentamos cada 3s hasta 45s totales.
+      # Polling hasta 45s para esperar startup completo (migrations etc.).
       - name: Verificar que la app responde
         run: |
-          ENDPOINT="https://arca.theautomationpartner.com/api/health"
+          ENDPOINT="${{ steps.env.outputs.health_url }}"
           for i in $(seq 1 15); do
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$ENDPOINT" || echo "000")
             if [ "$STATUS" = "200" ]; then
@@ -144,8 +162,13 @@ jobs:
           echo "════════════════════════════════════════"
           echo "  RESUMEN DEL DEPLOY"
           echo "════════════════════════════════════════"
-          echo "Frontend src cambió: ${{ steps.changes.outputs.frontend_src }}"
-          echo "Frontend deps cambió: ${{ steps.changes.outputs.frontend_deps }}"
-          echo "Backend src cambió: ${{ steps.changes.outputs.backend_src }}"
-          echo "Backend deps cambió: ${{ steps.changes.outputs.backend_deps }}"
+          echo "Entorno:       ${{ steps.env.outputs.name }}"
+          echo "Branch:        ${{ steps.env.outputs.branch }}"
+          echo "App dir:       ${{ steps.env.outputs.app_dir }}"
+          echo "PM2 process:   ${{ steps.env.outputs.pm2_name }}"
+          echo "URL health:    ${{ steps.env.outputs.health_url }}"
+          echo "Frontend src:  ${{ steps.changes.outputs.frontend_src }}"
+          echo "Frontend deps: ${{ steps.changes.outputs.frontend_deps }}"
+          echo "Backend src:   ${{ steps.changes.outputs.backend_src }}"
+          echo "Backend deps:  ${{ steps.changes.outputs.backend_deps }}"
           echo "════════════════════════════════════════"
