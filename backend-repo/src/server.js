@@ -4238,16 +4238,20 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 [company.id, boardId, itemId, typeForIdempotency]
             );
 
-            // Fase 1 — recovery: si existe una row 'processing' con cbteNro
-            // reservado, asumimos que un attempt anterior pudo haber timeout-eado
-            // despues de enviar a AFIP. Pasamos ese cbteNro a afipIssueFactura
-            // para que consulte AFIP antes de reemitir.
-            const previousCbteNro = (existing.rows[0]?.status === 'processing'
-                && existing.rows[0]?.attempted_cbte_nro)
+            // Fase 1 — recovery: si existe un attempt anterior con cbteNro
+            // reservado (sea porque quedo 'processing' por server crash, o
+            // 'error' por timeout en el SOAP), pasamos ese cbteNro a
+            // afipIssueFactura para que consulte AFIP antes de reemitir.
+            // Con esto cubrimos el caso real de micro-corte: el catch de la
+            // emision actualiza status='error', pero attempted_cbte_nro se
+            // grabo antes del SOAP y sigue ahi para recovery.
+            const previousCbteNro = (existing.rows[0]
+                && existing.rows[0].status !== 'success'
+                && existing.rows[0].attempted_cbte_nro)
                 ? Number(existing.rows[0].attempted_cbte_nro)
                 : null;
             if (previousCbteNro) {
-                console.log(`[emit] Idempotency: detectado intento previo en 'processing' con cbteNro=${previousCbteNro} — intentaremos recovery via FECompConsultar`);
+                console.log(`[emit] Idempotency: detectado attempt previo (status=${existing.rows[0].status}) con cbteNro=${previousCbteNro} — intentaremos recovery via FECompConsultar`);
             }
 
             if (existing.rows[0]?.status === 'success') {
