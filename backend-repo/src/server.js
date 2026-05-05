@@ -5484,6 +5484,12 @@ async function runStartupMigrations() {
     } catch (err) {
         console.error('[migrations] padron_receptores_cache error:', err.message);
     }
+    try {
+        await ensureInvoiceEmissionsTable();
+        console.log('[migrations] invoice_emissions table + columnas Fase 1/3/4 aseguradas');
+    } catch (err) {
+        console.error('[migrations] invoice_emissions error:', err.message);
+    }
 }
 
 // ─── Cache de tokens WSAA en DB ─────────────────────────────────────────────
