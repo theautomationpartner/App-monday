@@ -1,62 +1,30 @@
-# Facturacion Electronica AFIP - Monday.com App
+# ARCA Facturación — App marketplace monday.com
 
-Aplicacion nativa para Monday.com para configuracion fiscal y emision de facturacion electronica AFIP (Argentina). Se despliega sobre **Monday Code**.
+App nativa de facturación electrónica AFIP (Argentina) para el marketplace de monday.com.
 
-## Estructura del workspace
+## Estructura
 
-Este directorio es un workspace con dos proyectos independientes (cada uno con su propio `.git`, pensados para subir a repos separados en GitHub):
+- [frontend-repo/](frontend-repo/) — React + Vite. El build se copia a [backend-repo/public/](backend-repo/public/) en el deploy.
+- [backend-repo/](backend-repo/) — Node + Express. Sirve el frontend estático y expone los endpoints `/api/*`.
 
-- [frontend-repo/](frontend-repo/) — React + Vite. Build estatico que sirve el backend.
-- [backend-repo/](backend-repo/) — Node.js + Express. Punto de entrada desplegado en Monday Code.
-- [legacy/](legacy/) — codigo y archivos viejos archivados (antigua version monorepo con Netlify, blueprints, logs, builds previos). No forma parte del runtime.
+## Deploy
 
-## Target de deploy: Monday Code
+`git push main` → GitHub Actions → DigitalOcean droplet (`pm2 reload tap-monday --update-env`).
 
-El backend corre como un proceso Node estandar (`node src/server.js`), no como serverless function. Usa `@mondaycom/apps-sdk` para leer `EnvironmentVariablesManager` y `SecretsManager`, y hace `app.listen(process.env.PORT)`.
+## Producción
 
-El flujo actual es: el backend sirve los archivos estaticos del frontend desde [backend-repo/public/](backend-repo/public/). El build del frontend (`frontend-repo/dist/`) se copia alli antes de desplegar.
+- App: https://arca.theautomationpartner.com
+- DB: PostgreSQL DigitalOcean Managed (NYC1)
+- Hosting: DigitalOcean droplet (Ubuntu)
 
-## Lo que funciona hoy
+## Sistema de defensa contra duplicados / discrepancias AFIP
 
-### Frontend ([frontend-repo/](frontend-repo/))
-
-- React 18 + Vite, Monday UI Core (Vibe), Monday SDK, Axios.
-- Navegacion lateral por secciones (Certificados ARCA y Datos Fiscales).
-- Formulario fiscal con persistencia real.
-- Precarga de setup guardado por `monday_account_id`.
-- Subida de `.crt` y `.key` con `multipart/form-data`.
-
-### Backend ([backend-repo/](backend-repo/))
-
-- Express + Multer en memoria + `pg` (Neon PostgreSQL con SSL).
-- Cifrado AES (CryptoJS) para la clave privada AFIP antes de persistir.
-- Modulos de emision AFIP reales en [backend-repo/src/modules/](backend-repo/src/modules/):
-  - `afipAuth.js` — WSAA (token/sign).
-  - `afipPadron.js` — consulta de padron.
-  - `invoiceRules.js` — reglas de comprobantes.
-- Generacion de PDF con `pdfkit` (inline en [backend-repo/src/server.js](backend-repo/src/server.js), funcion `generateFacturaPdfBuffer`).
-- Sirve el frontend estatico desde `public/`.
-
-## Endpoints principales
-
-| Metodo | Ruta | Descripcion |
+| Capa | Cuándo | Qué hace |
 | --- | --- | --- |
-| GET | /api/health | Estado del backend y conexion DB |
-| GET | /api/setup/:mondayAccountId | Datos fiscales y certificados guardados |
-| POST | /api/companies | Alta/actualizacion de datos fiscales |
-| POST | /api/certificates | Sube `.crt`/`.key`, cifra la clave y guarda credenciales |
-
-(El backend tiene endpoints adicionales para emision de comprobantes y webhooks de Monday — ver [backend-repo/src/server.js](backend-repo/src/server.js).)
-
-## Variables de entorno
-
-En Monday Code se configuran desde `mapps` o el dashboard. En local, `.env` dentro de cada proyecto.
-
-Backend:
-- `DATABASE_URL` — string de conexion PostgreSQL (Neon).
-- `ENCRYPTION_KEY` — clave simetrica para cifrar la private key AFIP. Se recomienda cargarla como **secret** (`SecretsManager`).
-- `MONDAY_CLIENT_SECRET` — para validar tokens de sesion Monday. Tambien como secret.
-- `PORT` — opcional, default 3001.
+| **Idempotency** | Reintento manual del usuario | Consulta cbteNro reservado en AFIP antes de reemitir |
+| **Verificación post-emisión** | Inmediato tras cada emisión OK | Cross-check de CAE/nro/importe vía `FECompConsultar` |
+| **Reconciliación** | Cron cada 5 min | Recupera facturas huérfanas (timeout sin retry manual) |
+| **Auditoría nocturna** | Cron 3 AM AR | Verifica todas las nuevas contra AFIP, resumen en Slack |
 
 ## Levantar en local
 
@@ -72,21 +40,12 @@ npm install
 npm run dev
 ```
 
-En local, el frontend apunta al backend en `http://localhost:3001/api` cuando detecta hostname `localhost`.
+## Variables de entorno (droplet)
 
-## Build y deploy a Monday Code
+`/opt/apps/App-monday/backend-repo/.env`. Las críticas:
 
-1. Build del frontend:
-   ```bash
-   cd frontend-repo
-   npm run build
-   ```
-2. Copiar `frontend-repo/dist/*` a `backend-repo/public/`.
-3. Desde `backend-repo/`, desplegar con el CLI de Monday Code (`mapps code:push`).
-
-## Roadmap
-
-1. Terminar integracion AFIP productiva (WSAA + WSFEv1) — los modulos ya existen en `backend-repo/src/modules/`, queda endurecerlos.
-2. Automatizaciones Monday: disparar emision por cambio de estado, escribir numero de comprobante y link PDF en columnas.
-3. Plantilla de PDF fiscal.
-4. Logs, auditoria y pruebas E2E.
+- `DATABASE_URL` — DigitalOcean Managed PG con `sslmode=verify-full`
+- `ENCRYPTION_KEY` — AES key para cifrar la private key AFIP
+- `MONDAY_CLIENT_SECRET` — validación de tokens de sesión monday
+- `SLACK_WEBHOOK_URL` — para alertas de discrepancias AFIP
+- `DEV_MONDAY_TOKEN` — admin token (CRM tracking + endpoint admin)
