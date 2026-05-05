@@ -1517,6 +1517,23 @@ async function ensureInvoiceEmissionsTable() {
             ADD COLUMN IF NOT EXISTS attempted_pto_vta   INTEGER,
             ADD COLUMN IF NOT EXISTS attempted_cbte_nro  INTEGER
     `);
+
+    // Migracion Fase 3 - Reconciliation cron:
+    // Cuando el cron toma una row para intentar recovery, marcamos
+    // last_reconciliation_at para no procesarla repetidamente cada
+    // ciclo si AFIP devuelve "no existe" o si falla el upload.
+    await db.query(`
+        ALTER TABLE invoice_emissions
+            ADD COLUMN IF NOT EXISTS last_reconciliation_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS reconciliation_attempts INTEGER DEFAULT 0
+    `);
+
+    // Indice para que el SELECT del cron sea barato cuando la tabla crece.
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_invoice_emissions_reconciliation
+        ON invoice_emissions (status, attempted_cbte_nro, updated_at, last_reconciliation_at)
+        WHERE status != 'success' AND attempted_cbte_nro IS NOT NULL
+    `);
 }
 
 async function ensureUserApiTokensTable() {
@@ -4530,7 +4547,24 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 lineas,
             };
 
-            // ── 10. Emitir en AFIP (WSFE) ─────────────────────────────────────
+            // ── 10. Persistir draft_json ANTES de llamar a AFIP ───────────────
+            // Sin esto, si el SOAP timeout-ea no tendriamos los datos para
+            // regenerar el PDF en el cron de reconciliacion (Fase 3). Tambien
+            // cubre crashes de proceso entre WSFE y el UPDATE final.
+            try {
+                await db.query(
+                    `UPDATE invoice_emissions
+                     SET draft_json=$5, updated_at=CURRENT_TIMESTAMP
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
+                    [company.id, boardId, itemId, typeForIdempotency, JSON.stringify(draft)]
+                );
+            } catch (dbErr) {
+                console.warn('[emit] Error persistiendo draft_json pre-SOAP:', dbErr.message);
+                // No bloqueamos la emision si esto falla — solo perdemos la
+                // capacidad de recovery via cron.
+            }
+
+            // ── 10b. Emitir en AFIP (WSFE) ────────────────────────────────────
             // Si el cert del emisor fue rotado, el token cacheado queda obsoleto
             // y AFIP devuelve [600] ValidacionDeToken. Invalidamos y reintentamos una vez.
             // afipAuth.getToken() internamente usa: memoria → DB → AFIP.
@@ -5644,6 +5678,280 @@ async function pregenerateWsfeTokenForCompanyId(companyId) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Fase 3 — Cron de reconciliacion de emisiones huerfanas
+// ─────────────────────────────────────────────────────────────────────────
+// Cada 5 minutos buscamos rows en invoice_emissions que quedaron stuck
+// (status != 'success', tienen attempted_cbte_nro, son antiguas) y le
+// preguntamos a AFIP via FECompConsultar si la factura realmente se emitio.
+// Si AFIP confirma → recuperamos: actualizamos DB, regeneramos PDF, subimos
+// a monday y cambiamos status. Si AFIP no la encontro → la factura nunca se
+// emitio (timeout antes de llegar a AFIP), dejamos la row como esta.
+//
+// Esto cubre el caso donde el usuario NO reintenta manualmente despues de
+// un micro-corte. La Fase 1 cubre cuando el usuario SI reintenta.
+
+const RECONCILE_BATCH_SIZE   = 20;          // max rows por corrida
+const RECONCILE_STALE_MIN    = 5;           // min de antiguedad para considerar stuck
+const RECONCILE_INTERVAL_MS  = 5 * 60 * 1000;
+
+async function reconcileSingleEmission(row) {
+    const tag = `[reconcile-cron item=${row.item_id} cbteNro=${row.attempted_cbte_nro}]`;
+
+    // 1. Resolver company
+    const companyResult = await db.query(
+        `SELECT id, monday_account_id, workspace_id, business_name, trade_name,
+                cuit, default_point_of_sale, address, phone, email, website,
+                logo_base64, logo_mime_type,
+                padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio
+         FROM companies WHERE id=$1 LIMIT 1`,
+        [row.company_id]
+    );
+    const company = companyResult.rows[0];
+    if (!company) {
+        console.warn(`${tag} company no encontrada (id=${row.company_id}), skip`);
+        return;
+    }
+
+    // 2. Certificados
+    const certResult = await db.query(
+        'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
+        [company.id]
+    );
+    if (certResult.rows.length === 0) {
+        console.warn(`${tag} sin certificados AFIP, skip`);
+        return;
+    }
+    const certRow = certResult.rows[0];
+    const emisorCertPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
+    const decryptedKey  = CryptoJS.AES.decrypt(
+        certRow.encrypted_private_key, process.env.ENCRYPTION_KEY
+    ).toString(CryptoJS.enc.Utf8);
+    const emisorKeyPem = normalizePem(decryptedKey, 'PRIVATE KEY');
+
+    // 3. Token WSAA
+    const tokenData = await afipAuthModule.getToken({
+        certPem: emisorCertPem, keyPem: emisorKeyPem,
+        cuit: company.cuit, service: 'wsfe',
+        companyId: company.id,
+    });
+
+    // 4. Consultar AFIP por el cbteNro reservado
+    const recovered = await afipConsultarComprobante({
+        token: tokenData.token, sign: tokenData.sign,
+        cuit: company.cuit,
+        pointOfSale: row.attempted_pto_vta || company.default_point_of_sale,
+        cbteType: row.attempted_cbte_tipo,
+        cbteNro: row.attempted_cbte_nro,
+    });
+
+    if (!recovered || !recovered.cae) {
+        console.log(`${tag} AFIP confirma que NO se emitio — la solicitud nunca llego a procesarse. Dejando row en estado actual.`);
+        return;
+    }
+
+    console.log(`${tag} AFIP confirma factura emitida (CAE=${recovered.cae}). Iniciando recovery…`);
+
+    // 5. Construir afipResult equivalente al que devuelve afipIssueFactura
+    const afipResult = {
+        resultado: recovered.resultado || 'A',
+        cae: recovered.cae,
+        cae_vencimiento: recovered.cae_vencimiento,
+        numero_comprobante: recovered.cbte_nro,
+        tipo_comprobante: row.invoice_type,
+        imp_neto: recovered.imp_neto,
+        imp_iva: recovered.imp_iva,
+        observacion: null,
+        raw_xml: recovered.raw_xml_preview || '',
+        recovered: true,
+        recovered_by: 'cron',
+        recovered_at: new Date().toISOString(),
+    };
+
+    // 6. Persistir CAE en DB lo antes posible — si despues falla PDF/upload,
+    //    al menos no perdemos el registro fiscal.
+    try {
+        await db.query(
+            `UPDATE invoice_emissions
+             SET status='success', afip_result_json=$2, error_message=NULL,
+                 updated_at=CURRENT_TIMESTAMP
+             WHERE id=$1`,
+            [row.id, JSON.stringify(afipResult)]
+        );
+        console.log(`${tag} DB actualizada a status='success' con CAE`);
+    } catch (dbErr) {
+        console.error(`${tag} error persistiendo CAE en DB:`, dbErr.message);
+        return; // sin DB no tiene sentido seguir
+    }
+
+    // 7. Si no tenemos draft_json (rows viejas pre-Fase 3), no podemos
+    //    regenerar PDF. CAE queda en DB pero monday no se actualiza.
+    const draft = row.draft_json;
+    if (!draft) {
+        console.warn(`${tag} draft_json es NULL — CAE persistido pero PDF/monday no se actualizan automaticamente. El usuario puede re-disparar la receta para regenerar (Fase 1 reusara el CAE).`);
+        return;
+    }
+
+    // 8. Generar PDF
+    let pdfBuffer = null;
+    try {
+        pdfBuffer = await generateFacturaPdfBuffer({
+            company, draft, afipResult, itemId: row.item_id,
+        });
+        console.log(`${tag} PDF generado (${pdfBuffer?.length || 0} bytes)`);
+    } catch (pdfErr) {
+        console.error(`${tag} error generando PDF:`, pdfErr.message);
+    }
+
+    // 9. Token de monday (usamos el stored, el del webhook ya expiro)
+    let mondayToken = null;
+    try {
+        mondayToken = await getStoredMondayUserApiToken({
+            mondayAccountId: company.monday_account_id,
+        });
+    } catch (_) {}
+    if (!mondayToken) {
+        console.warn(`${tag} no hay monday token stored — DB recuperada pero monday no se actualiza`);
+        return;
+    }
+
+    // 10. Subir PDF a monday
+    if (pdfBuffer) {
+        try {
+            const pdfColumnId = await getInvoicePdfColumnId({
+                companyId: company.id, boardId: row.board_id,
+            });
+            if (pdfColumnId) {
+                const pvPadded  = String(row.attempted_pto_vta || draft?.punto_venta || '').padStart(2, '0');
+                const nroPadded = String(recovered.cbte_nro || '').padStart(4, '0');
+                await uploadPdfToMondayFileColumn({
+                    apiToken: mondayToken, itemId: row.item_id,
+                    fileColumnId: pdfColumnId,
+                    pdfBuffer,
+                    filename: `Factura_${row.invoice_type}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                });
+                console.log(`${tag} PDF subido a monday`);
+            } else {
+                console.warn(`${tag} no hay columna de PDF configurada en mapeo`);
+            }
+        } catch (upErr) {
+            console.error(`${tag} error subiendo PDF a monday:`, upErr.message);
+        }
+    }
+
+    // 11. Cambiar status del item a "Comprobante Creado"
+    try {
+        const readiness = await validateEmissionReadiness({
+            mondayAccountId: company.monday_account_id, boardId: row.board_id,
+        }).catch(() => null);
+        const statusColId = readiness?.boardConfig?.status_column_id;
+        const successLabel = readiness?.boardConfig?.success_label
+            || COMPROBANTE_STATUS_FLOW.success;
+        if (statusColId) {
+            await updateMondayItemStatus({
+                apiToken: mondayToken,
+                boardId: row.board_id,
+                itemId: row.item_id,
+                statusColumnId: statusColId,
+                label: successLabel,
+            });
+            console.log(`${tag} status del item cambiado a "${successLabel}"`);
+        }
+    } catch (statusErr) {
+        console.warn(`${tag} error cambiando status en monday:`, statusErr.message);
+    }
+
+    // 12. Postear update aclaratorio en el item
+    try {
+        const body =
+            `<b>🛠 Recuperacion automatica</b><br/><br/>` +
+            `La emision anterior tuvo un timeout de red, pero la factura SI fue emitida correctamente en AFIP.<br/>` +
+            `El sistema la recupero automaticamente:<br/><br/>` +
+            `<b>Tipo:</b> Factura ${row.invoice_type}<br/>` +
+            `<b>Nº de comprobante:</b> ${recovered.cbte_nro}<br/>` +
+            `<b>CAE:</b> ${recovered.cae}<br/>` +
+            `<b>Vto CAE:</b> ${recovered.cae_vencimiento || '—'}<br/>` +
+            `<b>Importe:</b> $${recovered.imp_total}`;
+        const mutation = `mutation { create_update(item_id: ${row.item_id}, body: ${JSON.stringify(body)}) { id } }`;
+        await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: mondayToken },
+            body: JSON.stringify({ query: mutation }),
+        });
+    } catch (upErr) {
+        console.warn(`${tag} no se pudo postear update aclaratorio:`, upErr.message);
+    }
+
+    console.log(`${tag} ✅ recovery completo`);
+}
+
+async function reconcileStuckEmissions() {
+    let rows;
+    try {
+        const result = await db.query(`
+            SELECT id, company_id, board_id, item_id, invoice_type,
+                   status, attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro,
+                   draft_json, reconciliation_attempts
+            FROM invoice_emissions
+            WHERE status != 'success'
+              AND attempted_cbte_nro IS NOT NULL
+              AND updated_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes'
+              AND (last_reconciliation_at IS NULL
+                   OR last_reconciliation_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes')
+            ORDER BY updated_at ASC
+            LIMIT $1
+        `, [RECONCILE_BATCH_SIZE]);
+        rows = result.rows;
+    } catch (err) {
+        console.error('[reconcile-cron] error buscando rows stuck:', err.message);
+        return;
+    }
+
+    if (rows.length === 0) return;
+    console.log(`[reconcile-cron] encontradas ${rows.length} emisiones stuck — procesando…`);
+
+    for (const row of rows) {
+        // Claim atomico para evitar que dos workers procesen la misma row.
+        // Si otro ya la claim-eo en los ultimos RECONCILE_STALE_MIN min, skip.
+        let claimed = false;
+        try {
+            const claim = await db.query(`
+                UPDATE invoice_emissions
+                SET last_reconciliation_at=CURRENT_TIMESTAMP,
+                    reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1
+                WHERE id=$1
+                  AND (last_reconciliation_at IS NULL
+                       OR last_reconciliation_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes')
+                RETURNING id
+            `, [row.id]);
+            claimed = claim.rowCount > 0;
+        } catch (err) {
+            console.error(`[reconcile-cron] error claim row id=${row.id}:`, err.message);
+            continue;
+        }
+        if (!claimed) {
+            console.log(`[reconcile-cron] row id=${row.id} ya tomada por otro worker, skip`);
+            continue;
+        }
+
+        try {
+            await reconcileSingleEmission(row);
+        } catch (err) {
+            console.error(`[reconcile-cron] error procesando row id=${row.id}:`, err.message);
+            console.error(err.stack?.slice(0, 600));
+        }
+    }
+}
+
+function scheduleReconciliationCron() {
+    setInterval(() => {
+        reconcileStuckEmissions().catch(err =>
+            console.error('[reconcile-cron] error en corrida:', err.message)
+        );
+    }, RECONCILE_INTERVAL_MS);
+    console.log(`[reconcile-cron] scheduled — corrida cada ${RECONCILE_INTERVAL_MS / 60000} min`);
+}
+
 // Arranca el servidor (local y monday code)
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
@@ -5681,6 +5989,17 @@ app.listen(PORT, async () => {
         runPadronEmisorDailyRefresh().catch(err =>
             console.error('[padron-cron startup] error:', err.message));
     }, 10000);
+
+    // Cron de reconciliacion (Fase 3): cada 5 min revisa rows stuck en
+    // 'error'/'processing' con attempted_cbte_nro y consulta a AFIP.
+    // Tambien dispara una corrida 60s post-boot por si quedaron rows
+    // huerfanas de un crash anterior.
+    scheduleReconciliationCron();
+    setTimeout(() => {
+        console.log('[reconcile-cron startup] disparando primera corrida post-boot');
+        reconcileStuckEmissions().catch(err =>
+            console.error('[reconcile-cron startup] error:', err.message));
+    }, 60000);
 });
 
 module.exports = app;
