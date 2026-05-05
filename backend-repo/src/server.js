@@ -1839,6 +1839,12 @@ function buildLeadColumnValues(eventType, data) {
         // friendly de NUESTRA app (Free/Small/Medium/Large/Enterprise).
         const arcaLabel = resolveArcaPlanLabel(sub.plan_id);
         if (arcaLabel) cv[LEADS_COLS.planAppArca] = { labels: [arcaLabel] };
+    } else if (eventType === 'install') {
+        // Install sin subscription = cliente arranca en plan Free.
+        // monday no manda subscription event hasta que el cliente elige plan
+        // o paga, entonces marcamos el lead como Free para que el CRM no
+        // quede vacio en esa columna.
+        cv[LEADS_COLS.planAppArca] = { labels: ['Free'] };
     }
     if (sub.is_trial != null)      cv[LEADS_COLS.enTrial]            = { checked: sub.is_trial ? 'true' : 'false' };
     if (sub.billing_period)        cv[LEADS_COLS.periodoFacturacion] = { labels: [billingPeriodLabel(sub.billing_period)] };
