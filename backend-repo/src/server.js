@@ -1534,6 +1534,27 @@ async function ensureInvoiceEmissionsTable() {
         ON invoice_emissions (status, attempted_cbte_nro, updated_at, last_reconciliation_at)
         WHERE status != 'success' AND attempted_cbte_nro IS NOT NULL
     `);
+
+    // Migracion Fase 4 - Nightly audit:
+    // Cada noche el cron consulta AFIP por cada factura nuestra exitosa
+    // (status='success', audit_status IS NULL) para verificar que CAE,
+    // numero e importe coincidan exactamente. Resultado en audit_status:
+    // 'ok' | 'mismatch' | 'not_found_in_afip' | 'error'.
+    // Una vez auditada, nunca se re-revisa (el campo deja de ser NULL).
+    await db.query(`
+        ALTER TABLE invoice_emissions
+            ADD COLUMN IF NOT EXISTS audit_status TEXT,
+            ADD COLUMN IF NOT EXISTS audited_at   TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS audit_findings JSONB
+    `);
+
+    // Indice parcial sobre rows pendientes de auditar para que el SELECT
+    // nocturno no escanee toda la tabla a medida que crece.
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_invoice_emissions_audit_pending
+        ON invoice_emissions (created_at DESC)
+        WHERE status = 'success' AND audit_status IS NULL
+    `);
 }
 
 async function ensureUserApiTokensTable() {
@@ -5679,6 +5700,316 @@ async function pregenerateWsfeTokenForCompanyId(companyId) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Fase 4 — Auditoria nocturna contra AFIP
+// ─────────────────────────────────────────────────────────────────────────
+// Cada noche a las 3 AM Argentina (6 UTC) el cron consulta AFIP para cada
+// factura emitida por la app (status='success', audit_status IS NULL) y
+// verifica que CAE, numero e importe coincidan. Una vez auditada, la row
+// queda marcada en audit_status y no se vuelve a revisar.
+//
+// Si todo OK: notifica a Slack con un resumen positivo.
+// Si hay discrepancias: notifica a Slack con detalle de cada caso para
+// revision manual urgente.
+
+const NIGHTLY_AUDIT_BATCH_SIZE = 500;
+
+async function markAuditResult(rowId, status, findings) {
+    await db.query(
+        `UPDATE invoice_emissions
+         SET audit_status=$2, audited_at=CURRENT_TIMESTAMP, audit_findings=$3
+         WHERE id=$1`,
+        [rowId, status, JSON.stringify(findings || {})]
+    );
+}
+
+// Audita una row contra AFIP. Retorna { status, findings } sin tocar la DB.
+async function auditSingleEmission({ row, company, token, sign }) {
+    const afipResult = row.afip_result_json || {};
+    if (!afipResult.cae) {
+        return { status: 'error', findings: { error: 'sin afip_result_json o sin CAE' } };
+    }
+
+    const cbteTypeMap = { A: 1, B: 6, C: 11 };
+    const cbteType = row.attempted_cbte_tipo
+        || cbteTypeMap[afipResult.tipo_comprobante]
+        || cbteTypeMap[row.invoice_type];
+    if (!cbteType) {
+        return { status: 'error', findings: { error: `cbteType no resuelto (invoice_type=${row.invoice_type})` } };
+    }
+
+    const pointOfSale = row.attempted_pto_vta
+        || row.draft_json?.punto_venta
+        || company.default_point_of_sale;
+    const cbteNro = afipResult.numero_comprobante || row.attempted_cbte_nro;
+    if (!pointOfSale || !cbteNro) {
+        return { status: 'error', findings: { error: 'pointOfSale o cbteNro faltante' } };
+    }
+
+    let recovered;
+    try {
+        recovered = await afipConsultarComprobante({
+            token, sign, cuit: company.cuit,
+            pointOfSale, cbteType, cbteNro,
+        });
+    } catch (err) {
+        return { status: 'error', findings: { error: `consulta AFIP fallo: ${err.message}` } };
+    }
+
+    if (!recovered || !recovered.cae) {
+        return {
+            status: 'not_found_in_afip',
+            findings: {
+                our_cae: afipResult.cae,
+                our_cbte_nro: cbteNro,
+                our_pto_vta: pointOfSale,
+                our_cbte_type: cbteType,
+            },
+        };
+    }
+
+    const mismatches = [];
+    if (recovered.cae !== afipResult.cae) {
+        mismatches.push({ field: 'cae', ours: afipResult.cae, afip: recovered.cae });
+    }
+    if (Number(recovered.cbte_nro) !== Number(cbteNro)) {
+        mismatches.push({ field: 'cbte_nro', ours: cbteNro, afip: recovered.cbte_nro });
+    }
+    const ourTotal = Number(
+        row.draft_json?.importe_total
+        || ((Number(afipResult.imp_neto) || 0) + (Number(afipResult.imp_iva) || 0))
+        || 0
+    );
+    if (ourTotal > 0 && Math.abs(Number(recovered.imp_total) - ourTotal) > 0.01) {
+        mismatches.push({ field: 'imp_total', ours: ourTotal, afip: recovered.imp_total });
+    }
+
+    if (mismatches.length === 0) {
+        return { status: 'ok', findings: { afip_cae: recovered.cae, afip_cbte_nro: recovered.cbte_nro } };
+    }
+    return { status: 'mismatch', findings: { mismatches, afip_cae: recovered.cae } };
+}
+
+async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, durationMs }) {
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) {
+        console.warn('[nightly-audit] SLACK_WEBHOOK_URL no configurado — skip notificacion');
+        return;
+    }
+
+    const total = ok + mismatch + notFound + errors;
+    if (total === 0) return; // nada que reportar
+
+    // Fecha "ayer" (en UTC simplificado — 3am AR ~ 6am UTC, asi que la fecha
+    // anterior representa el dia auditado).
+    const auditedDate = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const hasIssues = mismatch > 0 || notFound > 0;
+    const durationStr = `${(durationMs / 1000).toFixed(1)}s`;
+
+    let text;
+    if (!hasIssues && errors === 0) {
+        text = [
+            `:white_check_mark: *Auditoria nocturna AFIP — ${auditedDate}*`,
+            ``,
+            `Facturas auditadas: *${total}*`,
+            `Estado: *TODAS CORRECTAS*`,
+            ``,
+            `_Las facturas emitidas por la app coinciden 100% con AFIP (CAE, numero e importe)._`,
+            `_Duracion de la corrida: ${durationStr}_`,
+        ].join('\n');
+    } else if (!hasIssues && errors > 0) {
+        text = [
+            `:large_yellow_circle: *Auditoria nocturna AFIP — ${auditedDate}*`,
+            ``,
+            `Facturas auditadas: *${total}*`,
+            `:white_check_mark: OK: ${ok}`,
+            `:warning: Errores tecnicos (no auditables): ${errors}`,
+            ``,
+            `_Sin discrepancias en lo que pudimos consultar. Las ${errors} con error tecnico (cert / red / data faltante) requieren revision manual._`,
+        ].join('\n');
+    } else {
+        const issues = results.filter(r => r.status === 'mismatch' || r.status === 'not_found_in_afip');
+        const detailLines = issues.slice(0, 10).map((r, idx) => {
+            const accLabel = r.company?.business_name || `account=${r.company?.monday_account_id || '?'}`;
+            const afipR = r.row.afip_result_json || {};
+            const ptoStr = String(r.row.attempted_pto_vta || r.row.draft_json?.punto_venta || '').padStart(2, '0');
+            const nroStr = String(afipR.numero_comprobante || r.row.attempted_cbte_nro || '').padStart(8, '0');
+            const tipoStr = `Factura ${r.row.invoice_type || afipR.tipo_comprobante || '?'} N° ${ptoStr}-${nroStr}`;
+            const itemRef = `account=${r.company?.monday_account_id || '?'} board=${r.row.board_id} item=${r.row.item_id}`;
+
+            if (r.status === 'not_found_in_afip') {
+                return `*${idx+1}.* ${accLabel} — ${tipoStr}\n   :rotating_light: NO EXISTE EN AFIP\n   Nuestro CAE: \`${afipR.cae || '?'}\`\n   ${itemRef}`;
+            }
+            const mlines = (r.findings.mismatches || []).map(m =>
+                `   • *${m.field}*: nuestro=\`${m.ours}\` vs AFIP=\`${m.afip}\``
+            ).join('\n');
+            return `*${idx+1}.* ${accLabel} — ${tipoStr}\n   :warning: Mismatch:\n${mlines}\n   ${itemRef}`;
+        }).join('\n\n');
+
+        const more = issues.length > 10
+            ? `\n\n_(... y ${issues.length - 10} mas. Ver SELECT * FROM invoice_emissions WHERE audit_status IN ('mismatch','not_found_in_afip'))_`
+            : '';
+
+        text = [
+            `:rotating_light: *DISCREPANCIA AFIP — Auditoria nocturna ${auditedDate}*`,
+            ``,
+            `Facturas auditadas: *${total}*`,
+            `:white_check_mark: OK: ${ok}`,
+            `:rotating_light: Discrepancias criticas: ${notFound + mismatch}`,
+            errors > 0 ? `:warning: Errores tecnicos: ${errors}` : null,
+            ``,
+            `*REVISAR MANUALMENTE EN AFIP WEB:*`,
+            ``,
+            detailLines + more,
+        ].filter(Boolean).join('\n');
+    }
+
+    try {
+        const res = await fetchWithRetry(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'slack-audit' });
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            console.error(`[nightly-audit] slack devolvio ${res.status}: ${body.slice(0, 200)}`);
+        } else {
+            console.log(`[nightly-audit] resumen enviado a slack (ok=${ok}, mismatch=${mismatch}, not_found=${notFound}, errors=${errors})`);
+        }
+    } catch (err) {
+        console.error('[nightly-audit] error notificando a slack:', err.message);
+    }
+}
+
+async function runNightlyAfipAudit() {
+    const startedAt = Date.now();
+    console.log('[nightly-audit] iniciando…');
+
+    let rows;
+    try {
+        const result = await db.query(`
+            SELECT id, company_id, board_id, item_id, invoice_type, status,
+                   attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro,
+                   afip_result_json, draft_json, created_at
+            FROM invoice_emissions
+            WHERE status='success' AND audit_status IS NULL
+            ORDER BY created_at DESC
+            LIMIT $1
+        `, [NIGHTLY_AUDIT_BATCH_SIZE]);
+        rows = result.rows;
+    } catch (err) {
+        console.error('[nightly-audit] error buscando rows:', err.message);
+        return;
+    }
+
+    if (rows.length === 0) {
+        console.log('[nightly-audit] sin facturas pendientes de auditar — skip');
+        return;
+    }
+
+    console.log(`[nightly-audit] auditando ${rows.length} facturas…`);
+
+    // Agrupar por company_id para reusar el token WSAA (uno por empresa).
+    const byCompany = new Map();
+    for (const row of rows) {
+        if (!byCompany.has(row.company_id)) byCompany.set(row.company_id, []);
+        byCompany.get(row.company_id).push(row);
+    }
+
+    const results = [];
+
+    for (const [companyId, companyRows] of byCompany) {
+        let company = null;
+        let token = null;
+        let sign = null;
+
+        // Setup company + cert + token. Si falla, marcamos todas las rows de
+        // esta empresa como 'error' y seguimos con la siguiente empresa.
+        try {
+            const compRes = await db.query(
+                `SELECT id, monday_account_id, business_name, cuit, default_point_of_sale
+                 FROM companies WHERE id=$1 LIMIT 1`,
+                [companyId]
+            );
+            company = compRes.rows[0];
+            if (!company) throw new Error('company no encontrada');
+
+            const certRes = await db.query(
+                'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
+                [companyId]
+            );
+            if (!certRes.rows[0]) throw new Error('certs AFIP faltantes');
+
+            const certPem = normalizePem(certRes.rows[0].crt_file_url, 'CERTIFICATE');
+            const decKey  = CryptoJS.AES.decrypt(
+                certRes.rows[0].encrypted_private_key, process.env.ENCRYPTION_KEY
+            ).toString(CryptoJS.enc.Utf8);
+            const keyPem  = normalizePem(decKey, 'PRIVATE KEY');
+
+            const tokenData = await afipAuthModule.getToken({
+                certPem, keyPem, cuit: company.cuit, service: 'wsfe',
+                companyId: company.id,
+            });
+            token = tokenData.token;
+            sign  = tokenData.sign;
+        } catch (setupErr) {
+            console.warn(`[nightly-audit] setup company ${companyId} fallo: ${setupErr.message} — marcando ${companyRows.length} rows como error`);
+            for (const row of companyRows) {
+                try {
+                    await markAuditResult(row.id, 'error', { error: `setup company: ${setupErr.message}` });
+                } catch (_) {}
+                results.push({ row, company, status: 'error', findings: { error: setupErr.message } });
+            }
+            continue;
+        }
+
+        // Auditar cada row de esta empresa con el mismo token
+        for (const row of companyRows) {
+            let outcome;
+            try {
+                outcome = await auditSingleEmission({ row, company, token, sign });
+            } catch (err) {
+                outcome = { status: 'error', findings: { error: err.message } };
+            }
+            try {
+                await markAuditResult(row.id, outcome.status, outcome.findings);
+            } catch (dbErr) {
+                console.error(`[nightly-audit] error marcando row ${row.id}:`, dbErr.message);
+            }
+            results.push({ row, company, status: outcome.status, findings: outcome.findings });
+
+            // Pausa minima para no saturar AFIP (~10 reqs/seg max).
+            await new Promise(r => setTimeout(r, 100));
+        }
+    }
+
+    const ok       = results.filter(r => r.status === 'ok').length;
+    const mismatch = results.filter(r => r.status === 'mismatch').length;
+    const notFound = results.filter(r => r.status === 'not_found_in_afip').length;
+    const errors   = results.filter(r => r.status === 'error').length;
+    const durationMs = Date.now() - startedAt;
+
+    console.log(`[nightly-audit] completado en ${(durationMs/1000).toFixed(1)}s — ok=${ok}, mismatch=${mismatch}, not_found=${notFound}, errors=${errors}`);
+
+    await notifyAuditSummary({ results, ok, mismatch, notFound, errors, durationMs });
+}
+
+function scheduleNightlyAfipAudit() {
+    // 3 AM Argentina (UTC-3) = 6 AM UTC.
+    const utcHour = 6;
+    const now = new Date();
+    const next = new Date(now);
+    next.setUTCHours(utcHour, 0, 0, 0);
+    if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
+    const delayMs = next.getTime() - now.getTime();
+    console.log(`[nightly-audit] proxima corrida: ${next.toISOString()} (en ${Math.round(delayMs/1000/60)} min)`);
+    setTimeout(async () => {
+        try { await runNightlyAfipAudit(); }
+        catch (err) { console.error('[nightly-audit] error en corrida:', err.message); }
+        scheduleNightlyAfipAudit(); // re-agendar para la noche siguiente
+    }, delayMs);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Fase 3 — Cron de reconciliacion de emisiones huerfanas
 // ─────────────────────────────────────────────────────────────────────────
 // Cada 5 minutos buscamos rows en invoice_emissions que quedaron stuck
@@ -6000,6 +6331,11 @@ app.listen(PORT, async () => {
         reconcileStuckEmissions().catch(err =>
             console.error('[reconcile-cron startup] error:', err.message));
     }, 60000);
+
+    // Cron de auditoria nocturna (Fase 4): cada noche a las 3 AM Argentina
+    // verifica todas las facturas exitosas contra AFIP via FECompConsultar.
+    // Marca audit_status en DB y notifica resumen a Slack.
+    scheduleNightlyAfipAudit();
 });
 
 module.exports = app;
