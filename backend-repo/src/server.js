@@ -1474,13 +1474,30 @@ const LEADS_COLS = {
     estado:             'color_mm2qgzh',      // Instalada/Desinstalada/Trial/Suscripto/Cancelado
     appVersion:         'text_mm2pcr2h',      // version_data.number
     // Suscripción
-    planApp:            'dropdown_mm2eayn',   // subscription.plan_id (label)
+    planApp:            'dropdown_mm2eayn',   // subscription.plan_id (label crudo de monday)
+    planAppArca:        'dropdown_mm325df0',  // plan friendly de NUESTRA app (Free/Small/Medium/Large/Enterprise)
     idPlanPago:         'text_mm2qy7m9',      // subscription.plan_id (raw)
     enTrial:            'boolean_mm2qeprp',   // subscription.is_trial
     periodoFacturacion: 'dropdown_mm2qgkm5',  // subscription.billing_period (Mensual/Anual)
     diasRestantes:      'numeric_mm2qv3va',   // subscription.days_left
     seatsPlan:          'numeric_mm2qzhb7',   // subscription.max_units
 };
+
+// Mapeo del plan_id que manda monday a nuestro nombre friendly de plan.
+// Cuando configures los precios reales en monday Developer Center, los
+// plan_ids ahi pueden ser distintos — actualizar este map para que matchee.
+const ARCA_PLAN_LABEL = {
+    free:       'Free',
+    small:      'Small',
+    medium:     'Medium',
+    large:      'Large',
+    enterprise: 'Enterprise',
+};
+function resolveArcaPlanLabel(rawPlanId) {
+    if (!rawPlanId) return null;
+    const normalized = String(rawPlanId).toLowerCase().trim();
+    return ARCA_PLAN_LABEL[normalized] || null;
+}
 
 // Mapa evento → label del dropdown "Estado"
 const LIFECYCLE_STATE_LABEL = {
@@ -1818,6 +1835,10 @@ function buildLeadColumnValues(eventType, data) {
     if (sub.plan_id) {
         cv[LEADS_COLS.planApp]    = { labels: [String(sub.plan_id)] };
         cv[LEADS_COLS.idPlanPago] = String(sub.plan_id);
+        // Tambien actualizar el dropdown de "Plan De APP" con el nombre
+        // friendly de NUESTRA app (Free/Small/Medium/Large/Enterprise).
+        const arcaLabel = resolveArcaPlanLabel(sub.plan_id);
+        if (arcaLabel) cv[LEADS_COLS.planAppArca] = { labels: [arcaLabel] };
     }
     if (sub.is_trial != null)      cv[LEADS_COLS.enTrial]            = { checked: sub.is_trial ? 'true' : 'false' };
     if (sub.billing_period)        cv[LEADS_COLS.periodoFacturacion] = { labels: [billingPeriodLabel(sub.billing_period)] };
