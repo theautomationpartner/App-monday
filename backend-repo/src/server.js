@@ -1168,14 +1168,84 @@ const INVOICE_TYPE_CONFIG = {
     C: { cbteType: 11, ivaRate: 0,    requiresCuit: false },
 };
 
-async function afipIssueFactura({ token, sign, cuit, pointOfSale, draft, invoiceType = 'C' }) {
+async function afipIssueFactura({
+    token, sign, cuit, pointOfSale, draft, invoiceType = 'C',
+    // Fase 1 — idempotency: si en un attempt anterior reservamos un cbteNro
+    // y la respuesta de AFIP no llego (timeout / micro-corte), `previousCbteNro`
+    // permite consultar AFIP primero (FECompConsultar) para verificar si la
+    // factura realmente se emitio. `onCbteNroAssigned` es un callback que se
+    // invoca cuando reservamos un cbteNro nuevo, para persistirlo en DB ANTES
+    // del SOAP — asi sabemos que numero "intentamos" en caso de timeout.
+    previousCbteNro = null,
+    onCbteNroAssigned = null,
+}) {
     const config = INVOICE_TYPE_CONFIG[invoiceType];
     if (!config) throw new Error(`Tipo de factura no soportado: ${invoiceType}`);
 
     const endpoints = getAfipEndpoints();
     const { cbteType } = config;
+
+    // ── Fase 1 — Recovery de attempt previo ──────────────────────────────
+    // Si hay cbteNro de un intento anterior, primero consultar AFIP. Si la
+    // factura ya existe (AFIP la proceso pero la respuesta no nos llego),
+    // reutilizamos esos datos en vez de reemitir.
+    if (previousCbteNro) {
+        try {
+            const recovered = await afipConsultarComprobante({
+                token, sign, cuit, pointOfSale, cbteType, cbteNro: previousCbteNro,
+            });
+            if (recovered && recovered.cae) {
+                console.log(`[wsfe] recovery: cbteNro=${previousCbteNro} ya existe en AFIP con CAE=${recovered.cae} — reutilizando emision previa`);
+                const totalAmountForCheck = Number(draft.importe_total || 0);
+                return {
+                    resultado: recovered.resultado || 'A',
+                    cae: recovered.cae,
+                    cae_vencimiento: recovered.cae_vencimiento,
+                    numero_comprobante: recovered.cbte_nro,
+                    tipo_comprobante: invoiceType,
+                    imp_neto: recovered.imp_neto,
+                    imp_iva: recovered.imp_iva,
+                    observacion: null,
+                    raw_xml: recovered.raw_xml_preview || '',
+                    recovered: true,
+                    verification: {
+                        cae_match: true,
+                        cbte_nro_match: recovered.cbte_nro === previousCbteNro,
+                        imp_total_match: Math.abs(recovered.imp_total - totalAmountForCheck) <= 0.01,
+                        checked_at: new Date().toISOString(),
+                        source: 'recovery',
+                    },
+                };
+            }
+            console.log(`[wsfe] recovery: cbteNro=${previousCbteNro} no existe en AFIP — continuando con emision nueva`);
+        } catch (recErr) {
+            // Si la consulta falla (red, AFIP lenta), seguimos con emision
+            // nueva. Riesgo conocido: si el cbte previo si existia, podriamos
+            // duplicar. Pero bloquear emision por una falla de red transitoria
+            // de FECompConsultar tambien es malo. Loggeamos para auditoria.
+            console.warn(`[wsfe] recovery: error consultando cbteNro=${previousCbteNro}: ${recErr.message} — continuando con emision nueva`);
+        }
+    }
+
     const lastVoucher = await afipGetLastVoucher({ token, sign, cuit, pointOfSale, cbteType });
     const nextVoucher = lastVoucher + 1;
+
+    // Persistir el cbteNro reservado ANTES del SOAP para que en caso de
+    // timeout el retry pueda recuperarlo via FECompConsultar.
+    if (typeof onCbteNroAssigned === 'function') {
+        try {
+            await onCbteNroAssigned({
+                cbteType,
+                pointOfSale: Number(pointOfSale),
+                cbteNro: nextVoucher,
+            });
+        } catch (cbErr) {
+            // No bloquea la emision: si fallamos persistiendo el numero
+            // reservado, perdemos solo la capacidad de recovery — la
+            // emision en si sigue funcionando.
+            console.warn(`[wsfe] onCbteNroAssigned fallo: ${cbErr.message}`);
+        }
+    }
 
     const docNumberDigits = String(draft.receptor_cuit_o_dni || '').replace(/\D/g, '');
     // A siempre requiere CUIT (docType=80), B/C: CUIT si 11 dígitos, DNI si 7-8, consumidor final si vacío
@@ -1433,6 +1503,19 @@ async function ensureInvoiceEmissionsTable() {
                 ALTER TABLE invoice_emissions ALTER COLUMN company_id TYPE UUID USING NULL;
             END IF;
         END $$;
+    `);
+
+    // Migracion Fase 1 - Idempotency:
+    // Guardamos el cbte_nro/cbte_tipo/pto_vta del intento de emision (antes
+    // de que AFIP responda) para que en caso de timeout, en el retry podamos
+    // consultar AFIP con FECompConsultar y verificar si la factura realmente
+    // se emitio o no. Sin estos campos, no podriamos saber que numero
+    // intentamos en el attempt anterior.
+    await db.query(`
+        ALTER TABLE invoice_emissions
+            ADD COLUMN IF NOT EXISTS attempted_cbte_tipo INTEGER,
+            ADD COLUMN IF NOT EXISTS attempted_pto_vta   INTEGER,
+            ADD COLUMN IF NOT EXISTS attempted_cbte_nro  INTEGER
     `);
 }
 
@@ -4148,10 +4231,25 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             // ── 3. Idempotencia ────────────────────────────────────────────────
             const typeForIdempotency = resolvedType || 'AUTO';
             const existing = await db.query(
-                `SELECT id, status, afip_result_json FROM invoice_emissions
+                `SELECT id, status, afip_result_json,
+                        attempted_cbte_nro, attempted_cbte_tipo, attempted_pto_vta
+                 FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4 LIMIT 1`,
                 [company.id, boardId, itemId, typeForIdempotency]
             );
+
+            // Fase 1 — recovery: si existe una row 'processing' con cbteNro
+            // reservado, asumimos que un attempt anterior pudo haber timeout-eado
+            // despues de enviar a AFIP. Pasamos ese cbteNro a afipIssueFactura
+            // para que consulte AFIP antes de reemitir.
+            const previousCbteNro = (existing.rows[0]?.status === 'processing'
+                && existing.rows[0]?.attempted_cbte_nro)
+                ? Number(existing.rows[0].attempted_cbte_nro)
+                : null;
+            if (previousCbteNro) {
+                console.log(`[emit] Idempotency: detectado intento previo en 'processing' con cbteNro=${previousCbteNro} — intentaremos recovery via FECompConsultar`);
+            }
+
             if (existing.rows[0]?.status === 'success') {
                 const prevUpload = existing.rows[0].afip_result_json?.monday_upload;
                 const uploadComplete = prevUpload?.uploaded === true
@@ -4445,6 +4543,22 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                     pointOfSale: company.default_point_of_sale,
                     draft,
                     invoiceType: tipo,
+                    previousCbteNro,
+                    onCbteNroAssigned: async ({ cbteType, pointOfSale: pv, cbteNro }) => {
+                        // Persistimos el numero reservado ANTES de enviar a AFIP.
+                        // Si el SOAP timeout-ea, en el retry leemos este nro y
+                        // consultamos AFIP para recuperar el estado real.
+                        await db.query(
+                            `UPDATE invoice_emissions
+                             SET attempted_cbte_tipo=$5,
+                                 attempted_pto_vta=$6,
+                                 attempted_cbte_nro=$7,
+                                 updated_at=CURRENT_TIMESTAMP
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
+                            [company.id, boardId, itemId, typeForIdempotency,
+                             cbteType, pv, cbteNro]
+                        );
+                    },
                 });
             }
 
