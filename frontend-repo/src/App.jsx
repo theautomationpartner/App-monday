@@ -361,6 +361,10 @@ const App = () => {
     processing_label: COMPROBANTE_STATUS_FLOW.processing,
     success_label: COMPROBANTE_STATUS_FLOW.success,
     error_label: COMPROBANTE_STATUS_FLOW.error,
+    // Toggles opcionales (default TRUE para que clientes nuevos tengan el
+    // comportamiento "todo automatico" out of the box).
+    auto_rename_item: true,    // ej: "Cliente Juan" -> "Factura B N° 0002-00000019"
+    auto_update_status: true,  // ej: Procesando -> Comprobante Creado / Error
   });
   // Todos los campos del mapeo son obligatorios — se tienen que mapear sí o sí
   // para que el comprobante pueda emitirse correctamente.
@@ -380,16 +384,19 @@ const App = () => {
   ];
   const optionalMappingFields = []; // ya no hay opcionales
   // Campos obligatorios de operación (columnas del tablero, no del mapeo de datos):
-  //   - status_column_id: columna Status donde ocurre el trigger de emisión
-  //   - invoice_pdf_column_id: columna File donde se sube el PDF generado
-  const operationCompleted = Boolean(boardConfig.status_column_id) && Boolean(boardConfig.invoice_pdf_column_id);
+  //   - status_column_id: columna Status — solo si auto_update_status=true
+  //   - invoice_pdf_column_id: columna File donde se sube el PDF generado (siempre)
+  const statusColumnRequired = Boolean(boardConfig.auto_update_status);
+  const operationCompleted =
+    Boolean(boardConfig.invoice_pdf_column_id) &&
+    (!statusColumnRequired || Boolean(boardConfig.status_column_id));
   const mappingCompleted = requiredMappingFields.every((field) => Boolean(mapping[field])) && operationCompleted;
   const operationMappedCount =
-    (Boolean(boardConfig.status_column_id) ? 1 : 0) +
+    (statusColumnRequired ? (Boolean(boardConfig.status_column_id) ? 1 : 0) : 0) +
     (Boolean(boardConfig.invoice_pdf_column_id) ? 1 : 0);
   const mappedRequiredCount =
     requiredMappingFields.filter((field) => Boolean(mapping[field])).length + operationMappedCount;
-  const totalRequiredCount = requiredMappingFields.length + 2; // +2: status + invoice pdf columns
+  const totalRequiredCount = requiredMappingFields.length + (statusColumnRequired ? 2 : 1); // +2: status + pdf | +1: solo pdf
   const mappedOptionalCount = 0;
 
   const normalizeText = (value) =>
@@ -762,6 +769,9 @@ const App = () => {
           // Extraer el invoice_pdf_column_id del required_columns_json (lo guarda el backend como array)
           const requiredCols = Array.isArray(data.boardConfig.required_columns) ? data.boardConfig.required_columns : [];
           const invoicePdfCol = requiredCols.find((c) => c?.key === "invoice_pdf");
+          // Defaults TRUE para clientes existentes: si el backend no devuelve
+          // los flags (cliente legacy sin migrar), arrancamos con true para
+          // que la app siga "haciendolo todo" como hasta ahora.
           setBoardConfig({
             status_column_id: data.boardConfig.status_column_id || "",
             invoice_pdf_column_id: invoicePdfCol?.resolved_column_id || "",
@@ -769,6 +779,8 @@ const App = () => {
             processing_label: COMPROBANTE_STATUS_FLOW.processing,
             success_label: COMPROBANTE_STATUS_FLOW.success,
             error_label: COMPROBANTE_STATUS_FLOW.error,
+            auto_rename_item: data.boardConfig.auto_rename_item !== false,
+            auto_update_status: data.boardConfig.auto_update_status !== false,
           });
         }
 
@@ -1360,22 +1372,53 @@ const App = () => {
   };
 
   const handleSaveVisualMapping = async () => {
+    // ─── Validación estricta antes de guardar ─────────────────────────
+    // Recolectamos TODOS los problemas y los mostramos juntos en un toast
+    // claro. El cliente sabe exactamente qué le falta sin tener que
+    // probar y guardar varias veces.
     const missingFields = requiredMappingFields.filter((field) => !mapping[field]);
-    if (missingFields.length > 0) {
-      setMissingMappingFields(missingFields);
-      // Auto-limpiar el highlight después de 3s
-      setTimeout(() => setMissingMappingFields([]), 3000);
-      return;
-    }
-    setMissingMappingFields([]);
+    const blockers = [];
 
-    // Validar columnas de operación (status + PDF) antes de guardar
-    if (!boardConfig.status_column_id) {
-      showToast("error", "Elegí la Columna de estado del tablero antes de guardar");
-      return;
+    if (missingFields.length > 0) {
+      // Highlight visual en los selectores que faltan
+      setMissingMappingFields(missingFields);
+      setTimeout(() => setMissingMappingFields([]), 5000);
+      // Construir labels legibles a partir de los IDs canónicos
+      const labelMap = {
+        fecha_emision:        "Fecha de Emisión",
+        receptor_cuit:        "CUIT / DNI Receptor",
+        condicion_venta:      "Condición de Venta",
+        fecha_servicio_desde: "Fecha Servicio Desde",
+        fecha_servicio_hasta: "Fecha Servicio Hasta",
+        fecha_vto_pago:       "Fecha Vto. Pago",
+        concepto:             "Concepto / Producto",
+        cantidad:             "Cantidad",
+        precio_unitario:      "Precio Unitario",
+        prod_serv:            "Prod/Serv",
+        unidad_medida:        "Unidad de Medida",
+        alicuota_iva:         "Alícuota IVA %",
+      };
+      missingFields.forEach((f) => blockers.push(`Mapear "${labelMap[f] || f}"`));
+    } else {
+      setMissingMappingFields([]);
     }
+
+    // Validar columnas de operación según los toggles activos
     if (!boardConfig.invoice_pdf_column_id) {
-      showToast("error", "Elegí la Columna Comprobante PDF antes de guardar");
+      blockers.push('Seleccionar la columna donde subir el PDF (en "Columna Comprobante PDF")');
+    }
+    // status_column_id solo es obligatoria si auto_update_status está ON
+    if (boardConfig.auto_update_status && !boardConfig.status_column_id) {
+      blockers.push('Seleccionar la columna de estado (porque activaste "Cambiar el estado del item")');
+    }
+
+    if (blockers.length > 0) {
+      // Mostrar TODOS los problemas en un solo toast con bullets
+      const lines = blockers.map((b, i) => `${i + 1}. ${b}`).join("\n");
+      showToast(
+        "error",
+        `No se puede guardar — te falta:\n${lines}`
+      );
       return;
     }
 
@@ -1386,7 +1429,8 @@ const App = () => {
 
     setIsLoading(true);
     try {
-      // 1) Guardar el mapeo visual de campos
+      // 1) Guardar el mapeo visual de campos (con is_complete=true para que
+      //    el backend tambien valide los 12 campos obligatorios)
       await api.post(`/mappings`, {
         monday_account_id: context.account.id.toString(),
         workspace_id: workspaceId || null,
@@ -1395,22 +1439,27 @@ const App = () => {
         app_feature_id: appFeatureId,
         mapping,
         is_locked: true,
+        is_complete: true,
       });
 
-      // 2) Guardar el board-config con las columnas de operación (status + PDF)
+      // 2) Guardar el board-config (incluye los toggles auto_*)
       await api.post(`/board-config`, {
         monday_account_id: context.account.id.toString(),
         workspace_id: workspaceId || null,
         board_id: boardId,
         view_id: viewIdFromHref,
         app_feature_id: appFeatureId,
-        status_column_id: boardConfig.status_column_id,
+        // status_column_id solo se manda si el toggle esta activo. Si esta
+        // OFF, el backend lo persiste como NULL.
+        status_column_id: boardConfig.auto_update_status ? boardConfig.status_column_id : null,
         trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
         success_label: COMPROBANTE_STATUS_FLOW.success,
         error_label: COMPROBANTE_STATUS_FLOW.error,
         required_columns: [
           { key: "invoice_pdf", resolved_column_id: boardConfig.invoice_pdf_column_id },
         ],
+        auto_rename_item:   Boolean(boardConfig.auto_rename_item),
+        auto_update_status: Boolean(boardConfig.auto_update_status),
       });
 
       setHasSavedMapping(true);
@@ -2826,38 +2875,113 @@ const App = () => {
               </div>
             )}
 
-            {/* ─── Columnas de operación: status trigger + PDF output ─── */}
+            {/* ─── Acciones automáticas en el item (2 checkboxes opcionales) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Columnas de operación</span>
-                <span className="gd-dim">Obligatorias</span>
+                <span className="h-eyebrow">Acciones automáticas en el item</span>
+                <span className="gd-dim">Opcionales</span>
+              </div>
+              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>
+                Decidí qué cambios automáticos hace la app sobre el item de monday cuando se emite la factura.
+              </p>
+
+              {/* Checkbox 1: renombrar item */}
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "var(--surface-100, #f7f8fa)",
+                  marginBottom: 10,
+                  cursor: inMappingEditMode ? "pointer" : "default",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(boardConfig.auto_rename_item)}
+                  disabled={!inMappingEditMode}
+                  onChange={(e) =>
+                    setBoardConfig((prev) => ({ ...prev, auto_rename_item: e.target.checked }))
+                  }
+                  style={{ marginTop: 3, cursor: inMappingEditMode ? "pointer" : "default" }}
+                />
+                <span style={{ flex: 1 }}>
+                  <strong>Renombrar el item con el N° de factura</strong>
+                  <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
+                    Ej: <em>"Cliente Juan"</em> pasa a <em>"Factura B N° 0002-00000019"</em> tras emitir.
+                  </span>
+                </span>
+              </label>
+
+              {/* Checkbox 2: cambiar estado del item */}
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "var(--surface-100, #f7f8fa)",
+                  cursor: inMappingEditMode ? "pointer" : "default",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={Boolean(boardConfig.auto_update_status)}
+                  disabled={!inMappingEditMode}
+                  onChange={(e) =>
+                    setBoardConfig((prev) => ({ ...prev, auto_update_status: e.target.checked }))
+                  }
+                  style={{ marginTop: 3, cursor: inMappingEditMode ? "pointer" : "default" }}
+                />
+                <span style={{ flex: 1 }}>
+                  <strong>Cambiar el estado del item automáticamente</strong>
+                  <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
+                    Ej: <em>Procesando</em> → <em>Comprobante Creado</em>, o <em>Error</em> si falla.
+                  </span>
+                </span>
+              </label>
+
+              {/* Selector de columna de estado: solo aparece si auto_update_status = true */}
+              {boardConfig.auto_update_status && (
+                <div className="gd-confirm-grid" style={{ marginTop: 12 }}>
+                  <div className="gd-confirm-row">
+                    <span className="gd-confirm-label">Columna de estado del item</span>
+                    {inMappingEditMode ? (
+                      <select
+                        className={`invoice-preview-select ${boardConfig.status_column_id ? "mapped" : "unmapped"}`}
+                        value={boardConfig.status_column_id || ""}
+                        onChange={(e) => setBoardConfig((prev) => ({ ...prev, status_column_id: e.target.value }))}
+                      >
+                        <option value="">— Elegir columna Status —</option>
+                        {statusColumns.map((c) => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="gd-confirm-value">
+                        {statusColumns.find((c) => c.value === boardConfig.status_column_id)?.label || (
+                          <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                        )}
+                      </span>
+                    )}
+                    <span className="gd-confirm-hint">
+                      La app va a cambiar esta columna a "{COMPROBANTE_STATUS_FLOW.processing}" al disparar la emisión, y a "{COMPROBANTE_STATUS_FLOW.success}" cuando AFIP devuelva el CAE.
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ─── Columna de salida del PDF (siempre obligatoria) ─── */}
+            <div className="gd-card" style={{ marginBottom: 16 }}>
+              <div className="gd-card-head">
+                <span className="h-eyebrow">Columna del PDF emitido</span>
+                <span className="gd-dim">Obligatoria</span>
               </div>
               <div className="gd-confirm-grid">
-                <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Columna de estado (trigger)</span>
-                  {inMappingEditMode ? (
-                    <select
-                      className={`invoice-preview-select ${boardConfig.status_column_id ? "mapped" : "unmapped"}`}
-                      value={boardConfig.status_column_id || ""}
-                      onChange={(e) => setBoardConfig((prev) => ({ ...prev, status_column_id: e.target.value }))}
-                    >
-                      <option value="">— Elegir columna Status —</option>
-                      {statusColumns.map((c) => (
-                        <option key={c.value} value={c.value}>{c.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span className="gd-confirm-value">
-                      {statusColumns.find((c) => c.value === boardConfig.status_column_id)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
-                      )}
-                    </span>
-                  )}
-                  <span className="gd-confirm-hint">
-                    La columna donde el usuario cambia el estado a "{COMPROBANTE_STATUS_FLOW.trigger}" para disparar la emisión.
-                  </span>
-                </div>
-
                 <div className="gd-confirm-row">
                   <span className="gd-confirm-label">Columna Comprobante PDF</span>
                   {inMappingEditMode ? (

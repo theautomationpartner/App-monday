@@ -694,7 +694,8 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
         }
 
         const boardCfgResult = await db.query(
-            `SELECT status_column_id, trigger_label, success_label, error_label, required_columns_json
+            `SELECT status_column_id, trigger_label, success_label, error_label,
+                    required_columns_json, auto_rename_item, auto_update_status
              FROM board_automation_configs
              WHERE company_id=$1 AND board_id=$2
              ORDER BY updated_at DESC LIMIT 1`,
@@ -704,7 +705,18 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
         if (!boardConfig) {
             missing.push('board_config');
         } else {
-            if (!boardConfig.status_column_id) missing.push('board_config.status_column_id');
+            // Defaults TRUE para clientes legacy que no tienen estos flags
+            // grabados todavia. Garantiza que el comportamiento siga siendo
+            // el de siempre: renombrar y cambiar estado automaticos.
+            if (boardConfig.auto_rename_item   === null) boardConfig.auto_rename_item   = true;
+            if (boardConfig.auto_update_status === null) boardConfig.auto_update_status = true;
+
+            // status_column_id solo es obligatoria si el cliente quiere que
+            // la app cambie el estado del item. Si desactivo ese toggle, no
+            // tiene sentido exigir la columna.
+            if (boardConfig.auto_update_status !== false && !boardConfig.status_column_id) {
+                missing.push('board_config.status_column_id');
+            }
             const reqCols = boardConfig.required_columns_json || [];
             const pdfCol = reqCols.find(c => c?.key === 'invoice_pdf');
             if (!pdfCol || !pdfCol.resolved_column_id) {
@@ -1690,6 +1702,24 @@ async function ensureAfipCredentialsColumns() {
 // ─── Companies: columnas opcionales de contacto y branding ──────────────────
 // Datos opcionales que el usuario puede completar en "Datos Fiscales" para
 // luego personalizar el PDF de la factura (teléfono, email, web, logo).
+// Toggles opcionales para que el cliente decida si la app puede modificar
+// el item de monday. Existing rows se mantienen con el comportamiento de
+// siempre (defaults TRUE). Tambien hacemos status_column_id nullable porque
+// si el cliente desactiva auto_update_status no necesita mapear esa columna.
+async function ensureBoardAutomationConfigsExtras() {
+    await db.query(`
+        ALTER TABLE board_automation_configs
+            ADD COLUMN IF NOT EXISTS auto_rename_item BOOLEAN DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS auto_update_status BOOLEAN DEFAULT TRUE
+    `);
+    // Hacer status_column_id nullable. ALTER COLUMN no es idempotente en si
+    // (no hay IF NOT NULL), pero si la columna ya es nullable no rompe nada.
+    await db.query(`
+        ALTER TABLE board_automation_configs
+            ALTER COLUMN status_column_id DROP NOT NULL
+    `).catch(() => {/* ya era nullable */});
+}
+
 async function ensureCompaniesExtraColumns() {
     await db.query(`
         ALTER TABLE companies
@@ -2613,7 +2643,9 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
         if (board_id) {
             try {
                 const boardConfigResult = await db.query(
-                    `SELECT status_column_id, trigger_label, success_label, error_label, required_columns_json, updated_at
+                    `SELECT status_column_id, trigger_label, success_label, error_label,
+                            required_columns_json, updated_at,
+                            auto_rename_item, auto_update_status
                      FROM board_automation_configs
                      WHERE company_id = $1
                        AND board_id = $2
@@ -2632,6 +2664,10 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                         success_label: row.success_label || COMPROBANTE_STATUS_FLOW.success,
                         error_label: row.error_label || COMPROBANTE_STATUS_FLOW.error,
                         required_columns: row.required_columns_json || [],
+                        // Default TRUE para no afectar a clientes existentes que
+                        // no tienen estos flags grabados aun (NULL o no existe).
+                        auto_rename_item: row.auto_rename_item !== false,
+                        auto_update_status: row.auto_update_status !== false,
                         updated_at: row.updated_at || null
                     };
                 }
@@ -2733,7 +2769,9 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
         }
 
         const result = await db.query(
-            `SELECT id, status_column_id, trigger_label, success_label, error_label, required_columns_json, updated_at
+            `SELECT id, status_column_id, trigger_label, success_label, error_label,
+                    required_columns_json, updated_at,
+                    auto_rename_item, auto_update_status
              FROM board_automation_configs
              WHERE company_id = $1
                AND board_id = $2
@@ -2758,6 +2796,10 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
                 success_label: row.success_label || COMPROBANTE_STATUS_FLOW.success,
                 error_label: row.error_label || COMPROBANTE_STATUS_FLOW.error,
                 required_columns: row.required_columns_json || [],
+                // Default TRUE para no afectar a clientes que no tienen estos
+                // flags todavia: el comportamiento sigue siendo el de siempre.
+                auto_rename_item: row.auto_rename_item !== false,
+                auto_update_status: row.auto_update_status !== false,
                 updated_at: row.updated_at || null
             }
         });
@@ -2781,14 +2823,28 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
         view_id,
         app_feature_id,
         status_column_id,
-        required_columns
+        required_columns,
+        auto_rename_item,
+        auto_update_status,
     } = req.body;
 
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
     const workspaceId = workspace_id ? String(workspace_id) : null;
 
-    if (!accountId || !board_id || !status_column_id) {
-        return res.status(400).json({ error: 'monday_account_id, board_id y status_column_id son obligatorios' });
+    // Defaults TRUE para mantener el comportamiento de los clientes existentes
+    // si por algun motivo no vienen estos flags en el body (ej: deploys parciales).
+    const autoRenameItem    = auto_rename_item    === false ? false : true;
+    const autoUpdateStatus  = auto_update_status  === false ? false : true;
+
+    if (!accountId || !board_id) {
+        return res.status(400).json({ error: 'monday_account_id y board_id son obligatorios' });
+    }
+
+    // status_column_id solo es obligatoria si auto_update_status esta activo
+    if (autoUpdateStatus && !status_column_id) {
+        return res.status(400).json({
+            error: 'status_column_id es obligatorio cuando "Cambiar el estado del item" está activado'
+        });
     }
 
     if (!ensureAccountMatch(req, res, accountId)) return;
@@ -2816,6 +2872,8 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                  error_label = $8,
                  required_columns_json = $9,
                  workspace_id = $10,
+                 auto_rename_item = $11,
+                 auto_update_status = $12,
                  updated_at = CURRENT_TIMESTAMP
              WHERE company_id = $1
                AND board_id = $2
@@ -2823,14 +2881,16 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
             [
                 company.id,
                 String(board_id),
-                String(status_column_id),
+                status_column_id ? String(status_column_id) : null,
                 view_id || null,
                 app_feature_id || null,
                 COMPROBANTE_STATUS_FLOW.trigger,
                 COMPROBANTE_STATUS_FLOW.success,
                 COMPROBANTE_STATUS_FLOW.error,
                 JSON.stringify(required_columns),
-                workspaceId
+                workspaceId,
+                autoRenameItem,
+                autoUpdateStatus,
             ]
         );
 
@@ -2849,8 +2909,10 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 trigger_label,
                 success_label,
                 error_label,
-                required_columns_json
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                required_columns_json,
+                auto_rename_item,
+                auto_update_status
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING *`,
             [
                 company.id,
@@ -2858,11 +2920,13 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 String(board_id),
                 view_id || null,
                 app_feature_id || null,
-                String(status_column_id),
+                status_column_id ? String(status_column_id) : null,
                 COMPROBANTE_STATUS_FLOW.trigger,
                 COMPROBANTE_STATUS_FLOW.success,
                 COMPROBANTE_STATUS_FLOW.error,
-                JSON.stringify(required_columns)
+                JSON.stringify(required_columns),
+                autoRenameItem,
+                autoUpdateStatus,
             ]
         );
 
@@ -4299,8 +4363,12 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             // Fire-and-forget: arrancamos la mutation y seguimos con el resto
             // del flujo. El usuario ve el cambio de status lo antes posible,
             // y el resto de la emisión no espera al round-trip a Monday.
+            //
+            // Solo si el cliente activo "Cambiar el estado del item" en mapeo
+            // visual. Si el flag esta apagado, la app no toca el status.
             const statusColumnId = readiness.boardConfig?.status_column_id;
-            if (statusColumnId) {
+            const autoUpdateStatus = readiness.boardConfig?.auto_update_status !== false;
+            if (autoUpdateStatus && statusColumnId) {
                 markStart('status_processing');
                 updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
@@ -4793,7 +4861,9 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             // La idempotencia ya está protegida por el UPDATE anterior. El
             // usuario ve el cambio casi inmediato; si Monday tarda o falla,
             // la factura y el PDF ya están persistidos correctamente.
-            if (statusColumnId && afipResult?.cae) {
+            //
+            // Solo si el cliente activo "Cambiar el estado del item".
+            if (autoUpdateStatus && statusColumnId && afipResult?.cae) {
                 markStart('status_success');
                 updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
@@ -4827,7 +4897,11 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
 
             // Renombrar el item del cliente con el formato del comprobante emitido.
             // FIRE-AND-FORGET: la emisión ya fue exitosa, esto es solo cosmético.
-            if (afipResult?.numero_comprobante) {
+            //
+            // Solo si el cliente activo "Renombrar el item con el N° de factura"
+            // en mapeo visual. Si esta apagado, el item conserva su nombre original.
+            const autoRenameItem = readiness.boardConfig?.auto_rename_item !== false;
+            if (autoRenameItem && afipResult?.numero_comprobante) {
                 const newClientItemName = `Factura ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim();
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
@@ -4858,13 +4932,17 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId && boardId) {
-                    // Primero publicar el comentario con el error
+                    // Primero publicar el comentario con el error (siempre se postea
+                    // — no esta gateado por flag, todos los clientes deberian ver
+                    // que paso si algo fallo)
                     await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
 
-                    // Luego cambiar el status
+                    // Luego cambiar el status — pero solo si el cliente activo
+                    // "Cambiar el estado del item" en mapeo visual.
                     const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
                     const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
-                    if (errStatusColId) {
+                    const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
+                    if (errAutoUpdateStatus && errStatusColId) {
                         await updateMondayItemStatus({
                             apiToken: errToken, boardId, itemId,
                             statusColumnId: errStatusColId,
@@ -5563,6 +5641,12 @@ async function runStartupMigrations() {
         console.log('[migrations] invoice_emissions table + columnas Fase 1/3/4 aseguradas');
     } catch (err) {
         console.error('[migrations] invoice_emissions error:', err.message);
+    }
+    try {
+        await ensureBoardAutomationConfigsExtras();
+        console.log('[migrations] board_automation_configs (auto_rename_item, auto_update_status) aseguradas');
+    } catch (err) {
+        console.error('[migrations] board_automation_configs extras error:', err.message);
     }
 }
 
