@@ -5417,6 +5417,14 @@ async function notifySlackSystemError({ accountId, clientItemName, errorMessage,
 // el create/update del audit item. Así, aunque Monday API esté caída, igual
 // llega la alerta a Slack.
 async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company }) {
+    // Skip si estamos en staging — el audit board y las alertas de Slack
+    // son solo para clientes reales en produccion. Las pruebas que hagamos
+    // en staging no contaminan ese board (ni disparan alertas falsas).
+    if (process.env.APP_ENV === 'staging') {
+        console.log('[audit-log] APP_ENV=staging — skip log al audit board (board solo para prod)');
+        return;
+    }
+
     const boardId = process.env.MONDAY_AUDIT_BOARD_ID;
     const token   = process.env.DEV_MONDAY_TOKEN;
     if (!boardId || !token) {
