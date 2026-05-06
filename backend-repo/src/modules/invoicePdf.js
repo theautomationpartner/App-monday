@@ -324,7 +324,13 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
 
             // Nombre comercial (trade_name) arriba del banner — cae a business_name
             // si la empresa todavía no migró al campo de "Nombre de fantasía".
-            const displayName = (company.trade_name || company.business_name || '').toUpperCase();
+            // El nombre de fantasía se respeta TAL CUAL lo cargó el usuario
+            // (ej: "eGrowers" queda "eGrowers", no se uppercase-a). El fallback
+            // a business_name (que viene de AFIP en MAYUSCULAS) se pasa por
+            // toTitleCase para que se vea consistente con el resto del PDF.
+            const displayName = company.trade_name
+                ? company.trade_name
+                : invoiceRules.toTitleCase(company.business_name || '');
             const nameFontSize = 14;
             doc.fontSize(nameFontSize).font('Helvetica-Bold')
                .text(displayName,
@@ -365,16 +371,17 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const dataStartY = y + BANNER_H + 12;
             const STEP = 12;
 
-            // Emisor
+            // Emisor — todos los campos en Title Case (con IVA preservado en
+            // mayusculas y abreviaturas con punto/slash respetadas).
             let dy = dataStartY;
             drawKV(doc, contentX, dy, contentW,
-                'Razón Social: ', (company.business_name || '').toUpperCase());
+                'Razón Social: ', invoiceRules.toTitleCase(company.business_name || ''));
             dy += STEP;
             drawKV(doc, contentX, dy, contentW,
-                'Domicilio: ', (company.address || '-').toUpperCase());
+                'Domicilio: ', invoiceRules.toTitleCase(company.address || '-'));
             dy += STEP;
             drawKV(doc, contentX, dy, contentW,
-                'Cond. IVA: ', invoiceRules.condicionLabel(draft.emisorCondicion || ''));
+                'Cond. IVA: ', invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.emisorCondicion || '')));
             if (company.phone) {
                 dy += STEP;
                 drawKV(doc, contentX, dy, contentW, 'Tel: ', company.phone);
@@ -452,15 +459,15 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             doc.font('Helvetica-Bold').text('CUIT: ', colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text(fmtCuit(draft.receptor_cuit_o_dni) || '-');
             doc.font('Helvetica-Bold').text('Apellido y Nombre / Razón Social: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text((draft.receptor_nombre || 'CONSUMIDOR FINAL').toUpperCase());
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.receptor_nombre || 'Consumidor Final'));
             cy += 12;
             doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.condicionLabel(draft.receptorCondicion || ''));
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.receptorCondicion || '')));
             doc.font('Helvetica-Bold').text('Domicilio Comercial: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text((draft.receptor_domicilio || '-').toUpperCase());
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.receptor_domicilio || '-'));
             cy += 12;
             doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text((draft.condicion_venta || 'Contado').toUpperCase());
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.condicion_venta || 'Contado'));
             y += receptorH;
             mark(`receptor_done_c${copyIdx}`);
 
@@ -504,6 +511,11 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const lineas = draft.lineas || [];
             const fallbackAlicuota = normalizeAlicuota(draft.alicuota_iva_pct) || '21';
             mark(`table_header_done_c${copyIdx}`);
+
+            // Indice de la columna "Producto / Servicio" — es la que tiene
+            // textos largos (descripcion del producto) y fuerza a que la fila
+            // crezca en altura cuando el texto necesita >1 linea.
+            const conceptColIdx = cols.findIndex(c => /Producto.*Servicio/i.test(c.label));
 
             for (const line of lineas) {
                 const qty = Number(line.quantity || line.cantidad || 0);
@@ -555,13 +567,27 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                         fmtMoney(subtotal),
                     ];
                 }
+
+                // Altura dinamica por fila: si el texto del concepto wrap-ea
+                // a varias lineas, la fila crece para que el borde envuelva
+                // todo. Sin esto, el texto se sale del rect.
+                let rowHActual = rowH;
+                if (conceptColIdx >= 0) {
+                    const conceptText = vals[conceptColIdx] || '';
+                    const conceptW = cols[conceptColIdx].w - 6;
+                    doc.fontSize(7).font('Helvetica');
+                    const measuredH = doc.heightOfString(conceptText, { width: conceptW });
+                    // padding: 4px arriba + 4px abajo. Damos algo de margen.
+                    rowHActual = Math.max(rowH, Math.ceil(measuredH) + 8);
+                }
+
                 for (let i = 0; i < cols.length; i++) {
-                    doc.rect(cx, y, cols[i].w, rowH).stroke('#000');
+                    doc.rect(cx, y, cols[i].w, rowHActual).stroke('#000');
                     doc.fontSize(7).font('Helvetica')
                        .text(vals[i], cx + 3, y + 4, { width: cols[i].w - 6, align: cols[i].align });
                     cx += cols[i].w;
                 }
-                y += rowH;
+                y += rowHActual;
             }
 
             mark(`table_rows_done_c${copyIdx}`);

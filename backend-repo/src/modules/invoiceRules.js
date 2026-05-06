@@ -161,6 +161,45 @@ function condicionLabel(condicion) {
     return labels[condicion] || String(condicion || '').toUpperCase();
 }
 
+/**
+ * Convierte un string a "Title Case" (cada palabra con primera letra mayuscula
+ * y el resto en minuscula), con reglas especiales para datos fiscales:
+ *
+ *   - La palabra "IVA" se preserva siempre en mayusculas.
+ *   - Palabras con punto o slash (abreviaturas como S.A., S.R.L., S/N) se
+ *     mantienen en mayusculas (no se rompe la abreviatura).
+ *   - Numeros y simbolos se preservan tal cual.
+ *
+ * Ejemplos:
+ *   "SOFIA ALEWARTS"            -> "Sofia Alewarts"
+ *   "POLIFRONI PUERTAS SRL"     -> "Polifroni Puertas Srl"
+ *   "IVA RESPONSABLE INSCRIPTO" -> "IVA Responsable Inscripto"
+ *   "AV. 9 DE JULIO 1234"       -> "Av. 9 De Julio 1234"
+ *   "CARRIEGO 388 PISO:6"       -> "Carriego 388 Piso:6"
+ *   "JUAN DE LA TORRE S.R.L."   -> "Juan De La Torre S.R.L."
+ */
+function toTitleCase(str) {
+    if (!str) return str;
+    // Splitemos por separadores manteniendo los separadores en el array
+    // (espacios, coma, punto y coma, dos puntos), asi al join() conservamos
+    // el formato original.
+    return String(str).split(/(\s+|,|;|:)/).map(token => {
+        if (!token) return token;
+        // Separadores: dejar como vienen
+        if (/^[\s,;:]+$/.test(token)) return token;
+        const upper = token.toUpperCase();
+        // Preservar IVA siempre en mayusculas
+        if (upper === 'IVA') return 'IVA';
+        // Siglas multi-punto (S.A., S.R.L., U.S.A., M.G.M.): mantener mayusculas
+        // Heuristica: 2 o mas puntos en el token = sigla compuesta. Un solo
+        // punto al final (Av., Sr., Cra.) NO entra aca, va por title case.
+        const dotCount = (token.match(/\./g) || []).length;
+        if (dotCount >= 2) return upper;
+        // Title case estandar: primera mayuscula, resto minusculas
+        return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    }).join('');
+}
+
 module.exports = {
     determineInvoiceType,
     validateInvoiceType,
@@ -168,4 +207,5 @@ module.exports = {
     getCbteType,
     getIvaRate,
     condicionLabel,
+    toTitleCase,
 };
