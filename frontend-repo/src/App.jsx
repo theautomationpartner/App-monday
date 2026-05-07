@@ -3024,6 +3024,45 @@ const App = () => {
               )}
             </div>
 
+            {/* ─── Configuración opcional (campos no obligatorios — moneda, etc.) ─── */}
+            <div className="gd-card" style={{ marginBottom: 16 }}>
+              <div className="gd-card-head">
+                <span className="h-eyebrow">Configuración opcional</span>
+                <span className="gd-dim">Opcionales</span>
+              </div>
+              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>
+                Configuraciones avanzadas que extienden el comportamiento de la app. Si no las usás, la app funciona en su modo por defecto.
+              </p>
+
+              <div className="gd-confirm-grid">
+                <div className="gd-confirm-row">
+                  <span className="gd-confirm-label">Moneda</span>
+                  {inMappingEditMode ? (
+                    <select
+                      className={`invoice-preview-select ${mapping.moneda ? "mapped" : "unmapped"}`}
+                      value={mapping.moneda || ""}
+                      onChange={(e) => setMapping({ ...mapping, moneda: e.target.value })}
+                    >
+                      <option value="">— Default: pesos —</option>
+                      {columns.map((c) => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="gd-confirm-value">
+                      {columns.find((c) => c.value === mapping.moneda)?.label || (
+                        <em style={{ color: "var(--ink-400)" }}>Default: pesos</em>
+                      )}
+                    </span>
+                  )}
+                  <span className="gd-confirm-hint">
+                    Si la mapeás, los items donde escribas <code>USD</code> o <code>DOL</code> emiten en dólares. Items con <code>PES</code> o vacíos siguen emitiendo en pesos.
+                    {" "}<em>Solo Responsables Inscriptos pueden facturar en USD — Monotributistas siempre van a emitir en pesos por regulación AFIP.</em>
+                  </span>
+                </div>
+              </div>
+            </div>
+
             {/* ─── Factura modelo: campos embebidos en el layout de la factura ─── */}
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
@@ -3059,30 +3098,8 @@ const App = () => {
                       <span>Punto de venta</span>
                       <span className="mono rf-invoice-meta-static">{pvFormatted}</span>
                     </div>
-                    <div className="rf-invoice-meta-row">
-                      <span>Moneda <em style={{ color: "var(--ink-400)", fontWeight: 400 }}>(opcional)</em></span>
-                      {mapSel("moneda", "Default: pesos")}
-                    </div>
                   </div>
                 </div>
-
-                {inMappingEditMode && (
-                  <div style={{
-                    fontSize: "12px",
-                    color: "var(--ink-400)",
-                    background: "var(--surface-100, #f7f8fa)",
-                    border: "1px solid var(--border-100, #e6e8eb)",
-                    borderRadius: "6px",
-                    padding: "8px 12px",
-                    marginTop: "-4px",
-                    marginBottom: "12px",
-                  }}>
-                    <strong>Sobre la moneda (opcional):</strong> si no la mapeás, todas las facturas se emiten en <b>pesos</b>.
-                    Si querés facturar en otra moneda, mapeá una columna de tu tablero (tipo Status o Dropdown) donde por cada item indiques
-                    {" "}<code>PES</code> para pesos o <code>USD</code> / <code>DOL</code> para dólares.
-                    {" "}<em>Solo Responsables Inscriptos pueden facturar en USD — Monotributistas siempre van a emitir en pesos por regulación AFIP.</em>
-                  </div>
-                )}
 
                 {/* Cliente */}
                 <div className="rf-invoice-client">

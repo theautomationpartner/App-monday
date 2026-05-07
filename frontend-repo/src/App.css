@@ -2801,6 +2801,13 @@ body {
   flex-direction: column;
   padding: 20px 14px 16px;
   gap: 20px;
+  /* Sticky: la sidebar se queda visible al scrollear el contenido. Si su
+     contenido es mas alto que el viewport, hace scroll interno propio. */
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  max-height: 100vh;
+  overflow-y: auto;
 }
 
 .gd-sidebar-brand {
