@@ -427,9 +427,14 @@ const App = () => {
   const fileColumns = columns.filter((column) =>
     ["file", "files", "document", "doc"].includes(column.type)
   );
-  // Columnas numericas — usadas para mapear el "tipo de cambio" (cotizacion)
-  // cuando el cliente factura en moneda extranjera.
+  // Columnas numericas del board principal (item) — usadas para mapear el
+  // "tipo de cambio" (cotizacion).
   const numericColumns = columns.filter((column) =>
+    ["numbers", "numeric", "number"].includes(column.type)
+  );
+  // Columnas numericas del subitem — usadas para mapear "precio unitario en
+  // USD" (separado del precio en pesos obligatorio del subitem).
+  const subitemNumericColumns = subitemColumns.filter((column) =>
     ["numbers", "numeric", "number"].includes(column.type)
   );
 
@@ -3070,10 +3075,7 @@ const App = () => {
                     </span>
                   )}
                   <span className="gd-confirm-hint">
-                    Si la mapeás, en cada item escribís la palabra <code>Pesos</code> o <code>Dólares</code> y la app emite en esa moneda.
-                    {" "}<strong>No importa cómo lo escribas:</strong> <code>Pesos</code>, <code>PESOS</code>, <code>pesos</code>, <code>peso</code>, <code>Dolares</code>, <code>DÓLARES</code>, <code>dolar</code> — la app entiende todas las variantes (mayúsculas, minúsculas, con o sin tilde).
-                    {" "}Items vacíos o con cualquier otro valor → se emiten en pesos.
-                    {" "}<em>Tanto Responsables Inscriptos como Monotributistas pueden facturar en dólares (RG 5616/2024).</em>
+                    El item escribe <code>Pesos</code> o <code>Dólares</code> (mayúsc/minúsc/tilde indistinto). Vacío → Pesos.
                   </span>
                 </div>
 
@@ -3088,7 +3090,7 @@ const App = () => {
                       value={mapping.cotizacion || ""}
                       onChange={(e) => setMapping({ ...mapping, cotizacion: e.target.value })}
                     >
-                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Default: cotización oficial AFIP"} —</option>
+                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Default: AFIP"} —</option>
                       {numericColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3097,20 +3099,20 @@ const App = () => {
                     <span className="gd-confirm-value">
                       {numericColumns.find((c) => c.value === mapping.cotizacion)?.label || (
                         <em style={{ color: "var(--ink-400)" }}>
-                          {mapping.moneda ? "Falta mapear (obligatorio si mapeás Moneda)" : "Default: cotización oficial AFIP"}
+                          {mapping.moneda ? "Falta mapear" : "Default: cotización AFIP"}
                         </em>
                       )}
                     </span>
                   )}
                   <span className="gd-confirm-hint">
-                    Cómo funciona: <strong>si la celda del item está vacía</strong>, la app pide la cotización oficial a AFIP, emite la factura, y <strong>escribe el valor en esta misma columna</strong> como registro. <strong>Si la celda ya tiene un valor</strong>, la app lo respeta como override (no lo pisa).
-                    {" "}Solo aplica a items con moneda <code>Dólares</code> — para items en pesos esta columna se ignora.
+                    Celda vacía → la app pide cotización a AFIP y la escribe acá como registro. Con valor → se respeta como override.
                   </span>
                 </div>
 
                 <div className="gd-confirm-row">
                   <span className="gd-confirm-label">
-                    Precio Unitario en USD
+                    Precio Unitario USD
+                    <span style={{ color: "var(--ink-400)", fontWeight: 400, fontSize: 11, marginLeft: 4 }}>(subitem)</span>
                     {mapping.moneda && <span style={{ color: "var(--danger-500, #b91c1c)", marginLeft: 4 }}>*</span>}
                   </span>
                   {inMappingEditMode ? (
@@ -3119,22 +3121,22 @@ const App = () => {
                       value={mapping.precio_unitario_usd || ""}
                       onChange={(e) => setMapping({ ...mapping, precio_unitario_usd: e.target.value })}
                     >
-                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Solo necesario si emitís en USD"} —</option>
-                      {numericColumns.map((c) => (
+                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Solo si emitís en USD"} —</option>
+                      {subitemNumericColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
                     </select>
                   ) : (
                     <span className="gd-confirm-value">
-                      {numericColumns.find((c) => c.value === mapping.precio_unitario_usd)?.label || (
+                      {subitemNumericColumns.find((c) => c.value === mapping.precio_unitario_usd)?.label || (
                         <em style={{ color: "var(--ink-400)" }}>
-                          {mapping.moneda ? "Falta mapear (obligatorio si mapeás Moneda)" : "No mapeado"}
+                          {mapping.moneda ? "Falta mapear" : "No mapeado"}
                         </em>
                       )}
                     </span>
                   )}
                   <span className="gd-confirm-hint">
-                    Columna numérica del subitem con el precio unitario en dólares (separada del precio en pesos). La app la usa solo cuando el item tiene moneda <code>Dólares</code>; los items en pesos siguen usando el Precio Unitario obligatorio del mapeo.
+                    Columna numérica del subitem con el precio en dólares. Solo se usa para items con moneda <code>Dólares</code>.
                   </span>
                 </div>
 
@@ -3148,7 +3150,7 @@ const App = () => {
                     color: "#78350f",
                     gridColumn: "1 / -1",
                   }}>
-                    Si mapeás <strong>Moneda</strong>, también tenés que mapear <strong>Tipo de Cambio</strong> y <strong>Precio Unitario en USD</strong> — los 3 van juntos para que la app pueda emitir facturas en moneda extranjera.
+                    Mapeás Moneda → mapeá también <strong>Tipo de Cambio</strong> y <strong>Precio Unitario USD</strong>. Los 3 van juntos.
                   </div>
                 )}
               </div>
