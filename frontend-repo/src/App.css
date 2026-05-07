@@ -2801,12 +2801,13 @@ body {
   flex-direction: column;
   padding: 20px 14px 16px;
   gap: 20px;
-  /* Sticky: la sidebar se queda visible al scrollear el contenido. Si su
-     contenido es mas alto que el viewport, hace scroll interno propio. */
+  /* Sticky: la sidebar se queda visible al scrollear el contenido y ocupa
+     todo el alto del viewport (background blanco extendido hasta el final).
+     Si su contenido fuera mas alto que el viewport, hace scroll interno. */
   position: sticky;
   top: 0;
   align-self: flex-start;
-  max-height: 100vh;
+  height: 100vh;
   overflow-y: auto;
 }
 

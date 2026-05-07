@@ -384,9 +384,13 @@ const App = () => {
   ];
   // Campos opcionales — el cliente puede mapearlos pero no son obligatorios
   // para guardar el mapeo ni para emitir.
-  //   - moneda: columna donde el cliente escribe "PES"/"USD"/"DOL" por item.
-  //             Si no la mapea, todas las facturas se emiten en pesos (default).
-  const optionalMappingFields = ["moneda"];
+  //   - moneda:     columna donde el cliente escribe "PES"/"USD"/"DOL" por item.
+  //                 Si no la mapea, todas las facturas se emiten en pesos (default).
+  //   - cotizacion: columna numerica con el tipo de cambio para items en moneda
+  //                 extranjera. Solo aplica si moneda esta mapeada y un item
+  //                 tiene moneda != PES. Si no se mapea, la app consulta la
+  //                 cotizacion oficial del dia a AFIP automaticamente.
+  const optionalMappingFields = ["moneda", "cotizacion"];
   // Campos obligatorios de operación (columnas del tablero, no del mapeo de datos):
   //   - status_column_id: columna Status — solo si auto_update_status=true
   //   - invoice_pdf_column_id: columna File donde se sube el PDF generado (siempre)
@@ -417,6 +421,11 @@ const App = () => {
   // Columnas tipo "file" / "archivo" — para subir el PDF de la factura emitida
   const fileColumns = columns.filter((column) =>
     ["file", "files", "document", "doc"].includes(column.type)
+  );
+  // Columnas numericas — usadas para mapear el "tipo de cambio" (cotizacion)
+  // cuando el cliente factura en moneda extranjera.
+  const numericColumns = columns.filter((column) =>
+    ["numbers", "numeric", "number"].includes(column.type)
   );
 
   useEffect(() => {
@@ -3058,6 +3067,32 @@ const App = () => {
                   <span className="gd-confirm-hint">
                     Si la mapeás, los items donde escribas <code>USD</code> o <code>DOL</code> emiten en dólares. Items con <code>PES</code> o vacíos siguen emitiendo en pesos.
                     {" "}<em>Solo Responsables Inscriptos pueden facturar en USD — Monotributistas siempre van a emitir en pesos por regulación AFIP.</em>
+                  </span>
+                </div>
+
+                <div className="gd-confirm-row">
+                  <span className="gd-confirm-label">Tipo de cambio</span>
+                  {inMappingEditMode ? (
+                    <select
+                      className={`invoice-preview-select ${mapping.cotizacion ? "mapped" : "unmapped"}`}
+                      value={mapping.cotizacion || ""}
+                      onChange={(e) => setMapping({ ...mapping, cotizacion: e.target.value })}
+                    >
+                      <option value="">— Default: cotización oficial AFIP —</option>
+                      {numericColumns.map((c) => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="gd-confirm-value">
+                      {numericColumns.find((c) => c.value === mapping.cotizacion)?.label || (
+                        <em style={{ color: "var(--ink-400)" }}>Default: cotización oficial AFIP</em>
+                      )}
+                    </span>
+                  )}
+                  <span className="gd-confirm-hint">
+                    Solo aplica para items con moneda extranjera (USD/DOL). Si la mapeás, la app usa el valor numérico de esa columna como cotización ARS por unidad de moneda.
+                    {" "}Si no la mapeás, la app consulta la cotización oficial del día a AFIP automáticamente.
                   </span>
                 </div>
               </div>
