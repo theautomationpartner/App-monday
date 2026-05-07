@@ -391,11 +391,12 @@ const App = () => {
   //                          esa misma columna como registro. Si tiene valor, se usa.
   //   - precio_unitario_usd: columna numerica con el precio del subitem en USD.
   //                          Solo aplicable cuando el item tiene moneda=Dolares.
+  //   - observaciones:       columna texto del item con texto libre que aparece en
+  //                          el PDF entre la tabla de items y los totales (max 255 chars).
   //
-  // Regla "los 3 van juntos": si mapean Moneda, deben mapear tambien Cotizacion
-  // y Precio Unitario en USD. La validacion de Zod en el backend hace cumplir
-  // esto al guardar; aca lo reflejamos visualmente.
-  const optionalMappingFields = ["moneda", "cotizacion", "precio_unitario_usd"];
+  // Regla "los 3 van juntos" (USD): si mapean Moneda, deben mapear tambien
+  // Cotizacion y Precio Unitario en USD.
+  const optionalMappingFields = ["moneda", "cotizacion", "precio_unitario_usd", "observaciones"];
   // Campos obligatorios de operación (columnas del tablero, no del mapeo de datos):
   //   - status_column_id: columna Status — solo si auto_update_status=true
   //   - invoice_pdf_column_id: columna File donde se sube el PDF generado (siempre)
@@ -436,6 +437,12 @@ const App = () => {
   // USD" (separado del precio en pesos obligatorio del subitem).
   const subitemNumericColumns = subitemColumns.filter((column) =>
     ["numbers", "numeric", "number"].includes(column.type)
+  );
+  // Columnas tipo texto del board principal (item) — para mapear "Observaciones".
+  // Aceptamos text (255 chars max) y long_text (texto largo). Si el cliente
+  // mapea long_text, el backend trunca a 255 con warning.
+  const textColumns = columns.filter((column) =>
+    ["text", "long_text", "long-text", "longtext"].includes(column.type)
   );
 
   useEffect(() => {
@@ -3166,6 +3173,31 @@ const App = () => {
                     Mapeás Moneda → mapeá también <strong>Tipo de Cambio</strong> y <strong>Precio Unitario USD</strong>. Los 3 van juntos.
                   </div>
                 )}
+
+                <div className="gd-confirm-row">
+                  <span className="gd-confirm-label">Observaciones</span>
+                  {inMappingEditMode ? (
+                    <select
+                      className={`invoice-preview-select ${mapping.observaciones ? "mapped" : "unmapped"}`}
+                      value={mapping.observaciones || ""}
+                      onChange={(e) => setMapping({ ...mapping, observaciones: e.target.value })}
+                    >
+                      <option value="">— No mapeado —</option>
+                      {textColumns.map((c) => (
+                        <option key={c.value} value={c.value}>{c.label}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="gd-confirm-value">
+                      {textColumns.find((c) => c.value === mapping.observaciones)?.label || (
+                        <em style={{ color: "var(--ink-400)" }}>No mapeado</em>
+                      )}
+                    </span>
+                  )}
+                  <span className="gd-confirm-hint">
+                    Columna texto del item. Si tiene contenido, aparece en el PDF entre la tabla y los totales (máx 255 chars; si excede, se trunca).
+                  </span>
+                </div>
               </div>
             </div>
 

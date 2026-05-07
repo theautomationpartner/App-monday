@@ -87,6 +87,13 @@ const ivaRate = tipoArg === 'C' ? 0 : 0.21;
 const importeIva = Number((importeNeto * ivaRate).toFixed(2));
 const importeTotal = Number((importeNeto + importeIva).toFixed(2));
 
+// Observaciones de muestra — 1 caso por tipo, todos < 255 chars.
+const observacionesPorTipo = {
+    A: 'Pago a 30 días vía transferencia bancaria. CBU: 0123456789012345678901. Sin descuentos por pronto pago. Consultas: contacto@parasuco.com.ar',
+    B: 'Comprobante por servicios prestados en abril 2026. Para reclamos o consultas, comunicarse al 011-1234-5678 o por WhatsApp.',
+    C: 'Servicios de automatización — Sprint de abril. Incluye 10 horas de soporte post-implementación.',
+};
+
 const draft = {
     tipo_comprobante: tipoArg,
     cuit_emisor:      company.cuit,
@@ -102,6 +109,7 @@ const draft = {
     importe_total:    importeTotal,
     moneda:           monedaArg,
     cotizacion:       monedaArg === 'PES' ? 1 : cotizacionArg,
+    observaciones:    observacionesPorTipo[tipoArg],
     lineas,
     ...receptorPorTipo[tipoArg],
 };

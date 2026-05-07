@@ -628,8 +628,48 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             }
 
             mark(`table_rows_done_c${copyIdx}`);
-            // Espacio vacío restante hasta totales
+
+            // ── OBSERVACIONES (opcional, max 255 chars) ─────────────────────
+            // Bloque de texto libre. Solo se renderiza si hay contenido. Se
+            // ubica al PIE del espacio vacio entre la tabla de items y el
+            // bloque de totales — pegado al borde superior de los totales
+            // para que el espacio en blanco quede arriba (no abajo).
+            const observacionesText = (draft.observaciones || '').trim();
             const totalsY = boxTop + boxH - totalesH;
+            let obsHeight = 0;
+            const obsW = W - 16;
+            const obsLabelW = observacionesText
+                ? doc.font('Helvetica-Bold').fontSize(8).widthOfString('Observaciones: ')
+                : 0;
+            if (observacionesText) {
+                const textH = doc.heightOfString(observacionesText, { width: obsW - obsLabelW });
+                obsHeight = Math.max(textH, 11) + 10;
+            }
+            // Y donde arranca el bloque de observaciones (queda apoyado contra
+            // el inicio del bloque de totales). Si no hay obs, obsStartY === totalsY.
+            const obsStartY = totalsY - obsHeight;
+
+            // Lineas verticales desde la tabla hasta donde arranca observaciones
+            // (o totales si no hay obs).
+            if (y < obsStartY) {
+                doc.moveTo(colLeft, y).lineTo(colLeft, obsStartY).stroke('#000');
+                doc.moveTo(colRight, y).lineTo(colRight, obsStartY).stroke('#000');
+                y = obsStartY;
+            }
+            // Renderizar el bloque de observaciones (si hay)
+            if (observacionesText) {
+                const obsX = colLeft + 8;
+                doc.fontSize(8);
+                doc.fillColor('#000').font('Helvetica-Bold').text('Observaciones:', obsX, y + 4);
+                doc.font('Helvetica').text(observacionesText, obsX + obsLabelW, y + 4, {
+                    width: obsW - obsLabelW,
+                    align: 'left',
+                });
+                y = totalsY;
+            }
+
+            // Espacio vacío restante hasta totales (caso sin observaciones —
+            // las lineas ya se dibujaron arriba)
             if (y < totalsY) {
                 doc.moveTo(colLeft, y).lineTo(colLeft, totalsY).stroke('#000');
                 doc.moveTo(colRight, y).lineTo(colRight, totalsY).stroke('#000');

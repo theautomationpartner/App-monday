@@ -4602,6 +4602,18 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             const fechaServHastaRaw  = mapping.fecha_servicio_hasta ? (getColumnTextById(mainColumns, mapping.fecha_servicio_hasta) || null) : null;
             const fechaVtoPagoRaw    = mapping.fecha_vto_pago ? (getColumnTextById(mainColumns, mapping.fecha_vto_pago) || null) : null;
 
+            // Observaciones (opcional, max 255 chars). Si excede, truncamos
+            // silenciosamente con warning en log — la columna mapeada en monday
+            // tipicamente es text (255 max), pero si es long_text protegemos.
+            const observacionesRaw = mapping.observaciones
+                ? (getColumnTextById(mainColumns, mapping.observaciones) || '')
+                : '';
+            let observaciones = (observacionesRaw || '').trim();
+            if (observaciones.length > 255) {
+                console.warn(`[emit] observaciones truncadas a 255 chars (original ${observaciones.length})`);
+                observaciones = observaciones.slice(0, 255);
+            }
+
             // ── Moneda y cotizacion (campos opcionales) ───────────────────────
             // Si mapping.moneda no esta mapeada → factura en pesos (default).
             // Si esta mapeada y el item tiene un valor reconocible → emite en
@@ -4841,6 +4853,9 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 // cliente si lo hay; sino el PASO 2 la resuelve via AFIP.
                 moneda:              moneda,
                 cotizacion:          moneda === 'PES' ? 1 : (cotizacionItem || null),
+                // Observaciones (opcional, ya truncadas a 255). Si vacio, el PDF
+                // no renderiza el bloque y queda igual al historico sin obs.
+                observaciones:       observaciones || null,
             };
 
             // ── 9.5 PASO 2 USD — resolver cotizacion final ───────────────────
