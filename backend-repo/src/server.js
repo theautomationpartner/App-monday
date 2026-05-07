@@ -4818,18 +4818,14 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 cotizacion:          moneda === 'PES' ? 1 : (cotizacionItem || null),
             };
 
-            // ── 9.5 PASO 2 USD — resolver moneda y cotizacion + bloqueos ─────
-            // Bloqueo regulatorio: Monotributistas no pueden emitir en moneda
-            // extranjera. AFIP rechaza el comprobante si lo intentamos. Mejor
-            // bloquear aca con un mensaje claro al cliente.
-            if (draft.moneda !== 'PES' && emisorInfo.condicion === 'MONOTRIBUTO') {
-                throw new Error(
-                    `Los Monotributistas no pueden facturar en moneda extranjera por regulación AFIP. ` +
-                    `El item tiene moneda "${draft.moneda}" pero el emisor (${company.business_name || company.cuit}) está en categoría Monotributo. ` +
-                    `Cambiá la columna Moneda del item a "Pesos" (o vacíala) para emitir.`
-                );
-            }
-
+            // ── 9.5 PASO 2 USD — resolver cotizacion final ───────────────────
+            // RG 5616/2024 (vigente 15-abr-2025) habilita Factura C (Monotributo)
+            // para emision en moneda extranjera. AFIP no valida la categoria
+            // fiscal contra MonId — solo valida que la cotizacion este dentro
+            // del rango ±20%/200% del tipo de cambio Banco Nacion oficial
+            // (validacion 10119 server-side). Por eso aca NO bloqueamos por
+            // categoria — dejamos que AFIP haga su propia validacion.
+            //
             // Resolver cotizacion final (la que efectivamente va al SOAP):
             //   - PES → siempre 1.0
             //   - DOL/extranjera con override del cliente (mapping.cotizacion) → ese

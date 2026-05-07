@@ -3068,7 +3068,7 @@ const App = () => {
                     Si la mapeás, en cada item escribís la palabra <code>Pesos</code> o <code>Dólares</code> y la app emite en esa moneda.
                     {" "}<strong>No importa cómo lo escribas:</strong> <code>Pesos</code>, <code>PESOS</code>, <code>pesos</code>, <code>peso</code>, <code>Dolares</code>, <code>DÓLARES</code>, <code>dolar</code> — la app entiende todas las variantes (mayúsculas, minúsculas, con o sin tilde).
                     {" "}Items vacíos o con cualquier otro valor → se emiten en pesos.
-                    {" "}<em>Solo Responsables Inscriptos pueden facturar en dólares — Monotributistas siempre emiten en pesos por regulación AFIP.</em>
+                    {" "}<em>Tanto Responsables Inscriptos como Monotributistas pueden facturar en dólares (RG 5616/2024).</em>
                   </span>
                 </div>
 
