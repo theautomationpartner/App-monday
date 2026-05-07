@@ -3,9 +3,14 @@
  * diseño sin emitir una factura real en AFIP.
  *
  * Uso:
- *   node scripts/test-pdf.js [A|B|C]
+ *   node scripts/test-pdf.js [A|B|C] [PES|DOL] [cotizacion]
  *
- * Sale: backend-repo/test-output/factura-<tipo>-test.pdf
+ * Ejemplos:
+ *   node scripts/test-pdf.js A                  → Factura A en pesos
+ *   node scripts/test-pdf.js A DOL 1364         → Factura A en USD, ctz 1364
+ *   node scripts/test-pdf.js C DOL 1400         → Factura C en USD, ctz 1400
+ *
+ * Sale: backend-repo/test-output/factura-<tipo>-<moneda>-test.pdf
  */
 
 'use strict';
@@ -18,6 +23,13 @@ const { IVA_CONDITION } = require('../src/config');
 const tipoArg = (process.argv[2] || 'A').toUpperCase();
 if (!['A', 'B', 'C'].includes(tipoArg)) {
     console.error(`Tipo de comprobante inválido: ${tipoArg}. Usar A, B o C.`);
+    process.exit(1);
+}
+
+const monedaArg     = (process.argv[3] || 'PES').toUpperCase();
+const cotizacionArg = Number(process.argv[4] || 1);
+if (!['PES', 'DOL'].includes(monedaArg)) {
+    console.error(`Moneda inválida: ${monedaArg}. Usar PES o DOL.`);
     process.exit(1);
 }
 
@@ -88,6 +100,8 @@ const draft = {
     importe_neto:     Number(importeNeto.toFixed(2)),
     importe_iva:      importeIva,
     importe_total:    importeTotal,
+    moneda:           monedaArg,
+    cotizacion:       monedaArg === 'PES' ? 1 : cotizacionArg,
     lineas,
     ...receptorPorTipo[tipoArg],
 };
@@ -102,12 +116,12 @@ const afipResult = {
 // ── Generar y guardar ────────────────────────────────────────────────────
 (async () => {
     try {
-        console.log(`Generando PDF de prueba — Factura ${tipoArg}…`);
+        console.log(`Generando PDF de prueba — Factura ${tipoArg} (${monedaArg}${monedaArg === 'DOL' ? `, ctz=${cotizacionArg}` : ''})…`);
         const pdfBuffer = await generateFacturaPdfBuffer({ company, draft, afipResult });
 
         const outDir = path.join(__dirname, '..', 'test-output');
         fs.mkdirSync(outDir, { recursive: true });
-        const outFile = path.join(outDir, `factura-${tipoArg}-test.pdf`);
+        const outFile = path.join(outDir, `factura-${tipoArg}-${monedaArg}-test.pdf`);
         fs.writeFileSync(outFile, pdfBuffer);
 
         console.log(`PDF generado: ${outFile} (${pdfBuffer.length} bytes)`);

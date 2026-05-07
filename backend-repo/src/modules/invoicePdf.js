@@ -301,7 +301,11 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             // - A: desglose de IVA por alícuota
             // - B: agrega leyenda Régimen de Transparencia Fiscal + IVA Contenido (RG 5614/2024)
             // - C: solo subtotal y total
-            const totalesH = isFacturaA ? 142 : (isFacturaB ? 90 : 50);
+            // En moneda extranjera (RG 5616/2024) sumamos:
+            //   +14pt header "Moneda: USD - Dólar Estadounidense"
+            //   +24pt leyenda de conversión a pesos al pie del bloque
+            const totalesExtraMonExt = isMonExt ? 40 : 0;
+            const totalesH = (isFacturaA ? 142 : (isFacturaB ? 90 : 50)) + totalesExtraMonExt;
             const boxTop = M;
             const boxH = 720; // header creció de 110 a 145pt — compensamos con 20pt extra
             doc.rect(colLeft, boxTop, W, boxH).stroke('#000');
@@ -503,27 +507,31 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             // ── TABLA DE ITEMS ───────────────────────────────────
             // Factura A: agrega Alícuota IVA + Subtotal c/IVA (RG 1415 Ap. A.IV.a).
             // B/C: layout original sin discriminación.
+            // Cuando isMonExt: AFIP exige indicar la moneda en los headers de las
+            // columnas que llevan importes (Precio Unit., Subtotal, etc.).
+            const monSuffix = isMonExt ? ` (${monSym})` : '';
             const cols = isFacturaA ? [
-                { label: 'Código',              w: W * 0.06, align: 'center' },
-                { label: 'Producto / Servicio',  w: W * 0.26, align: 'left'   },
-                { label: 'Cantidad',             w: W * 0.07, align: 'right'  },
-                { label: 'U. Medida',            w: W * 0.08, align: 'center' },
-                { label: 'Precio Unit.',         w: W * 0.11, align: 'right'  },
-                { label: '% Bonif',              w: W * 0.07, align: 'right'  },
-                { label: 'Subtotal',             w: W * 0.11, align: 'right'  },
-                { label: 'Alícuota IVA',         w: W * 0.10, align: 'center' },
-                { label: 'Subtotal c/IVA',       w: W * 0.14, align: 'right'  },
+                { label: 'Código',                       w: W * 0.06, align: 'center' },
+                { label: 'Producto / Servicio',          w: W * 0.26, align: 'left'   },
+                { label: 'Cantidad',                     w: W * 0.07, align: 'right'  },
+                { label: 'U. Medida',                    w: W * 0.08, align: 'center' },
+                { label: `Precio Unit.${monSuffix}`,     w: W * 0.11, align: 'right'  },
+                { label: '% Bonif',                      w: W * 0.07, align: 'right'  },
+                { label: `Subtotal${monSuffix}`,         w: W * 0.11, align: 'right'  },
+                { label: 'Alícuota IVA',                 w: W * 0.10, align: 'center' },
+                { label: `Subtotal c/IVA${monSuffix}`,   w: W * 0.14, align: 'right'  },
             ] : [
-                { label: 'Código',              w: W * 0.08, align: 'center' },
-                { label: 'Producto / Servicio',  w: W * 0.30, align: 'left'   },
-                { label: 'Cantidad',             w: W * 0.08, align: 'right'  },
-                { label: 'U. Medida',            w: W * 0.10, align: 'center' },
-                { label: 'Precio Unit.',         w: W * 0.13, align: 'right'  },
-                { label: '% Bonif',              w: W * 0.08, align: 'right'  },
-                { label: 'Imp. Bonif.',          w: W * 0.10, align: 'right'  },
-                { label: 'Subtotal',             w: W * 0.13, align: 'right'  },
+                { label: 'Código',                       w: W * 0.08, align: 'center' },
+                { label: 'Producto / Servicio',          w: W * 0.30, align: 'left'   },
+                { label: 'Cantidad',                     w: W * 0.08, align: 'right'  },
+                { label: 'U. Medida',                    w: W * 0.10, align: 'center' },
+                { label: `Precio Unit.${monSuffix}`,     w: W * 0.13, align: 'right'  },
+                { label: '% Bonif',                      w: W * 0.08, align: 'right'  },
+                { label: `Imp. Bonif.${monSuffix}`,      w: W * 0.10, align: 'right'  },
+                { label: `Subtotal${monSuffix}`,         w: W * 0.13, align: 'right'  },
             ];
-            const rowH = 16;
+            // En moneda extranjera el header crece a 2 lineas: "Subtotal" + "(USD)".
+            const rowH = isMonExt ? 22 : 16;
 
             // Header de la tabla
             doc.rect(colLeft, y, W, rowH).fill('#f1f1f1').stroke('#000');
@@ -637,6 +645,22 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             let ty = y + 8;
             doc.fontSize(8);
 
+            // Header "Moneda: USD - Dólar Estadounidense" (oficial AFIP, RG 5616/2024).
+            // Va arriba a la derecha del bloque de totales, subrayado.
+            if (isMonExt) {
+                const MONEDA_LABEL = {
+                    DOL: 'USD - Dólar Estadounidense',
+                };
+                const monLabel = MONEDA_LABEL[moneda] || moneda;
+                doc.font('Helvetica-Bold').fontSize(8)
+                   .text(`Moneda: ${monLabel}`, colLeft + 8, ty, {
+                       width: W - 16,
+                       align: 'right',
+                       underline: true,
+                   });
+                ty += 14;
+            }
+
             if (isFacturaA) {
                 // Desglose obligatorio (RG 1415 Anexo II Ap. A.IV.a)
                 const { netoGravado, ivaPorAlicuota } = calcularDesgloseIva(draft);
@@ -670,6 +694,13 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 ty += 14;
                 doc.font('Helvetica-Bold').text(`Importe Total: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
+                // Si es Factura C en moneda extranjera, avanzamos el cursor para
+                // que el divisor de la leyenda monExt no caiga sobre el texto
+                // de "Importe Total". Para A los drawRow ya avanzan ty; para B
+                // el cierre del bloque isFacturaB tambien avanza.
+                if (!isFacturaB && isMonExt) {
+                    ty += 14;
+                }
 
                 // Régimen de Transparencia Fiscal al Consumidor — RG 5614/2024 (Ley 27.743).
                 // Obligatorio en Factura B desde 01/04/2025: leyenda + IVA contenido en el precio.
@@ -683,23 +714,45 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                     const ivaContenido = Number(draft.importe_iva || 0);
                     doc.font('Helvetica-Bold').text(`IVA Contenido: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                     doc.font('Helvetica-Bold').text(fmtMoney(ivaContenido), totValueX, ty, { width: valueW, align: 'right' });
+                    ty += 14;  // avanzar bajo IVA Contenido para que la leyenda monExt no se solape
                 }
             }
 
-            // ── BLOQUE COTIZACION (RG 5616/2024) ────────────────
-            // Solo cuando moneda extranjera. RG exige consignar el tipo de
-            // cambio utilizado en el comprobante. Lo agregamos dentro del
-            // bloque de totales, abajo de todo, para que sea visible junto
-            // al importe total.
+            // ── LEYENDA DE CONVERSION A PESOS (oficial AFIP, RG 5616/2024) ─
+            // Cuando es moneda extranjera, AFIP exige la formula textual:
+            //   "El total de este comprobante expresado en moneda de curso
+            //    legal - Pesos Argentinos - considerándose un tipo de cambio
+            //    consignado de X.XXXXXX asciende a: $ Y,YY"
+            // Va dentro del rectangulo de totales, al pie, abarcando el ancho
+            // completo del bloque.
             if (isMonExt) {
-                ty += 16;
-                doc.moveTo(colLeft, ty - 4).lineTo(colRight, ty - 4).stroke('#000');
-                doc.fontSize(8).font('Helvetica-BoldOblique')
-                   .text('Comprobante emitido en moneda extranjera (RG 5616/2024)',
-                         colLeft + 8, ty, { width: W - 16 });
-                ty += 12;
-                doc.font('Helvetica-Bold').text(`Tipo de Cambio aplicado: ${monSym} 1 = $`, totLabelX, ty, { width: labelW, align: 'right' });
-                doc.font('Helvetica-Bold').text(fmtCotizacion(cotizacion), totValueX, ty, { width: valueW, align: 'right' });
+                ty += 8;
+                doc.moveTo(colLeft, ty - 2).lineTo(colRight, ty - 2).stroke('#000');
+                ty += 2;
+                const totalEnPesos = Number(draft.importe_total || 0) * cotizacion;
+                const cotizStr     = Number(cotizacion).toFixed(6);
+                const montoEnPesos = `$ ${fmtMoney(totalEnPesos)}`;
+                // Layout en 2 columnas: leyenda a la izquierda (wrap natural)
+                // + monto en pesos a la derecha alineado al fondo de la ultima
+                // linea, replicando el oficial AFIP.
+                const leyenda =
+                    `El total de este comprobante expresado en moneda de curso legal ` +
+                    `- Pesos Argentinos - considerándose un tipo de cambio consignado ` +
+                    `de ${cotizStr} asciende a:`;
+                const montoW   = 90;
+                const leyendaW = W - 16 - montoW - 8;
+                doc.fontSize(7).font('Helvetica')
+                   .text(leyenda, colLeft + 8, ty, {
+                       width: leyendaW,
+                       align: 'left',
+                   });
+                // Alineamos el monto al bottom de la leyenda calculando su altura.
+                const leyendaH = doc.heightOfString(leyenda, { width: leyendaW });
+                doc.fontSize(8).font('Helvetica-Bold')
+                   .text(montoEnPesos, colRight - montoW - 8, ty + leyendaH - 10, {
+                       width: montoW,
+                       align: 'right',
+                   });
             }
 
             y = boxTop + boxH;
