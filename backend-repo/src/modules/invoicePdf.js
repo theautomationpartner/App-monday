@@ -33,6 +33,25 @@ function fmtMoney(n) {
     });
 }
 
+// Cotizacion suele venir con mas decimales que un monto (ej. 1234.567890).
+// La mostramos con 4 decimales para no perder precision pero sin saturar.
+function fmtCotizacion(n) {
+    return Number(n || 0).toLocaleString('es-AR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 4,
+    });
+}
+
+// Simbolo del PDF segun la moneda AFIP. Para PES usamos "$" (peso argentino),
+// para DOL usamos "USD" (estandar internacional, claro para el receptor).
+const CURRENCY_SYMBOLS = {
+    PES: '$',
+    DOL: 'USD',
+};
+function currencySymbol(monId) {
+    return CURRENCY_SYMBOLS[monId] || (monId || '$');
+}
+
 function padNum(n, len) {
     return String(n || '').padStart(len, '0');
 }
@@ -169,6 +188,10 @@ function drawLogo(doc, x, y, w, h, logoBuffer) {
 async function fetchQrImage({ company, draft, afipResult }) {
     const tStart = Date.now();
     try {
+        // PASO 3 USD — moneda y cotizacion del draft (defaults preservan
+        // comportamiento PES historico cuando el caller no las pasa).
+        const qrMoneda     = draft.moneda     || 'PES';
+        const qrCotizacion = Number(draft.cotizacion) || 1;
         const qrData = {
             ver: 1,
             fecha: draft.fecha_emision || new Date().toISOString().slice(0, 10),
@@ -177,8 +200,8 @@ async function fetchQrImage({ company, draft, afipResult }) {
             tipoCmp: TIPO_CBTE_NUM[afipResult?.tipo_comprobante] ?? 11,
             nroCmp: Number(afipResult?.numero_comprobante || 0),
             importe: Number(draft.importe_total || 0),
-            moneda: 'PES',
-            ctz: 1,
+            moneda: qrMoneda,
+            ctz: qrCotizacion,
             tipoDocRec: Number(draft.docTipo ?? 99),
             nroDocRec: Number(draft.docNro ?? 0),
             tipoCodAut: 'E',
@@ -250,6 +273,12 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const tipoLetra = draft.tipo_comprobante || 'C';
             const tipoCod = TIPO_COD[tipoLetra] || '11';
             const isFacturaA = tipoLetra === 'A';
+            // PASO 3 USD — moneda + simbolo a usar en este PDF. Defaults a PES
+            // si el draft no la trae (clientes legacy o tests).
+            const moneda      = draft.moneda || 'PES';
+            const cotizacion  = Number(draft.cotizacion) || 1;
+            const monSym      = currencySymbol(moneda);
+            const isMonExt    = moneda !== 'PES';
             const isFacturaB = tipoLetra === 'B';
 
             const pv = padNum(draft.punto_venta, 5);
@@ -622,24 +651,24 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                     ty += 11;
                 };
 
-                drawRow('Importe Neto Gravado: $', fmtMoney(netoGravado), true);
-                drawRow('IVA 27%: $',   fmtMoney(ivaPorAlicuota['27']));
-                drawRow('IVA 21%: $',   fmtMoney(ivaPorAlicuota['21']));
-                drawRow('IVA 10.5%: $', fmtMoney(ivaPorAlicuota['10.5']));
-                drawRow('IVA 5%: $',    fmtMoney(ivaPorAlicuota['5']));
-                drawRow('IVA 2.5%: $',  fmtMoney(ivaPorAlicuota['2.5']));
-                drawRow('IVA 0%: $',    fmtMoney(ivaPorAlicuota['0']));
-                drawRow('Importe Otros Tributos: $', '0,00');
-                drawRow('Importe Total: $',
+                drawRow(`Importe Neto Gravado: ${monSym}`, fmtMoney(netoGravado), true);
+                drawRow(`IVA 27%: ${monSym}`,   fmtMoney(ivaPorAlicuota['27']));
+                drawRow(`IVA 21%: ${monSym}`,   fmtMoney(ivaPorAlicuota['21']));
+                drawRow(`IVA 10.5%: ${monSym}`, fmtMoney(ivaPorAlicuota['10.5']));
+                drawRow(`IVA 5%: ${monSym}`,    fmtMoney(ivaPorAlicuota['5']));
+                drawRow(`IVA 2.5%: ${monSym}`,  fmtMoney(ivaPorAlicuota['2.5']));
+                drawRow(`IVA 0%: ${monSym}`,    fmtMoney(ivaPorAlicuota['0']));
+                drawRow(`Importe Otros Tributos: ${monSym}`, '0,00');
+                drawRow(`Importe Total: ${monSym}`,
                     fmtMoney(draft.importe_total ?? importeTotalCalculado), true);
             } else {
-                doc.font('Helvetica-Bold').text('Subtotal: $', totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(`Subtotal: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
                 ty += 14;
-                doc.font('Helvetica-Bold').text('Importe Otros Tributos: $', totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(`Importe Otros Tributos: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text('0,00', totValueX, ty, { width: valueW, align: 'right' });
                 ty += 14;
-                doc.font('Helvetica-Bold').text('Importe Total: $', totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(`Importe Total: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
 
                 // Régimen de Transparencia Fiscal al Consumidor — RG 5614/2024 (Ley 27.743).
@@ -652,9 +681,25 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                              colLeft + 8, ty, { width: W - 16 });
                     ty += 12;
                     const ivaContenido = Number(draft.importe_iva || 0);
-                    doc.font('Helvetica-Bold').text('IVA Contenido: $', totLabelX, ty, { width: labelW, align: 'right' });
+                    doc.font('Helvetica-Bold').text(`IVA Contenido: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                     doc.font('Helvetica-Bold').text(fmtMoney(ivaContenido), totValueX, ty, { width: valueW, align: 'right' });
                 }
+            }
+
+            // ── BLOQUE COTIZACION (RG 5616/2024) ────────────────
+            // Solo cuando moneda extranjera. RG exige consignar el tipo de
+            // cambio utilizado en el comprobante. Lo agregamos dentro del
+            // bloque de totales, abajo de todo, para que sea visible junto
+            // al importe total.
+            if (isMonExt) {
+                ty += 16;
+                doc.moveTo(colLeft, ty - 4).lineTo(colRight, ty - 4).stroke('#000');
+                doc.fontSize(8).font('Helvetica-BoldOblique')
+                   .text('Comprobante emitido en moneda extranjera (RG 5616/2024)',
+                         colLeft + 8, ty, { width: W - 16 });
+                ty += 12;
+                doc.font('Helvetica-Bold').text(`Tipo de Cambio aplicado: ${monSym} 1 = $`, totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(fmtCotizacion(cotizacion), totValueX, ty, { width: valueW, align: 'right' });
             }
 
             y = boxTop + boxH;
