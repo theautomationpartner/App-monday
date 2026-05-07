@@ -804,6 +804,23 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         return { ok: false, errors };
     }
 
+    // Resolvemos moneda upfront para saber que columna de precio validar en
+    // cada subitem. Para items en USD, los subitems deben tener valor en
+    // mapping.precio_unitario_usd; los items en pesos siguen usando el
+    // mapping.precio_unitario obligatorio.
+    const monedaRawForPrice = mapping.moneda
+        ? (getColumnTextById(mainColumns, mapping.moneda) || '')
+        : '';
+    const monedaParsedForPrice = monedaRawForPrice
+        ? invoiceRules.parseMoneda(monedaRawForPrice)
+        : null;
+    const precioColumnForValidation = (monedaParsedForPrice === 'DOL' && mapping.precio_unitario_usd)
+        ? mapping.precio_unitario_usd
+        : mapping.precio_unitario;
+    const precioLabelForValidation = (monedaParsedForPrice === 'DOL' && mapping.precio_unitario_usd)
+        ? 'Precio Unitario (USD)'
+        : 'Precio Unitario';
+
     let hayServicio = false;
     subitems.forEach(sub => {
         const name = sub.name || `#${sub.id}`;
@@ -822,9 +839,9 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
             errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, mapping.cantidad, 'Cantidad')} inválida (debe ser número > 0)`);
         }
 
-        const precioNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.precio_unitario));
+        const precioNum = toNumberOrNull(getColumnTextById(sub.column_values, precioColumnForValidation));
         if (precioNum === null || precioNum <= 0) {
-            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, mapping.precio_unitario, 'Precio Unitario')} inválida (debe ser número > 0)`);
+            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, precioColumnForValidation, precioLabelForValidation)} inválida (debe ser número > 0)`);
         }
 
         const prodServRaw = getColumnTextById(sub.column_values, mapping.prod_serv) || '';
@@ -4652,11 +4669,19 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             console.log(`[emit] Tipo determinado: ${tipo} — ${descripcion}`);
 
             // ── 9. Construir draft de la factura ──────────────────────────────
+            // Para items en USD usamos la columna precio_unitario_usd si esta
+            // mapeada (el cliente tiene 2 columnas en monday: una para pesos
+            // y otra para dolares). Si no esta mapeada, fallback al precio
+            // obligatorio en pesos — pero la validacion de schema ya impide
+            // este caso cuando moneda esta mapeada.
+            const precioColumnId = (moneda === 'DOL' && mapping.precio_unitario_usd)
+                ? mapping.precio_unitario_usd
+                : mapping.precio_unitario;
             const rawLines = subitems.map(sub => ({
                 subitem_name: sub.name || `Subitem #${sub.id}`,
                 concept:    getColumnTextById(sub.column_values, mapping.concepto) || sub.name || '',
                 quantity:   getColumnTextById(sub.column_values, mapping.cantidad),
-                unit_price: getColumnTextById(sub.column_values, mapping.precio_unitario),
+                unit_price: getColumnTextById(sub.column_values, precioColumnId),
                 prod_serv:  mapping.prod_serv ? (getColumnTextById(sub.column_values, mapping.prod_serv) || '').toLowerCase().trim() : '',
                 alicuota_iva: mapping.alicuota_iva ? (getColumnTextById(sub.column_values, mapping.alicuota_iva) || '') : '',
                 unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
@@ -5084,6 +5109,25 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 .join(' | ');
             console.log(`[timing] ── SUMMARY (item ${itemId}) ── total=${tTotal}ms ack=${tAck}ms bg=${tBg}ms | ${summary}`);
 
+            // Write-back de cotizacion a la columna del item (FIRE-AND-FORGET).
+            // Solo cuando:
+            //   - Emision fue exitosa (hay CAE)
+            //   - Moneda es extranjera (DOL/etc)
+            //   - El cliente mapeo la columna cotizacion en el mapeo visual
+            //   - El item NO tenia override manual (cotizacionItem == null)
+            // Asi queda registrado en la tabla principal de monday que
+            // cotizacion se uso para esta factura, sin pisar overrides del
+            // usuario. Si el usuario edita la celda, queda como override para
+            // emisiones futuras del mismo item (no aplica aca, una factura
+            // emitida no se re-emite).
+            if (afipResult?.cae && draft.moneda !== 'PES' && mapping.cotizacion && cotizacionItem == null) {
+                writeMondayNumericColumn({
+                    apiToken: mondayToken, boardId, itemId,
+                    columnId: mapping.cotizacion,
+                    value:    draft.cotizacion,
+                }).catch((e) => console.warn('[write-back] cotizacion fire-and-forget falló:', e.message));
+            }
+
             // Renombrar el item del cliente con el formato del comprobante emitido.
             // FIRE-AND-FORGET: la emisión ya fue exitosa, esto es solo cosmético.
             //
@@ -5403,6 +5447,42 @@ async function fetchMondayItem({ apiToken, itemId }) {
             id: s.id, name: s.name, column_values: s.column_values || []
         })),
     };
+}
+
+// Escribe un valor numerico en una columna del item del cliente.
+// Usado para hacer write-back de la cotizacion AFIP cuando la columna estaba
+// vacia: registra que cotizacion se uso al emitir, sin pisar overrides
+// manuales. Fire-and-forget: si falla, solo se loggea.
+async function writeMondayNumericColumn({ apiToken, boardId, itemId, columnId, value }) {
+    if (!apiToken || !boardId || !itemId || !columnId || value == null) return;
+    try {
+        // change_simple_column_value para numeric espera el numero como string.
+        const valueStr = String(value);
+        const mutation = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: String!) {
+            change_simple_column_value(
+                board_id: $boardId,
+                item_id: $itemId,
+                column_id: $columnId,
+                value: $value
+            ) { id }
+        }`;
+        const res = await fetchWithRetry('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({
+                query: mutation,
+                variables: { boardId: String(boardId), itemId: String(itemId), columnId, value: valueStr },
+            }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'write-numeric' });
+        const j = await res.json();
+        if (j?.errors?.length) {
+            console.warn(`[write-numeric] errors col=${columnId}:`, JSON.stringify(j.errors).slice(0, 300));
+        } else {
+            console.log(`[write-numeric] col=${columnId} item=${itemId} valor=${valueStr} OK`);
+        }
+    } catch (err) {
+        console.warn(`[write-numeric] excepción col=${columnId}:`, err.message);
+    }
 }
 
 // Cambia el nombre de un item de Monday usando change_simple_column_value

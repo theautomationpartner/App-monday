@@ -117,6 +117,22 @@ const MappingSchema = z.object({
             path: ['mapping'],
         });
     }
+    // Moneda extranjera: si el cliente mapea Moneda, exigimos tambien Tipo
+    // de Cambio y Precio Unitario en USD (los 3 van como un paquete porque
+    // sin precio en USD no podemos facturar items en dolares, y sin cotizacion
+    // no podemos hacer la conversion a pesos del PDF / SOAP).
+    if (m.moneda) {
+        const paqueteFaltante = [];
+        if (!m.cotizacion)           paqueteFaltante.push('Tipo de Cambio');
+        if (!m.precio_unitario_usd)  paqueteFaltante.push('Precio Unitario en USD');
+        if (paqueteFaltante.length > 0) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: `Si mapeás Moneda, también tenés que mapear ${paqueteFaltante.join(' y ')} (van juntos para emitir en moneda extranjera).`,
+                path: ['mapping'],
+            });
+        }
+    }
 });
 
 // Token de API de monday del usuario (POST /api/user-api-token)
