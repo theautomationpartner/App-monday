@@ -1227,6 +1227,85 @@ const INVOICE_TYPE_CONFIG = {
     C: { cbteType: 11, ivaRate: 0,    requiresCuit: false },
 };
 
+// ─── Cotizacion de monedas (FEParamGetCotizacion) ─────────────────────────
+// Consulta la cotizacion oficial de AFIP para una moneda extranjera.
+// Para PES devolvemos 1.0 sin pegar a AFIP.
+//
+// Cache en memoria por monId con TTL 5 min — la cotizacion oficial cambia
+// 1 vez por dia. Aun asi 5 min es conservador y evita rate limits si emitimos
+// varias facturas USD seguidas.
+const _cotizacionCache = new Map(); // monId → { monCotiz, fchCotiz, cachedAt }
+const COTIZACION_TTL_MS = 5 * 60 * 1000;
+
+async function afipGetCotizacion({ token, sign, cuit, monId }) {
+    if (monId === 'PES') return { monCotiz: 1.0, fchCotiz: null };
+
+    // Cache check
+    const cached = _cotizacionCache.get(monId);
+    if (cached && (Date.now() - cached.cachedAt) < COTIZACION_TTL_MS) {
+        console.log(`[wsfe] cotizacion cache HIT monId=${monId} → ${cached.monCotiz}`);
+        return { monCotiz: cached.monCotiz, fchCotiz: cached.fchCotiz };
+    }
+
+    const endpoints = getAfipEndpoints();
+    const soapBody = `<?xml version="1.0" encoding="UTF-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ar="http://ar.gov.afip.dif.FEV1/">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ar:FEParamGetCotizacion>
+      <ar:Auth>
+        <ar:Token>${xmlEscape(token)}</ar:Token>
+        <ar:Sign>${xmlEscape(sign)}</ar:Sign>
+        <ar:Cuit>${xmlEscape(cuit)}</ar:Cuit>
+      </ar:Auth>
+      <ar:MonId>${xmlEscape(monId)}</ar:MonId>
+    </ar:FEParamGetCotizacion>
+  </soapenv:Body>
+</soapenv:Envelope>`;
+
+    let response, xml;
+    try {
+        response = await fetch(endpoints.wsfe, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'text/xml; charset=utf-8',
+                SOAPAction: 'http://ar.gov.afip.dif.FEV1/FEParamGetCotizacion',
+            },
+            body: soapBody,
+            signal: AbortSignal.timeout(15000),
+        });
+        xml = await response.text();
+    } catch (err) {
+        throw new Error(`FEParamGetCotizacion network error: ${err.message}`);
+    }
+
+    if (!response.ok) {
+        throw new Error(`FEParamGetCotizacion HTTP ${response.status}: ${xml.slice(0, 300)}`);
+    }
+
+    // Parsear errores AFIP
+    const errBlock = xml.match(/<Errors[^>]*>([\s\S]*?)<\/Errors>/i);
+    if (errBlock) {
+        const errs = errBlock[1].match(/<Err>[\s\S]*?<\/Err>/gi) || [];
+        const msgs = errs.map(e => `[${extractXmlTag(e, 'Code')}] ${extractXmlTag(e, 'Msg')}`).filter(Boolean);
+        if (msgs.length > 0) {
+            throw new Error(`AFIP rechazo cotizacion ${monId}: ${msgs.join(' | ')}`);
+        }
+    }
+
+    const monCotizRaw = extractXmlTag(xml, 'MonCotiz');
+    const monCotiz = Number(monCotizRaw);
+    if (!Number.isFinite(monCotiz) || monCotiz <= 0) {
+        throw new Error(`FEParamGetCotizacion devolvio cotizacion invalida para ${monId}: "${monCotizRaw}"`);
+    }
+    const fchCotiz = extractXmlTag(xml, 'FchCotiz') || null;
+
+    // Cachear
+    _cotizacionCache.set(monId, { monCotiz, fchCotiz, cachedAt: Date.now() });
+    console.log(`[wsfe] cotizacion AFIP fresh monId=${monId} → ${monCotiz} (fecha ${fchCotiz})`);
+    return { monCotiz, fchCotiz };
+}
+
 async function afipIssueFactura({
     token, sign, cuit, pointOfSale, draft, invoiceType = 'C',
     // Fase 1 — idempotency: si en un attempt anterior reservamos un cbteNro
@@ -1237,6 +1316,11 @@ async function afipIssueFactura({
     // del SOAP — asi sabemos que numero "intentamos" en caso de timeout.
     previousCbteNro = null,
     onCbteNroAssigned = null,
+    // PASO 2 USD — moneda y cotizacion ya RESUELTAS por el caller.
+    // Defaults preservan el comportamiento PES historico cuando el caller
+    // no las pasa (clientes legacy o tests que no las setean).
+    monId = 'PES',
+    monCotiz = 1.0,
 }) {
     const config = INVOICE_TYPE_CONFIG[invoiceType];
     if (!config) throw new Error(`Tipo de factura no soportado: ${invoiceType}`);
@@ -1391,8 +1475,8 @@ async function afipIssueFactura({
             <ar:ImpOpEx>0.00</ar:ImpOpEx>
             <ar:ImpTrib>0.00</ar:ImpTrib>
             <ar:ImpIVA>${impIva.toFixed(2)}</ar:ImpIVA>
-            <ar:MonId>PES</ar:MonId>
-            <ar:MonCotiz>1.000</ar:MonCotiz>
+            <ar:MonId>${xmlEscape(monId)}</ar:MonId>
+            <ar:MonCotiz>${Number(monCotiz).toFixed(6)}</ar:MonCotiz>
             ${fchServXml}
             ${alicuotasXml}
           </ar:FECAEDetRequest>
@@ -4734,6 +4818,46 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 cotizacion:          moneda === 'PES' ? 1 : (cotizacionItem || null),
             };
 
+            // ── 9.5 PASO 2 USD — resolver moneda y cotizacion + bloqueos ─────
+            // Bloqueo regulatorio: Monotributistas no pueden emitir en moneda
+            // extranjera. AFIP rechaza el comprobante si lo intentamos. Mejor
+            // bloquear aca con un mensaje claro al cliente.
+            if (draft.moneda !== 'PES' && emisorInfo.condicion === 'MONOTRIBUTO') {
+                throw new Error(
+                    `Los Monotributistas no pueden facturar en moneda extranjera por regulación AFIP. ` +
+                    `El item tiene moneda "${draft.moneda}" pero el emisor (${company.business_name || company.cuit}) está en categoría Monotributo. ` +
+                    `Cambiá la columna Moneda del item a "Pesos" (o vacíala) para emitir.`
+                );
+            }
+
+            // Resolver cotizacion final (la que efectivamente va al SOAP):
+            //   - PES → siempre 1.0
+            //   - DOL/extranjera con override del cliente (mapping.cotizacion) → ese
+            //   - DOL/extranjera sin override → consultar AFIP oficial
+            let resolvedMonCotiz = 1.0;
+            if (draft.moneda !== 'PES') {
+                if (draft.cotizacion && Number(draft.cotizacion) > 0) {
+                    resolvedMonCotiz = Number(draft.cotizacion);
+                    console.log(`[emit] cotizacion override del cliente: ${draft.moneda}=${resolvedMonCotiz}`);
+                } else {
+                    const tokenForCot = await afipAuthModule.getToken({
+                        certPem: emisorCertPem, keyPem: emisorKeyPem,
+                        cuit: company.cuit, service: 'wsfe',
+                        companyId: company.id,
+                    });
+                    const cotResult = await afipGetCotizacion({
+                        token: tokenForCot.token, sign: tokenForCot.sign,
+                        cuit: company.cuit, monId: draft.moneda,
+                    });
+                    resolvedMonCotiz = cotResult.monCotiz;
+                    console.log(`[emit] cotizacion AFIP oficial: ${draft.moneda}=${resolvedMonCotiz} (fecha ${cotResult.fchCotiz})`);
+                }
+            }
+            // Actualizamos draft.cotizacion con la RESUELTA (la que realmente
+            // se va a enviar a AFIP). Asi se persiste correctamente el dato
+            // real, no el override raw del cliente.
+            draft.cotizacion = resolvedMonCotiz;
+
             // ── 10. Persistir draft_json ANTES de llamar a AFIP ───────────────
             // Sin esto, si el SOAP timeout-ea no tendriamos los datos para
             // regenerar el PDF en el cron de reconciliacion (Fase 3). Tambien
@@ -4769,6 +4893,9 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                     draft,
                     invoiceType: tipo,
                     previousCbteNro,
+                    // PASO 2 USD — moneda y cotizacion ya RESUELTAS arriba en 9.5
+                    monId:    draft.moneda || 'PES',
+                    monCotiz: draft.cotizacion || 1.0,
                     onCbteNroAssigned: async ({ cbteType, pointOfSale: pv, cbteNro }) => {
                         // Persistimos el numero reservado ANTES de enviar a AFIP.
                         // Si el SOAP timeout-ea, en el retry leemos este nro y
@@ -4897,15 +5024,13 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 ? { ...afipResult, monday_upload: mondayUpload }
                 : null;
 
-            // PASO 1 USD — persistimos la moneda QUE AFIP USO, no la que el
-            // cliente quiso. Hasta que el SOAP respete draft.moneda (PASO 2),
-            // siempre se emite en PES. Si draft.moneda=DOL pero el SOAP envio
-            // PES, el log lo aclara y la DB refleja la realidad ('PES').
-            const monedaPersistida = 'PES';      // hardcoded hasta PASO 2
-            const cotizacionPersistida = 1.0;
-            if (draft.moneda && draft.moneda !== 'PES') {
-                console.warn(`[emit] ⚠ moneda detectada en mapeo=${draft.moneda} pero la app aun emite SOLO en pesos (PASO 2 pendiente). Factura emitida y registrada en PES.`);
-            }
+            // PASO 2 USD — la DB persiste lo que efectivamente se envio a AFIP.
+            // Si fue una emision en USD, monedaPersistida='DOL' y cotizacion
+            // tiene la cotizacion real usada. Esto mantiene consistencia entre
+            // DB y AFIP, y hace que la auditoria nocturna pueda comparar
+            // correctamente (PASO 4).
+            const monedaPersistida     = draft.moneda     || 'PES';
+            const cotizacionPersistida = draft.cotizacion || 1.0;
 
             markStart('db_final_update');
             await db.query(
