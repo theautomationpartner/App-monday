@@ -5170,6 +5170,32 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 }).catch((e) => console.warn('[write-back] cotizacion fire-and-forget falló:', e.message));
             }
 
+            // Write-back de precio en pesos a cada subitem (FIRE-AND-FORGET).
+            // Solo cuando:
+            //   - Emision exitosa (hay CAE)
+            //   - Moneda extranjera (DOL/etc)
+            //   - mapping.precio_unitario_usd y mapping.precio_unitario mapeados
+            //     (los 2 son obligatorios cuando moneda esta mapeada)
+            // Para cada subitem con valor en USD, calculamos el equivalente en
+            // pesos (USD * cotizacion efectiva) y lo escribimos en la columna
+            // precio_unitario del subitem. Sobrescribe siempre — el valor
+            // refleja exactamente lo facturado a esa cotizacion.
+            if (afipResult?.cae && draft.moneda !== 'PES' && mapping.precio_unitario && mapping.precio_unitario_usd) {
+                for (const sub of subitems) {
+                    const precioUsd = toNumberOrNull(getColumnTextById(sub.column_values, mapping.precio_unitario_usd));
+                    if (precioUsd && precioUsd > 0 && sub.boardId) {
+                        const precioPesos = Number((precioUsd * draft.cotizacion).toFixed(2));
+                        writeMondayNumericColumn({
+                            apiToken: mondayToken,
+                            boardId:  sub.boardId,                // board del subitems, distinto al principal
+                            itemId:   sub.id,                     // subitem es item dentro del subitems board
+                            columnId: mapping.precio_unitario,
+                            value:    precioPesos,
+                        }).catch((e) => console.warn(`[write-back] precio_pesos sub=${sub.id} fire-and-forget falló:`, e.message));
+                    }
+                }
+            }
+
             // Renombrar el item del cliente con el formato del comprobante emitido.
             // FIRE-AND-FORGET: la emisión ya fue exitosa, esto es solo cosmético.
             //
@@ -5464,6 +5490,7 @@ async function fetchMondayItem({ apiToken, itemId }) {
             }
             subitems {
                 id name
+                board { id }
                 column_values {
                     id text value type
                     column { id title }
@@ -5486,7 +5513,9 @@ async function fetchMondayItem({ apiToken, itemId }) {
         name: item.name || null,
         mainColumns: item.column_values || [],
         subitems: (item.subitems || []).map(s => ({
-            id: s.id, name: s.name, column_values: s.column_values || []
+            id: s.id, name: s.name,
+            boardId: s.board?.id ? String(s.board.id) : null,
+            column_values: s.column_values || []
         })),
     };
 }
