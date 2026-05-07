@@ -4896,6 +4896,17 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             const finalAfipResult = afipResult
                 ? { ...afipResult, monday_upload: mondayUpload }
                 : null;
+
+            // PASO 1 USD — persistimos la moneda QUE AFIP USO, no la que el
+            // cliente quiso. Hasta que el SOAP respete draft.moneda (PASO 2),
+            // siempre se emite en PES. Si draft.moneda=DOL pero el SOAP envio
+            // PES, el log lo aclara y la DB refleja la realidad ('PES').
+            const monedaPersistida = 'PES';      // hardcoded hasta PASO 2
+            const cotizacionPersistida = 1.0;
+            if (draft.moneda && draft.moneda !== 'PES') {
+                console.warn(`[emit] ⚠ moneda detectada en mapeo=${draft.moneda} pero la app aun emite SOLO en pesos (PASO 2 pendiente). Factura emitida y registrada en PES.`);
+            }
+
             markStart('db_final_update');
             await db.query(
                 `UPDATE invoice_emissions
@@ -4908,8 +4919,8 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                     afipResult?.cae ? 'success' : 'prepared',
                     JSON.stringify(draft),
                     JSON.stringify(finalAfipResult),
-                    draft.moneda || 'PES',
-                    draft.cotizacion || 1.0,
+                    monedaPersistida,
+                    cotizacionPersistida,
                 ]
             );
             markEnd('db_final_update');
