@@ -382,7 +382,11 @@ const App = () => {
     "unidad_medida",
     "alicuota_iva",
   ];
-  const optionalMappingFields = []; // ya no hay opcionales
+  // Campos opcionales — el cliente puede mapearlos pero no son obligatorios
+  // para guardar el mapeo ni para emitir.
+  //   - moneda: columna donde el cliente escribe "PES"/"USD"/"DOL" por item.
+  //             Si no la mapea, todas las facturas se emiten en pesos (default).
+  const optionalMappingFields = ["moneda"];
   // Campos obligatorios de operación (columnas del tablero, no del mapeo de datos):
   //   - status_column_id: columna Status — solo si auto_update_status=true
   //   - invoice_pdf_column_id: columna File donde se sube el PDF generado (siempre)
@@ -3055,8 +3059,30 @@ const App = () => {
                       <span>Punto de venta</span>
                       <span className="mono rf-invoice-meta-static">{pvFormatted}</span>
                     </div>
+                    <div className="rf-invoice-meta-row">
+                      <span>Moneda <em style={{ color: "var(--ink-400)", fontWeight: 400 }}>(opcional)</em></span>
+                      {mapSel("moneda", "Default: pesos")}
+                    </div>
                   </div>
                 </div>
+
+                {inMappingEditMode && (
+                  <div style={{
+                    fontSize: "12px",
+                    color: "var(--ink-400)",
+                    background: "var(--surface-100, #f7f8fa)",
+                    border: "1px solid var(--border-100, #e6e8eb)",
+                    borderRadius: "6px",
+                    padding: "8px 12px",
+                    marginTop: "-4px",
+                    marginBottom: "12px",
+                  }}>
+                    <strong>Sobre la moneda (opcional):</strong> si no la mapeás, todas las facturas se emiten en <b>pesos</b>.
+                    Si querés facturar en otra moneda, mapeá una columna de tu tablero (tipo Status o Dropdown) donde por cada item indiques
+                    {" "}<code>PES</code> para pesos o <code>USD</code> / <code>DOL</code> para dólares.
+                    {" "}<em>Solo Responsables Inscriptos pueden facturar en USD — Monotributistas siempre van a emitir en pesos por regulación AFIP.</em>
+                  </div>
+                )}
 
                 {/* Cliente */}
                 <div className="rf-invoice-client">
