@@ -3266,6 +3266,33 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
             return res.status(404).json({ error: 'Empresa no encontrada' });
         }
 
+        // ── MERGE forwards-compatible ─────────────────────────────────────
+        // Cuando deployamos campos nuevos en el mapping (ej. moneda, observaciones),
+        // un cliente con bundle JS cacheado del deploy anterior NO los conoce y
+        // mandaria un mapping sin esas keys. Si hicieramos REPLACE total, esos
+        // campos se perderian de la DB. En su lugar:
+        //   - Si una key viene en el body con valor string no-vacio → SET
+        //   - Si una key viene como '' o null → DES-MAPEO explicito (DELETE)
+        //   - Si una key NO viene en el body → PRESERVAR del DB (forwards-compat)
+        // Asi el frontend nuevo puede des-mapear (mandando '') y el viejo no
+        // pisa lo que no conoce.
+        const currentRow = await db.query(
+            `SELECT mapping_json FROM visual_mappings
+             WHERE company_id=$1 AND board_id=$2
+               AND COALESCE(view_id, '')=COALESCE($3, '')
+               AND COALESCE(app_feature_id, '')=COALESCE($4, '')`,
+            [company.id, String(board_id), view_id || null, app_feature_id || null]
+        );
+        const currentMapping = currentRow.rows[0]?.mapping_json || {};
+        const merged = { ...currentMapping };
+        for (const [key, value] of Object.entries(mapping || {})) {
+            if (value === '' || value === null || value === undefined) {
+                delete merged[key];
+            } else {
+                merged[key] = value;
+            }
+        }
+
         const updateResult = await db.query(
             `UPDATE visual_mappings
              SET mapping_json = $5,
@@ -3283,7 +3310,7 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
                 String(board_id),
                 view_id || null,
                 app_feature_id || null,
-                JSON.stringify(mapping),
+                JSON.stringify(merged),
                 typeof is_locked === 'boolean' ? is_locked : null,
                 workspaceId
             ]
@@ -3310,7 +3337,7 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
                 String(board_id),
                 view_id || null,
                 app_feature_id || null,
-                JSON.stringify(mapping),
+                JSON.stringify(merged),
                 typeof is_locked === 'boolean' ? is_locked : null
             ]
         );
