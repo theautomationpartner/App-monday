@@ -2807,24 +2807,35 @@ const App = () => {
 
           // Helper: renderiza un select del estilo "pill" (variant Refined).
           // En modo vista lo dejamos disabled para conservar el visual de pill mapped/unmapped sin permitir cambios.
-          const mapSel = (fieldId, placeholder, scope = "board") => (
-            <select
-              className={`invoice-preview-select ${mapping[fieldId] ? "mapped" : "unmapped"} ${missingMappingFields.includes(fieldId) ? "highlight-missing" : ""}`}
-              value={mapping[fieldId] || ""}
-              disabled={!inMappingEditMode}
-              onChange={(e) => {
-                setMapping({ ...mapping, [fieldId]: e.target.value });
-                if (missingMappingFields.includes(fieldId)) {
-                  setMissingMappingFields((prev) => prev.filter((f) => f !== fieldId));
-                }
-              }}
-            >
-              <option value="">— {placeholder} —</option>
-              {(scope === "subitem" ? subitemColumns : columns).map((c) => (
-                <option key={c.value} value={c.value}>{c.label}</option>
-              ))}
-            </select>
-          );
+          // excludeFields: array de fieldIds del propio mapping cuyas columnas se
+          // ocultan de las opciones (evita mapear una misma columna a 2 campos
+          // distintos — ej: precio_unitario vs precio_unitario_usd).
+          const mapSel = (fieldId, placeholder, scope = "board", excludeFields = []) => {
+            const sourceCols = scope === "subitem" ? subitemColumns : columns;
+            const excludedIds = new Set(
+              excludeFields.map((f) => mapping[f]).filter(Boolean)
+            );
+            return (
+              <select
+                className={`invoice-preview-select ${mapping[fieldId] ? "mapped" : "unmapped"} ${missingMappingFields.includes(fieldId) ? "highlight-missing" : ""}`}
+                value={mapping[fieldId] || ""}
+                disabled={!inMappingEditMode}
+                onChange={(e) => {
+                  setMapping({ ...mapping, [fieldId]: e.target.value });
+                  if (missingMappingFields.includes(fieldId)) {
+                    setMissingMappingFields((prev) => prev.filter((f) => f !== fieldId));
+                  }
+                }}
+              >
+                <option value="">— {placeholder} —</option>
+                {sourceCols
+                  .filter((c) => !excludedIds.has(c.value))
+                  .map((c) => (
+                    <option key={c.value} value={c.value}>{c.label}</option>
+                  ))}
+              </select>
+            );
+          };
 
           const pvFormatted = String(fiscal.puntoVenta || "0001").padStart(4, "0");
           const pillKind = mappedRequiredCount === totalRequiredCount ? "ok" : "warn";
@@ -3122,9 +3133,11 @@ const App = () => {
                       onChange={(e) => setMapping({ ...mapping, precio_unitario_usd: e.target.value })}
                     >
                       <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Solo si emitís en USD"} —</option>
-                      {subitemNumericColumns.map((c) => (
-                        <option key={c.value} value={c.value}>{c.label}</option>
-                      ))}
+                      {subitemNumericColumns
+                        .filter((c) => c.value !== mapping.precio_unitario)
+                        .map((c) => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
                     </select>
                   ) : (
                     <span className="gd-confirm-value">
@@ -3230,7 +3243,7 @@ const App = () => {
                       <th>Cant {mapSel("cantidad", "Cantidad", "subitem")}</th>
                       <th>Unidad {mapSel("unidad_medida", "Opcional", "subitem")}</th>
                       <th>Prod/Serv {mapSel("prod_serv", "Prod/Serv", "subitem")}</th>
-                      <th>Precio unit. {mapSel("precio_unitario", "Precio", "subitem")}</th>
+                      <th>Precio unit. {mapSel("precio_unitario", "Precio", "subitem", ["precio_unitario_usd"])}</th>
                       <th>IVA % {mapSel("alicuota_iva", "Opcional", "subitem")}</th>
                     </tr>
                   </thead>

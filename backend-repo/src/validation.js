@@ -133,6 +133,17 @@ const MappingSchema = z.object({
             });
         }
     }
+    // Precio en pesos y precio en USD deben ser columnas DISTINTAS — son
+    // dos campos del subitem con valores propios. Mapear la misma columna a
+    // ambos no tiene sentido (la app emitiria en dolares con el numero del
+    // precio en pesos, o viceversa).
+    if (m.precio_unitario && m.precio_unitario_usd && m.precio_unitario === m.precio_unitario_usd) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Precio Unitario (pesos) y Precio Unitario en USD deben ser columnas distintas — no podés mapear la misma columna a ambos.',
+            path: ['mapping'],
+        });
+    }
 });
 
 // Token de API de monday del usuario (POST /api/user-api-token)
