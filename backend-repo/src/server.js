@@ -860,6 +860,31 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         }
     }
 
+    // ── Moneda y cotizacion (opcionales) ──────────────────────────────────
+    // Solo validamos si el cliente mapeo la columna. Si no la mapeo,
+    // default = pesos. Si la mapeo pero el item esta vacio, tambien default
+    // = pesos. Solo error si tiene un valor que no es ni pesos ni dolares.
+    if (mapping.moneda) {
+        const monedaRaw = getColumnTextById(mainColumns, mapping.moneda) || '';
+        if (monedaRaw.trim()) {
+            const monedaParsed = invoiceRules.parseMoneda(monedaRaw);
+            if (!monedaParsed) {
+                const monedaLabel = getColumnLabel(mainColumns, mapping.moneda, 'Moneda');
+                errors.push(`Item: columna ${monedaLabel} tiene un valor no reconocido ("${monedaRaw}"). Debe decir "Pesos" o "Dólares" (acepta cualquier mayuscula/minuscula y singular/plural).`);
+            }
+        }
+    }
+    if (mapping.cotizacion) {
+        const cotRaw = getColumnTextById(mainColumns, mapping.cotizacion) || '';
+        if (cotRaw.trim()) {
+            const cotNum = toNumberOrNull(cotRaw);
+            if (cotNum === null || cotNum <= 0) {
+                const cotLabel = getColumnLabel(mainColumns, mapping.cotizacion, 'Tipo de cambio');
+                errors.push(`Item: columna ${cotLabel} debe ser un número mayor a 0 (actual: "${cotRaw}")`);
+            }
+        }
+    }
+
     return { ok: errors.length === 0, errors };
 }
 
@@ -1603,6 +1628,16 @@ async function ensureInvoiceEmissionsTable() {
             ADD COLUMN IF NOT EXISTS audit_status TEXT,
             ADD COLUMN IF NOT EXISTS audited_at   TIMESTAMP,
             ADD COLUMN IF NOT EXISTS audit_findings JSONB
+    `);
+
+    // Migracion Fase 5 - Soporte de moneda extranjera (USD):
+    // Default 'PES' / 1.0 garantiza que rows existentes no cambian su
+    // comportamiento. Solo facturas nuevas con mapping.moneda configurado
+    // van a tener valores distintos.
+    await db.query(`
+        ALTER TABLE invoice_emissions
+            ADD COLUMN IF NOT EXISTS moneda VARCHAR(3) DEFAULT 'PES',
+            ADD COLUMN IF NOT EXISTS cotizacion NUMERIC(14,6) DEFAULT 1.0
     `);
 
     // Indice parcial sobre rows pendientes de auditar para que el SELECT
@@ -4466,6 +4501,19 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             const fechaServHastaRaw  = mapping.fecha_servicio_hasta ? (getColumnTextById(mainColumns, mapping.fecha_servicio_hasta) || null) : null;
             const fechaVtoPagoRaw    = mapping.fecha_vto_pago ? (getColumnTextById(mainColumns, mapping.fecha_vto_pago) || null) : null;
 
+            // ── Moneda y cotizacion (campos opcionales) ───────────────────────
+            // Si mapping.moneda no esta mapeada → factura en pesos (default).
+            // Si esta mapeada y el item tiene un valor reconocible → emite en
+            // esa moneda. Si esta mapeada pero el valor no es PES/DOL → error
+            // de validacion claro (en validateItemDataCompleteness).
+            const monedaRaw = mapping.moneda ? (getColumnTextById(mainColumns, mapping.moneda) || '') : '';
+            const moneda = monedaRaw ? (invoiceRules.parseMoneda(monedaRaw) || 'PES') : 'PES';
+            // Cotizacion del item (override manual). Si no esta mapeada o esta
+            // vacia → la app la consulta a AFIP automaticamente en el PASO 2
+            // (afipGetCotizacion). Para PES, cotizacion siempre = 1.
+            const cotizacionItemRaw = mapping.cotizacion ? getColumnTextById(mainColumns, mapping.cotizacion) : '';
+            const cotizacionItem = toNumberOrNull(cotizacionItemRaw);  // null si no hay valor numerico
+
             // ── 6. Consultar padrón: condición fiscal del EMISOR ──────────────
             // Padrón AFIP es la ÚNICA fuente de verdad de la condición IVA.
             // Si falla, no emitimos — preferible bloquear que emitir con datos obsoletos.
@@ -4679,6 +4727,11 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 importe_iva:         importeIva,
                 importe_total:       importeTotal,
                 lineas,
+                // PASO 1 USD — moneda detectada del item (default 'PES'). Para PES
+                // cotizacion siempre es 1. Para DOL guardamos el override del
+                // cliente si lo hay; sino el PASO 2 la resuelve via AFIP.
+                moneda:              moneda,
+                cotizacion:          moneda === 'PES' ? 1 : (cotizacionItem || null),
             };
 
             // ── 10. Persistir draft_json ANTES de llamar a AFIP ───────────────
@@ -4846,13 +4899,17 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             markStart('db_final_update');
             await db.query(
                 `UPDATE invoice_emissions
-                 SET status=$5, draft_json=$6, afip_result_json=$7, updated_at=CURRENT_TIMESTAMP
+                 SET status=$5, draft_json=$6, afip_result_json=$7,
+                     moneda=$8, cotizacion=$9,
+                     updated_at=CURRENT_TIMESTAMP
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                 [
                     company.id, boardId, itemId, typeForIdempotency,
                     afipResult?.cae ? 'success' : 'prepared',
                     JSON.stringify(draft),
                     JSON.stringify(finalAfipResult),
+                    draft.moneda || 'PES',
+                    draft.cotizacion || 1.0,
                 ]
             );
             markEnd('db_final_update');

@@ -200,6 +200,56 @@ function toTitleCase(str) {
     }).join('');
 }
 
+/**
+ * Normaliza un string de moneda al codigo AFIP correspondiente.
+ *
+ * Tolerante a:
+ *   - Mayusculas/minusculas (toLowerCase)
+ *   - Tildes (NFD + strip diacriticos)
+ *   - Espacios al inicio/final (trim)
+ *   - Singular/plural ("peso"/"pesos", "dolar"/"dolares")
+ *   - Codigos AFIP directos ("PES", "DOL", "USD")
+ *
+ * Retorna:
+ *   'PES'  → para pesos argentinos (cualquier variante)
+ *   'DOL'  → para dolares americanos (cualquier variante, incluye "USD")
+ *   null   → valor no reconocido (vacio o no es ni pesos ni dolares)
+ *
+ * Ejemplos:
+ *   parseMoneda('Pesos')       → 'PES'
+ *   parseMoneda('PESOS')       → 'PES'
+ *   parseMoneda('peso')        → 'PES'
+ *   parseMoneda('PES')         → 'PES'
+ *   parseMoneda('Dolares')     → 'DOL'
+ *   parseMoneda('DÓLARES')     → 'DOL'
+ *   parseMoneda('dolar')       → 'DOL'
+ *   parseMoneda('USD')         → 'DOL'
+ *   parseMoneda('DOL')         → 'DOL'
+ *   parseMoneda('')            → null
+ *   parseMoneda('euros')       → null  (no soportado por ahora)
+ *   parseMoneda(null)          → null
+ */
+function parseMoneda(raw) {
+    if (raw === null || raw === undefined) return null;
+    const normalized = String(raw)
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')  // sacar tildes y diacriticos
+        .replace(/\s+/g, ' ')              // colapsar espacios
+        .trim();
+    if (!normalized) return null;
+
+    // Pesos: aceptamos "pes", "peso", "pesos" + codigos AFIP
+    if (/^pes(o)?(s)?$/.test(normalized) || normalized === 'ars') {
+        return 'PES';
+    }
+    // Dolares: aceptamos "dol", "dolar", "dolares" + "usd" + codigos AFIP
+    if (/^dol(a)?(r)?(es)?$/.test(normalized) || normalized === 'usd') {
+        return 'DOL';
+    }
+    return null; // no reconocido
+}
+
 module.exports = {
     determineInvoiceType,
     validateInvoiceType,
@@ -208,4 +258,5 @@ module.exports = {
     getIvaRate,
     condicionLabel,
     toTitleCase,
+    parseMoneda,
 };
