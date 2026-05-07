@@ -5651,6 +5651,12 @@ function toMondayDate(s) {
 // del equipo de TAP — bugs, infra, casos no clasificables).
 // FIRE-AND-FORGET: nunca tira excepción. Tiene reintentos.
 async function notifySlackSystemError({ accountId, clientItemName, errorMessage, auditItemId }) {
+    // Staging usa los mismos secrets pero los errores ahi son ruido para TAP
+    // (datos de prueba, no clientes reales). Mismo patron que logEmissionToAuditBoard.
+    if (process.env.APP_ENV === 'staging') {
+        console.log('[slack] APP_ENV=staging — skip alerta a Slack (canal solo para prod)');
+        return;
+    }
     const webhookUrl = process.env.SLACK_WEBHOOK_URL;
     if (!webhookUrl) {
         console.warn('[slack] SLACK_WEBHOOK_URL no configurado — skip');
@@ -6246,6 +6252,13 @@ async function auditSingleEmission({ row, company, token, sign }) {
 }
 
 async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, durationMs }) {
+    // Staging skip — auditoria corre igual (genera el log local), pero no se
+    // notifica a Slack para evitar 2 alertas duplicadas (una de prod, una de
+    // staging) cada noche. Mismo patron que notifySlackSystemError y audit board.
+    if (process.env.APP_ENV === 'staging') {
+        console.log('[nightly-audit] APP_ENV=staging — skip resumen a Slack (canal solo para prod)');
+        return;
+    }
     const webhookUrl = process.env.SLACK_WEBHOOK_URL;
     if (!webhookUrl) {
         console.warn('[nightly-audit] SLACK_WEBHOOK_URL no configurado — skip notificacion');
