@@ -6141,6 +6141,7 @@ const AUDIT_COLS = {
     fecha_emision:    'date_mm2ttq29',
     estado:           'color_mm2t2mrr',
     instalacion:      'board_relation_mm2x7ajc',
+    empresa_emisora:  'dropdown_mm3hfsrw',  // nombre legal de la empresa emisora
     tipo:             'dropdown_mm2ty1vv',
     tipo_nc:          'dropdown_mm3hq4br',  // letra de la NC — columna separada de la factura
     nro_comprobante:  'numeric_mm2ts2xt',
@@ -6296,6 +6297,12 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         if (company?.cuit) {
             const emisorDigits = String(company.cuit).replace(/\D/g, '');
             if (emisorDigits) cv[AUDIT_COLS.cuit_emisor] = emisorDigits;
+        }
+        // Empresa emisora — nombre legal (business_name). Permite distinguir en
+        // el audit board qué empresa de la cuenta emitió (la instalación es por
+        // cuenta de monday y puede agrupar varias empresas).
+        if (company?.business_name) {
+            cv[AUDIT_COLS.empresa_emisora] = { labels: [String(company.business_name)] };
         }
         if (afipResult?.cae)                         cv[AUDIT_COLS.cae]             = String(afipResult.cae);
         if (vtoCae)                                  cv[AUDIT_COLS.vto_cae]         = { date: vtoCae };
