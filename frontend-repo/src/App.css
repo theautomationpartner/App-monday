@@ -2822,12 +2822,7 @@ body {
   width: 36px;
   height: 36px;
   border-radius: 8px;
-  background: var(--brand-navy);
-  color: var(--brand-yellow);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
+  object-fit: contain;
   flex-shrink: 0;
 }
 

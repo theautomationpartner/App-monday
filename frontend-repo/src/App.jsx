@@ -6,6 +6,7 @@ import "monday-ui-react-core/tokens";
 import "monday-ui-react-core/dist/main.css";
 import "./App.css";
 import WelcomePage from "./WelcomePage";
+import iconoFacturacion from "./assets/icono-facturacion.svg";
 
 const monday = mondaySdk();
 
@@ -1629,7 +1630,7 @@ const App = () => {
       {/* ─── SIDEBAR (checklist guiado, marca TAP) ─── */}
       <aside className="gd-sidebar">
         <div className="gd-sidebar-brand">
-          <div className="gd-sidebar-logo">FE</div>
+          <img className="gd-sidebar-logo" src={iconoFacturacion} alt="Facturación AFIP" />
           <div>
             <div className="gd-sidebar-brand-title">Facturación AFIP</div>
             <div className="gd-sidebar-brand-sub">Monday App</div>
