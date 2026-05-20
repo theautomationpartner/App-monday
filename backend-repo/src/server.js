@@ -5692,6 +5692,22 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
 
+            // Audit board de TAP (fire-and-forget) — la NC se registra como item
+            // propio (clave :NC), separado del item de auditoría de la factura.
+            logEmissionToAuditBoard({
+                accountId,
+                success: true,
+                clientItemId: itemId,
+                sourceItemName: null,
+                draft: ncDraft,
+                afipResult,
+                tipo: letra,
+                durationMs: Date.now() - tStart,
+                receptorRazonSocial: ncDraft.receptor_nombre || null,
+                company,
+                esNotaCredito: true,
+            }).catch((e) => console.warn('[nc] audit-log fire-and-forget falló:', e.message));
+
             if (callbackUrl) {
                 notifyCallback(callbackUrl, actionUuid, true, null, {
                     invoiceType: `NC ${letra}`,
@@ -5720,7 +5736,7 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                 }
             } catch (_) {}
 
-            // Persistir el error en la fila de NC.
+            // Persistir el error en la fila de NC + registrarlo en el audit board.
             try {
                 const company = await getCompanyForBoard(accountId, boardId).catch(() => null);
                 if (company && boardId) {
@@ -5730,6 +5746,19 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                         [company.id, boardId, itemId, err.message]
                     );
                 }
+                logEmissionToAuditBoard({
+                    accountId,
+                    success: false,
+                    clientItemId: itemId,
+                    sourceItemName: null,
+                    draft: null,
+                    afipResult: null,
+                    tipo: null,
+                    error: err,
+                    durationMs: Date.now() - tStart,
+                    company: company || null,
+                    esNotaCredito: true,
+                }).catch((e) => console.warn('[nc] audit-log error fire-and-forget falló:', e.message));
             } catch (_) {}
 
             if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message).catch(() => {});
@@ -6113,6 +6142,7 @@ const AUDIT_COLS = {
     estado:           'color_mm2t2mrr',
     instalacion:      'board_relation_mm2x7ajc',
     tipo:             'dropdown_mm2ty1vv',
+    tipo_nc:          'dropdown_mm3hq4br',  // letra de la NC — columna separada de la factura
     nro_comprobante:  'numeric_mm2ts2xt',
     punto_venta:      'numeric_mm2wva2f',  // PTO Venta del comprobante
     cuit_emisor:      'numeric_mm2wjc48',  // CUIT del emisor (la company)
@@ -6226,7 +6256,7 @@ async function notifySlackSystemError({ accountId, clientItemName, errorMessage,
 // Cobertura ante fallas: si es Error sistema, se dispara Slack EN PARALELO con
 // el create/update del audit item. Así, aunque Monday API esté caída, igual
 // llega la alerta a Slack.
-async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company }) {
+async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company, esNotaCredito = false }) {
     // Skip si estamos en staging — el audit board y las alertas de Slack
     // son solo para clientes reales en produccion. Las pruebas que hagamos
     // en staging no contaminan ese board (ni disparan alertas falsas).
@@ -6260,7 +6290,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         cv[AUDIT_COLS.fecha_emision] = { date: fechaEmision };
         cv[AUDIT_COLS.estado]        = { label: success ? AUDIT_ESTADO.ok : classifyAuditError(error) };
         if (leadItemId)                              cv[AUDIT_COLS.instalacion]     = { item_ids: [Number(leadItemId)] };
-        if (tipo)                                    cv[AUDIT_COLS.tipo]            = { labels: [String(tipo)] };
+        if (tipo)                                    cv[esNotaCredito ? AUDIT_COLS.tipo_nc : AUDIT_COLS.tipo] = { labels: [String(tipo)] };
         if (afipResult?.numero_comprobante != null)  cv[AUDIT_COLS.nro_comprobante] = String(afipResult.numero_comprobante);
         if (draft?.punto_venta != null)              cv[AUDIT_COLS.punto_venta]     = String(draft.punto_venta);
         if (company?.cuit) {
@@ -6285,15 +6315,19 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         // Nombre final del audit item:
         // - éxito  → "Factura C N° 0005-00000048" (formato de comprobante)
         // - error  → nombre original del item del cliente, para que sepas qué factura falló
+        const docLabel = esNotaCredito ? 'Nota de Crédito' : 'Factura';
         const successName = success && afipResult?.numero_comprobante
-            ? `Factura ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim()
+            ? `${docLabel} ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim()
             : null;
-        const fallbackErrorName = `Error emisión ${tipo || ''} - ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`.trim();
+        const fallbackErrorName = `Error emisión ${docLabel} ${tipo || ''} - ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`.trim();
         const itemName = successName
             || (sourceItemName ? String(sourceItemName).slice(0, 255) : fallbackErrorName);
 
         // Idempotencia: ¿ya existe un audit item para este client_item_id?
-        const existingAuditItemId = await findAuditItemId(accountId, clientItemId);
+        // La NC usa una clave distinta (sufijo :NC) para NO colisionar con el
+        // item de auditoría de su factura → cada comprobante tiene su fila propia.
+        const auditKey = esNotaCredito ? `${clientItemId}:NC` : clientItemId;
+        const existingAuditItemId = await findAuditItemId(accountId, auditKey);
 
         // Disparar Slack ya con la info que tenemos (incluye link si ya existía el item).
         if (isSystemError) {
@@ -6367,7 +6401,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
                 console.log(`[audit-log] item creado: ${auditItemId} estado="${cv[AUDIT_COLS.estado].label}" account=${accountId}`);
 
                 if (auditItemId && clientItemId) {
-                    await recordAuditMapping(accountId, clientItemId, auditItemId, {
+                    await recordAuditMapping(accountId, auditKey, auditItemId, {
                         companyId: company?.id || null,
                         workspaceId: company?.workspace_id || null,
                     });
@@ -6788,6 +6822,11 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
     const total = ok + mismatch + notFound + errors;
     if (total === 0) return; // nada nuevo que reportar tonight
 
+    // Desglose facturas vs notas de crédito de lo auditado esta noche.
+    const ncCount  = results.filter(r => r.row?.invoice_type === 'NC').length;
+    const facCount = total - ncCount;
+    const desgloseLine = `   · Facturas: ${facCount}  ·  Notas de crédito: ${ncCount}`;
+
     // Acumulado historico de toda la tabla — incluye lo que se acaba de auditar.
     // Asi el mensaje muestra "auditadas anoche: X" + "estado del sistema: Y/Z OK".
     let cum = { ok: 0, mismatch: 0, not_found: 0, errors: 0, total_success: 0 };
@@ -6832,9 +6871,10 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             `:white_check_mark: *Auditoria nocturna AFIP — ${auditedDate}*`,
             ``,
             `*Auditadas esta noche:* ${total} → TODAS CORRECTAS`,
+            desgloseLine,
             cumLine,
             ``,
-            `_Las facturas emitidas por la app coinciden 100% con AFIP (CAE, numero e importe)._`,
+            `_Las facturas y notas de crédito emitidas por la app coinciden 100% con AFIP (CAE, numero e importe)._`,
             `_Duracion: ${durationStr}_`,
         ].join('\n');
     } else if (!hasIssues && errors > 0) {
@@ -6842,6 +6882,7 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             `:large_yellow_circle: *Auditoria nocturna AFIP — ${auditedDate}*`,
             ``,
             `*Auditadas esta noche:* ${total}`,
+            desgloseLine,
             `:white_check_mark: OK: ${ok}`,
             `:warning: Errores tecnicos (no auditables): ${errors}`,
             ``,
@@ -6856,7 +6897,8 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             const afipR = r.row.afip_result_json || {};
             const ptoStr = String(r.row.attempted_pto_vta || r.row.draft_json?.punto_venta || '').padStart(2, '0');
             const nroStr = String(afipR.numero_comprobante || r.row.attempted_cbte_nro || '').padStart(8, '0');
-            const tipoStr = `Factura ${r.row.invoice_type || afipR.tipo_comprobante || '?'} N° ${ptoStr}-${nroStr}`;
+            const esNc = r.row.invoice_type === 'NC';
+            const tipoStr = `${esNc ? 'Nota de Crédito' : 'Factura'} ${afipR.tipo_comprobante || '?'} N° ${ptoStr}-${nroStr}`;
             const itemRef = `account=${r.company?.monday_account_id || '?'} board=${r.row.board_id} item=${r.row.item_id}`;
 
             if (r.status === 'not_found_in_afip') {
@@ -6876,6 +6918,7 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             `:rotating_light: *DISCREPANCIA AFIP — Auditoria nocturna ${auditedDate}*`,
             ``,
             `*Auditadas esta noche:* ${total}`,
+            desgloseLine,
             `:white_check_mark: OK: ${ok}`,
             `:rotating_light: Discrepancias criticas: ${notFound + mismatch}`,
             errors > 0 ? `:warning: Errores tecnicos: ${errors}` : null,
