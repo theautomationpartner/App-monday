@@ -1244,6 +1244,11 @@ const INVOICE_TYPE_CONFIG = {
     C: { cbteType: 11, ivaRate: 0,    requiresCuit: false },
 };
 
+// Tipos de comprobante AFIP para Notas de Crédito: NC A=3, NC B=8, NC C=13.
+// La letra de la NC sigue la letra de la factura que anula. Se usa solo
+// cuando afipIssueFactura recibe `cbtesAsoc` (ver Fase 1 — Notas de Crédito).
+const CREDIT_NOTE_CBTE_TYPE = { A: 3, B: 8, C: 13 };
+
 // ─── Cotizacion de monedas (FEParamGetCotizacion) ─────────────────────────
 // Consulta la cotizacion oficial de AFIP para una moneda extranjera.
 // Para PES devolvemos 1.0 sin pegar a AFIP.
@@ -1338,12 +1343,23 @@ async function afipIssueFactura({
     // no las pasa (clientes legacy o tests que no las setean).
     monId = 'PES',
     monCotiz = 1.0,
+    // Fase 1 — Notas de Crédito: array de comprobantes que esta NC anula.
+    // Cada elemento: { tipo, ptoVta, nro, cuit, cbteFch (YYYY-MM-DD o YYYYMMDD) }.
+    // Si es null o [], la emisión es una factura normal (comportamiento histórico).
+    cbtesAsoc = null,
 }) {
     const config = INVOICE_TYPE_CONFIG[invoiceType];
     if (!config) throw new Error(`Tipo de factura no soportado: ${invoiceType}`);
 
     const endpoints = getAfipEndpoints();
-    const { cbteType } = config;
+    // Una NC se reconoce por traer comprobantes asociados: usa el CbteTipo de
+    // Nota de Crédito (3/8/13) en vez del de factura (1/6/11). `invoiceType`
+    // sigue siendo la letra A/B/C para no alterar el resto de la lógica.
+    const isCreditNote = Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0;
+    if (isCreditNote && !CREDIT_NOTE_CBTE_TYPE[invoiceType]) {
+        throw new Error(`Tipo de Nota de Crédito no soportado: ${invoiceType}`);
+    }
+    const cbteType = isCreditNote ? CREDIT_NOTE_CBTE_TYPE[invoiceType] : config.cbteType;
 
     // ── Fase 1 — Recovery de attempt previo ──────────────────────────────
     // Si hay cbteNro de un intento anterior, primero consultar AFIP. Si la
@@ -1363,6 +1379,7 @@ async function afipIssueFactura({
                     cae_vencimiento: recovered.cae_vencimiento,
                     numero_comprobante: recovered.cbte_nro,
                     tipo_comprobante: invoiceType,
+                    cbte_tipo_afip: cbteType,
                     imp_neto: recovered.imp_neto,
                     imp_iva: recovered.imp_iva,
                     observacion: null,
@@ -1461,6 +1478,25 @@ async function afipIssueFactura({
             </ar:Iva>`
         : '';
 
+    // Comprobantes asociados (CbtesAsoc) — referencia la(s) factura(s) que
+    // esta NC anula. Obligatorio para Notas de Crédito; vacío para facturas.
+    // Cuit y CbteFch son opcionales en el XSD: se incluyen solo si vienen.
+    const cbtesAsocXml = isCreditNote
+        ? `<ar:CbtesAsoc>
+              ${cbtesAsoc.map((c) => {
+                  const cuitDigits = String(c.cuit || cuit || '').replace(/\D/g, '');
+                  const fch = String(c.cbteFch || '').replace(/-/g, '').slice(0, 8);
+                  return `<ar:CbteAsoc>
+                <ar:Tipo>${Number(c.tipo)}</ar:Tipo>
+                <ar:PtoVta>${Number(c.ptoVta)}</ar:PtoVta>
+                <ar:Nro>${Number(c.nro)}</ar:Nro>${cuitDigits ? `
+                <ar:Cuit>${xmlEscape(cuitDigits)}</ar:Cuit>` : ''}${fch ? `
+                <ar:CbteFch>${xmlEscape(fch)}</ar:CbteFch>` : ''}
+              </ar:CbteAsoc>`;
+              }).join('\n              ')}
+            </ar:CbtesAsoc>`
+        : '';
+
     const soapBody = `<?xml version="1.0" encoding="UTF-8"?>
 <soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ar="http://ar.gov.afip.dif.FEV1/">
   <soapenv:Header/>
@@ -1495,6 +1531,7 @@ async function afipIssueFactura({
             <ar:MonId>${xmlEscape(monId)}</ar:MonId>
             <ar:MonCotiz>${Number(monCotiz).toFixed(6)}</ar:MonCotiz>
             ${fchServXml}
+            ${cbtesAsocXml}
             ${alicuotasXml}
           </ar:FECAEDetRequest>
         </ar:FeDetReq>
@@ -1603,6 +1640,7 @@ async function afipIssueFactura({
         cae_vencimiento: caeExpiration || null,
         numero_comprobante: nextVoucher,
         tipo_comprobante: invoiceType,
+        cbte_tipo_afip: cbteType,
         imp_neto: impNeto,
         imp_iva: impIva,
         observacion: observation,
@@ -1747,6 +1785,16 @@ async function ensureInvoiceEmissionsTable() {
         CREATE INDEX IF NOT EXISTS idx_invoice_emissions_audit_pending
         ON invoice_emissions (created_at DESC)
         WHERE status = 'success' AND audit_status IS NULL
+    `);
+
+    // Migracion Fase 6 - Notas de Credito:
+    // related_emission_id apunta al id de la factura original que esta NC
+    // anula. NULL en filas de factura; con valor en filas de NC. Sin FK
+    // formal (consistente con el resto de la tabla, que no usa FKs): la
+    // integridad la garantiza el endpoint /api/credit-notes/emit.
+    await db.query(`
+        ALTER TABLE invoice_emissions
+            ADD COLUMN IF NOT EXISTS related_emission_id INTEGER
     `);
 }
 
@@ -5293,6 +5341,402 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
     });
 });
 
+// Busca recursivamente el primer valor de cualquiera de las claves dadas dentro
+// de un objeto. Permite extraer itemId/boardId del webhook sin depender del
+// formato exacto del payload de monday (bloque legacy vs bloque nuevo).
+function deepFindValue(obj, keyNames, depth = 0) {
+    if (!obj || typeof obj !== 'object' || depth > 6) return null;
+    for (const k of Object.keys(obj)) {
+        const v = obj[k];
+        if (keyNames.includes(k) && v != null && typeof v !== 'object') return v;
+    }
+    for (const k of Object.keys(obj)) {
+        const found = deepFindValue(obj[k], keyNames, depth + 1);
+        if (found != null) return found;
+    }
+    return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// NOTA DE CRÉDITO — emisión  (POST /api/credit-notes/emit)
+// ════════════════════════════════════════════════════════════════════════════
+// Endpoint paralelo a /api/invoices/emit, dedicado a emitir Notas de Crédito
+// que ANULAN una factura ya emitida (MVP: NC total — anula el importe completo).
+//
+// A diferencia de la factura, la NC NO re-lee columnas de monday ni recalcula
+// importes: es un espejo exacto de la factura original. El endpoint busca la
+// factura en invoice_emissions (por item), copia su draft_json y la emite como
+// Nota de Crédito (CbteTipo 3/8/13) referenciándola vía el bloque CbtesAsoc.
+//
+// Limitaciones conocidas del MVP (se completan en fases siguientes):
+//   - El PDF todavía se titula "FACTURA" (Fase 4 lo cambia a "NOTA DE CRÉDITO").
+//   - No escribe en el audit board de TAP (Fase 5).
+//   - No toca columnas de status del board; el feedback va por comentario.
+app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (req, res) => {
+    const { payload, runtimeMetadata } = req.body || {};
+    const inbound       = payload?.inboundFieldValues || {};
+    const inputFields   = payload?.inputFields || {};
+    const triggerOutput = payload?.triggerOutputs || {};
+    const callbackUrl   = payload?.callbackUrl || null;
+    const actionUuid    = runtimeMetadata?.actionUuid || null;
+
+    console.log('[nc] received: inbound keys=', Object.keys(inbound).join(','),
+        'inputFields keys=', Object.keys(inputFields).join(','));
+
+    const accountId = String(req.mondayAutomation.accountId || inbound.accountId || '');
+    let itemId = String(
+        inbound.itemId || inputFields.itemId || triggerOutput.itemId || payload?.itemId || ''
+    ).trim();
+    let boardId = String(
+        inbound.boardId || inputFields.boardId || triggerOutput.boardId || payload?.boardId || ''
+    ).trim();
+    // Fallback robusto: si el bloque de monday manda el payload en otro formato
+    // (un bloque nuevo vs el legacy que usa la factura), buscamos las claves en
+    // profundidad en todo el body.
+    if (!itemId) {
+        const v = deepFindValue(req.body, ['itemId', 'item_id', 'pulseId']);
+        if (v != null) itemId = String(v).trim();
+    }
+    if (!boardId) {
+        const v = deepFindValue(req.body, ['boardId', 'board_id']);
+        if (v != null) boardId = String(v).trim();
+    }
+
+    console.log(`[nc] Resolved: accountId=${accountId}, itemId=${itemId}, boardId=${boardId}`);
+
+    if (!accountId || !itemId) {
+        console.error('[nc] FAIL: faltan datos. accountId:', accountId, 'itemId:', itemId,
+            '| body:', JSON.stringify(req.body || {}).slice(0, 1500));
+        return res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+    }
+
+    // Responder inmediatamente (acción asíncrona de monday)
+    res.status(200).json({ status: 'received', actionUuid });
+
+    // ── Procesar en background ────────────────────────────────────────────────
+    setImmediate(async () => {
+        const tStart = Date.now();
+        let afipResult = null;
+        let pdfBuffer  = null;
+        // Columna de status del board — la MISMA que usa la factura. El usuario
+        // dispara la NC poniendo un estado "Crear Nota de Crédito"; la app
+        // escribe acá el progreso: "Creando Comprobante" → "Comprobante Creado"
+        // o "Error - Mirar Comentarios".
+        let statusColumnId   = null;
+        let autoUpdateStatus = true;
+
+        try {
+            // ── 1. Token de Monday ─────────────────────────────────────────────
+            const mondayToken = req.mondayAutomation.shortLivedToken
+                || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
+            if (!mondayToken) throw new Error('No hay token de Monday para consultar el item');
+
+            // ── 2. Resolver boardId + empresa ──────────────────────────────────
+            // boardId normalmente viene en el payload de la receta. Si no, lo
+            // sacamos del item. La empresa se resuelve por board (multi-empresa).
+            if (!boardId) {
+                const itemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
+                boardId = String(itemData?.boardId || '').trim();
+            }
+            if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
+
+            await ensureInvoiceEmissionsTable();
+            const company = await getCompanyForBoard(accountId, boardId);
+            if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
+
+            console.log(`[nc] Emitiendo Nota de Crédito para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+
+            // Config del board: misma columna de status que la factura. Si el
+            // cliente desactivó "Cambiar el estado del item", autoUpdateStatus
+            // queda en false y la app no toca la columna.
+            try {
+                const cfgRes = await db.query(
+                    `SELECT status_column_id, auto_update_status FROM board_automation_configs
+                     WHERE company_id=$1 AND board_id=$2 LIMIT 1`,
+                    [company.id, boardId]
+                );
+                if (cfgRes.rows[0]) {
+                    statusColumnId   = cfgRes.rows[0].status_column_id || null;
+                    autoUpdateStatus = cfgRes.rows[0].auto_update_status !== false;
+                }
+            } catch (cfgErr) {
+                console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
+            }
+
+            // ── 3. Buscar la factura original de este item ─────────────────────
+            // La factura tiene invoice_type distinto de 'NC' (normalmente 'AUTO').
+            // Tomamos la más reciente exitosa.
+            const facturaResult = await db.query(
+                `SELECT id, invoice_type, draft_json, afip_result_json,
+                        attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
+                 FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                   AND invoice_type <> 'NC' AND status='success'
+                 ORDER BY updated_at DESC LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            const factura = facturaResult.rows[0];
+            if (!factura) {
+                throw new Error(
+                    'No hay una factura emitida para este item. La Nota de Crédito solo se ' +
+                    'puede emitir sobre un item que ya tenga su factura generada por la app.'
+                );
+            }
+            const facturaDraft = factura.draft_json || {};
+            const facturaAfip  = factura.afip_result_json || {};
+            const facturaCbteNro  = facturaAfip.numero_comprobante || factura.attempted_cbte_nro;
+            const facturaCbteTipo = factura.attempted_cbte_tipo;
+            const facturaPtoVta   = factura.attempted_pto_vta;
+            if (!facturaAfip.cae || !facturaCbteNro || !facturaCbteTipo || !facturaPtoVta) {
+                throw new Error(
+                    'La factura de este item no tiene los datos completos (CAE / número / tipo / ' +
+                    'punto de venta) para poder referenciarla en una Nota de Crédito.'
+                );
+            }
+            const letra = facturaDraft.tipo_comprobante;  // 'A' | 'B' | 'C'
+            if (!['A', 'B', 'C'].includes(letra)) {
+                throw new Error(`No se pudo determinar la letra de la factura original (tipo='${letra}').`);
+            }
+
+            // ── 4. Idempotencia: no permitir doble NC sobre el mismo item ──────
+            const existingNc = await db.query(
+                `SELECT id, status, afip_result_json, attempted_cbte_nro
+                 FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC' LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            if (existingNc.rows[0]?.status === 'success') {
+                const prev = existingNc.rows[0].afip_result_json || {};
+                throw new Error(
+                    `Ya se emitió una Nota de Crédito para este item ` +
+                    `(NC ${letra}, Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
+                );
+            }
+            // Recovery Fase 1: si quedó un intento previo con cbteNro reservado
+            // (timeout del SOAP), lo pasamos a afipIssueFactura para que consulte
+            // AFIP antes de reemitir.
+            const previousCbteNro = (existingNc.rows[0]
+                && existingNc.rows[0].status !== 'success'
+                && existingNc.rows[0].attempted_cbte_nro)
+                ? Number(existingNc.rows[0].attempted_cbte_nro)
+                : null;
+
+            // ── 5. Certificados AFIP del emisor ────────────────────────────────
+            const certResult = await db.query(
+                'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
+                [company.id]
+            );
+            if (certResult.rows.length === 0) throw new Error('Faltan certificados AFIP para este emisor');
+            const certRow = certResult.rows[0];
+            const emisorCertPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
+            const decryptedKey  = CryptoJS.AES.decrypt(certRow.encrypted_private_key, process.env.ENCRYPTION_KEY)
+                .toString(CryptoJS.enc.Utf8);
+            const emisorKeyPem  = normalizePem(decryptedKey, 'PRIVATE KEY');
+
+            // ── 6. Armar el draft de la NC ─────────────────────────────────────
+            // Espejo exacto de la factura (NC total): mismos importes, líneas,
+            // receptor, moneda y cotización. Solo cambia la fecha de emisión a hoy.
+            const ncDraft = {
+                ...facturaDraft,
+                fecha_emision: new Date().toISOString().slice(0, 10),
+                // Datos de la factura que esta NC anula — el PDF (Fase 4) los
+                // muestra en el bloque "Comprobante Asociado".
+                comprobante_asociado: {
+                    letra:       letra,
+                    punto_venta: facturaPtoVta,
+                    numero:      facturaCbteNro,
+                    fecha:       facturaDraft.fecha_emision || null,
+                    cae:         facturaAfip.cae || null,
+                },
+            };
+
+            // CbtesAsoc — la factura que esta NC anula.
+            const cbtesAsoc = [{
+                tipo:    facturaCbteTipo,
+                ptoVta:  facturaPtoVta,
+                nro:     facturaCbteNro,
+                cuit:    company.cuit,
+                cbteFch: facturaDraft.fecha_emision || null,
+            }];
+
+            // ── 7. Insertar/actualizar fila de NC (idempotente) ────────────────
+            await db.query(
+                `INSERT INTO invoice_emissions
+                    (company_id, board_id, item_id, invoice_type, status, request_json, related_emission_id)
+                 VALUES ($1,$2,$3,'NC','processing',$4,$5)
+                 ON CONFLICT (company_id, board_id, item_id, invoice_type)
+                 DO UPDATE SET status='processing', error_message=NULL,
+                               related_emission_id=$5, updated_at=CURRENT_TIMESTAMP`,
+                [company.id, boardId, itemId, JSON.stringify(inbound), factura.id]
+            );
+            // Persistir draft_json ANTES del SOAP (para recovery del cron Fase 3).
+            await db.query(
+                `UPDATE invoice_emissions SET draft_json=$4, updated_at=CURRENT_TIMESTAMP
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                [company.id, boardId, itemId, JSON.stringify(ncDraft)]
+            ).catch((e) => console.warn('[nc] error persistiendo draft pre-SOAP:', e.message));
+
+            // Status del item → "Creando Comprobante" (fire-and-forget).
+            if (autoUpdateStatus && statusColumnId) {
+                updateMondayItemStatus({
+                    apiToken: mondayToken, boardId, itemId,
+                    statusColumnId, label: COMPROBANTE_STATUS_FLOW.processing,
+                }).catch((e) => console.warn('[nc] status processing fire-and-forget falló:', e.message));
+            }
+
+            // ── 8. Emitir la NC en AFIP (WSFE) ─────────────────────────────────
+            async function emitirNcConToken(forceNewToken) {
+                const tokenData = await afipAuthModule.getToken({
+                    certPem: emisorCertPem, keyPem: emisorKeyPem,
+                    cuit: company.cuit, service: 'wsfe',
+                    companyId: company.id, force: forceNewToken,
+                });
+                return afipIssueFactura({
+                    token: tokenData.token, sign: tokenData.sign,
+                    cuit:        company.cuit,
+                    pointOfSale: company.default_point_of_sale,
+                    draft:       ncDraft,
+                    invoiceType: letra,
+                    previousCbteNro,
+                    monId:    ncDraft.moneda || 'PES',
+                    monCotiz: ncDraft.cotizacion || 1.0,
+                    cbtesAsoc,
+                    onCbteNroAssigned: async ({ cbteType, pointOfSale: pv, cbteNro }) => {
+                        await db.query(
+                            `UPDATE invoice_emissions
+                             SET attempted_cbte_tipo=$4, attempted_pto_vta=$5,
+                                 attempted_cbte_nro=$6, updated_at=CURRENT_TIMESTAMP
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                            [company.id, boardId, itemId, cbteType, pv, cbteNro]
+                        );
+                    },
+                });
+            }
+
+            try {
+                afipResult = await emitirNcConToken(false);
+            } catch (err) {
+                const esTokenInvalido = /\[600\]|ValidacionDeToken|No aparecio CUIT en lista de relaciones/i.test(err.message);
+                if (esTokenInvalido) {
+                    console.warn('[nc] Token WSAA rechazado por AFIP — invalidando caché y reintentando');
+                    afipAuthModule.invalidateToken('wsfe', company.cuit, company.id);
+                    afipResult = await emitirNcConToken(true);
+                } else {
+                    throw err;
+                }
+            }
+
+            console.log(`[nc] AFIP respuesta — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
+            if (!afipResult?.cae) throw new Error('AFIP no devolvió CAE para la Nota de Crédito');
+
+            // ── 9. Persistir resultado final ───────────────────────────────────
+            await db.query(
+                `UPDATE invoice_emissions
+                 SET status='success', draft_json=$4, afip_result_json=$5,
+                     moneda=$6, cotizacion=$7, updated_at=CURRENT_TIMESTAMP
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                [company.id, boardId, itemId,
+                 JSON.stringify(ncDraft), JSON.stringify(afipResult),
+                 ncDraft.moneda || 'PES', ncDraft.cotizacion || 1.0]
+            );
+            console.log('[nc] CAE de la NC persistido en DB');
+
+            // Status del item → "Comprobante Creado" (fire-and-forget).
+            if (autoUpdateStatus && statusColumnId) {
+                updateMondayItemStatus({
+                    apiToken: mondayToken, boardId, itemId,
+                    statusColumnId, label: COMPROBANTE_STATUS_FLOW.success,
+                }).catch((e) => console.warn('[nc] status success fire-and-forget falló:', e.message));
+            }
+
+            // ── 10. Generar PDF ────────────────────────────────────────────────
+            // NOTA Fase 4: generateFacturaPdfBuffer todavía titula "FACTURA".
+            // La Fase 4 lo parametriza para que las NC digan "NOTA DE CRÉDITO".
+            try {
+                pdfBuffer = await generateFacturaPdfBuffer({ company, draft: ncDraft, afipResult, itemId });
+                console.log(`[nc] PDF generado, ${pdfBuffer?.length || 0} bytes`);
+            } catch (pdfErr) {
+                console.error('[nc] ⚠ Error generando PDF:', pdfErr.message);
+            }
+
+            // ── 11. Subir PDF a Monday ─────────────────────────────────────────
+            const pvPadded  = String(ncDraft?.punto_venta || '').padStart(2, '0');
+            const nroPadded = String(afipResult?.numero_comprobante || '').padStart(4, '0');
+            if (pdfBuffer && mondayToken) {
+                try {
+                    const pdfColumnId = await getInvoicePdfColumnId({ companyId: company.id, boardId });
+                    if (pdfColumnId) {
+                        await uploadPdfToMondayFileColumn({
+                            apiToken: mondayToken, itemId,
+                            fileColumnId: pdfColumnId,
+                            pdfBuffer,
+                            filename: `Nota_Credito_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                        });
+                        console.log('[nc] PDF de la NC subido a Monday');
+                    } else {
+                        console.warn('[nc] No hay columna de PDF configurada en el mapeo');
+                    }
+                } catch (upErr) {
+                    console.error('[nc] ⚠ Error subiendo PDF a Monday:', upErr.message);
+                }
+            }
+
+            // ── 12. Comentario de éxito en el item ─────────────────────────────
+            const pvLargo  = String(ncDraft?.punto_venta || '').padStart(4, '0');
+            const nroLargo = String(afipResult?.numero_comprobante || '').padStart(8, '0');
+            const facturaNroLargo = String(facturaCbteNro).padStart(8, '0');
+            const okBody = `✅ <b>Nota de Crédito emitida</b><br/><br/>` +
+                `Comprobante: <b>NC ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
+                `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>` +
+                `Anula la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
+            await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
+                .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
+
+            if (callbackUrl) {
+                notifyCallback(callbackUrl, actionUuid, true, null, {
+                    invoiceType: `NC ${letra}`,
+                    cae:    afipResult.cae,
+                    numero: afipResult.numero_comprobante,
+                }).catch((e) => console.warn('[nc] callback fire-and-forget falló:', e.message));
+            }
+
+            console.log(`[nc] ── OK item ${itemId} ── NC ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
+
+        } catch (err) {
+            console.error('❌ [nc] Error emitiendo Nota de Crédito:', err.message);
+
+            // Comentario de error + status "Error - Mirar Comentarios" en el item.
+            try {
+                const errToken = req.mondayAutomation?.shortLivedToken
+                    || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
+                if (errToken && itemId) {
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
+                    if (autoUpdateStatus && statusColumnId && boardId) {
+                        await updateMondayItemStatus({
+                            apiToken: errToken, boardId, itemId,
+                            statusColumnId, label: COMPROBANTE_STATUS_FLOW.error,
+                        });
+                    }
+                }
+            } catch (_) {}
+
+            // Persistir el error en la fila de NC.
+            try {
+                const company = await getCompanyForBoard(accountId, boardId).catch(() => null);
+                if (company && boardId) {
+                    await db.query(
+                        `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
+                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                        [company.id, boardId, itemId, err.message]
+                    );
+                }
+            } catch (_) {}
+
+            if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message).catch(() => {});
+        }
+    });
+});
+
 // ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
 function buildErrorComment(err) {
     const msg = err?.message || 'Error desconocido';
@@ -5432,6 +5876,26 @@ function buildErrorComment(err) {
  */
 async function postMondayErrorComment({ apiToken, itemId, error }) {
     const body = buildErrorComment(error);
+    const mutation = `
+        mutation {
+            create_update(item_id: ${itemId}, body: ${JSON.stringify(body)}) {
+                id
+            }
+        }
+    `;
+    await fetch('https://api.monday.com/v2', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: apiToken,
+        },
+        body: JSON.stringify({ query: mutation }),
+    });
+}
+
+// Postear un update/comentario (acepta HTML) en un item de monday.
+// Usado para dejar feedback de éxito (ej: confirmación de Nota de Crédito emitida).
+async function postMondayUpdate({ apiToken, itemId, body }) {
     const mutation = `
         mutation {
             create_update(item_id: ${itemId}, body: ${JSON.stringify(body)}) {

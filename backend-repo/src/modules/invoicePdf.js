@@ -197,7 +197,7 @@ async function fetchQrImage({ company, draft, afipResult }) {
             fecha: draft.fecha_emision || new Date().toISOString().slice(0, 10),
             cuit: Number(String(company.cuit).replace(/\D/g, '')),
             ptoVta: Number(draft.punto_venta),
-            tipoCmp: TIPO_CBTE_NUM[afipResult?.tipo_comprobante] ?? 11,
+            tipoCmp: afipResult?.cbte_tipo_afip ?? TIPO_CBTE_NUM[afipResult?.tipo_comprobante] ?? 11,
             nroCmp: Number(afipResult?.numero_comprobante || 0),
             importe: Number(draft.importe_total || 0),
             moneda: qrMoneda,
@@ -271,7 +271,16 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const colRight = M + W;
 
             const tipoLetra = draft.tipo_comprobante || 'C';
-            const tipoCod = TIPO_COD[tipoLetra] || '11';
+            // Tipo numérico AFIP del comprobante: 1/6/11 para facturas, 3/8/13
+            // para Notas de Crédito. afipResult.cbte_tipo_afip es la fuente
+            // autoritativa; el fallback por letra cubre PDFs regenerados desde
+            // un afip_result_json viejo (anterior a ese campo).
+            const cbteTipoNum = afipResult?.cbte_tipo_afip
+                ?? TIPO_CBTE_NUM[afipResult?.tipo_comprobante]
+                ?? TIPO_CBTE_NUM[tipoLetra]
+                ?? 11;
+            const isNotaCredito = [3, 8, 13].includes(Number(cbteTipoNum));
+            const tipoCod = String(cbteTipoNum).padStart(2, '0');
             const isFacturaA = tipoLetra === 'A';
             // PASO 3 USD — moneda + simbolo a usar en este PDF. Defaults a PES
             // si el draft no la trae (clientes legacy o tests).
@@ -384,8 +393,9 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const rx = centerX + centerW;
             const rightColW = colRight - rx - 8;
             const facturaFontSize = 16;
+            const tituloComprobante = isNotaCredito ? 'NOTA DE CRÉDITO' : 'FACTURA';
             doc.fontSize(facturaFontSize).font('Helvetica-Bold')
-               .text('FACTURA', rx, bannerCenterY - facturaFontSize / 2,
+               .text(tituloComprobante, rx, bannerCenterY - facturaFontSize / 2,
                      { width: rightColW, align: 'center', lineBreak: false });
 
             // Línea vertical desde bottom del cuadro de la letra hasta bottom del header
@@ -503,6 +513,25 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.condicion_venta || 'Contado'));
             y += receptorH;
             mark(`receptor_done_c${copyIdx}`);
+
+            // ── COMPROBANTE ASOCIADO (solo Notas de Crédito) ─────
+            // AFIP exige que la NC indique el comprobante que rectifica.
+            // Para facturas draft.comprobante_asociado no existe → no se dibuja
+            // y el layout queda idéntico al histórico.
+            if (draft.comprobante_asociado) {
+                const ca = draft.comprobante_asociado;
+                const caH = 18;
+                doc.rect(colLeft, y, W, caH).stroke('#000');
+                const caPv  = padNum(ca.punto_venta, 5);
+                const caNro = padNum(ca.numero, 8);
+                let caTxt = `Factura ${ca.letra || ''} ${caPv}-${caNro}`.replace(/\s+/g, ' ').trim();
+                if (ca.fecha) caTxt += `    Fecha: ${fmtDate(ca.fecha)}`;
+                if (ca.cae)   caTxt += `    CAE: ${ca.cae}`;
+                doc.fontSize(7.5).font('Helvetica-Bold')
+                   .text('Comprobante Asociado: ', colLeft + 8, y + 5, { continued: true, lineBreak: false });
+                doc.font('Helvetica').text(caTxt, { lineBreak: false });
+                y += caH;
+            }
 
             // ── TABLA DE ITEMS ───────────────────────────────────
             // Factura A: agrega Alícuota IVA + Subtotal c/IVA (RG 1415 Ap. A.IV.a).
