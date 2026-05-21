@@ -4593,7 +4593,7 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             // ── 3. Idempotencia ────────────────────────────────────────────────
             const typeForIdempotency = resolvedType || 'AUTO';
             const existing = await db.query(
-                `SELECT id, status, afip_result_json,
+                `SELECT id, status, afip_result_json, draft_json,
                         attempted_cbte_nro, attempted_cbte_tipo, attempted_pto_vta
                  FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4 LIMIT 1`,
@@ -4617,14 +4617,14 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             }
 
             if (existing.rows[0]?.status === 'success') {
-                const prevUpload = existing.rows[0].afip_result_json?.monday_upload;
+                // Una fila 'success' SIEMPRE tiene CAE → la factura ya está
+                // emitida en AFIP. NUNCA se re-emite (re-emitir generaba una
+                // factura duplicada — bug del caso IDVTA-153).
+                const prev = existing.rows[0].afip_result_json || {};
+                const prevUpload = prev.monday_upload;
                 const uploadComplete = prevUpload?.uploaded === true
                     || prevUpload?.reason === 'no_column_configured';
                 if (uploadComplete) {
-                    // Tiramos un error con mensaje friendly. El catch general se encarga
-                    // de cambiar el status del item a "Error - Mirar Comentarios" y de
-                    // dejar el update explicativo en Monday.
-                    const prev = existing.rows[0].afip_result_json || {};
                     const cae  = prev.cae || '—';
                     const nro  = prev.numero_comprobante || '—';
                     const tipo = prev.tipo_comprobante || existing.rows[0]?.invoice_type || '—';
@@ -4634,8 +4634,38 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                         `Para crear una factura nueva, generá un item nuevo en el tablero.`
                     );
                 }
-                console.log('[emit] Row existe con CAE pero sin upload a Monday; borrando para reintentar');
-                await db.query(`DELETE FROM invoice_emissions WHERE id=$1`, [existing.rows[0].id]);
+                // La factura existe en AFIP pero el PDF no llegó a Monday. NO se
+                // re-emite: se regenera y re-sube el PDF reusando el CAE/draft ya
+                // guardados. (Antes acá se borraba la fila y se re-emitía → la
+                // factura quedaba duplicada en AFIP.)
+                console.log('[emit] Factura ya emitida pero PDF sin subir — re-subiendo PDF, SIN re-emitir');
+                try {
+                    const prevDraft  = existing.rows[0].draft_json || {};
+                    const tipoPrev   = prevDraft.tipo_comprobante || 'C';
+                    const pdfBufPrev = await generateFacturaPdfBuffer({ company, draft: prevDraft, afipResult: prev, itemId });
+                    const pdfColPrev = await getInvoicePdfColumnId({ companyId: company.id, boardId });
+                    let uploadPrev;
+                    if (pdfColPrev && pdfBufPrev) {
+                        const pvP  = String(prevDraft.punto_venta || '').padStart(2, '0');
+                        const nroP = String(prev.numero_comprobante || '').padStart(4, '0');
+                        uploadPrev = await uploadPdfToMondayFileColumn({
+                            apiToken: mondayToken, itemId,
+                            fileColumnId: pdfColPrev, pdfBuffer: pdfBufPrev,
+                            filename: `Factura_${tipoPrev}_Nro_${pvP}-${nroP}.pdf`,
+                        });
+                    } else {
+                        uploadPrev = { uploaded: false, reason: pdfColPrev ? 'pdf_gen_failed' : 'no_column_configured' };
+                    }
+                    await db.query(
+                        `UPDATE invoice_emissions SET afip_result_json=$5, updated_at=CURRENT_TIMESTAMP
+                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
+                        [company.id, boardId, itemId, typeForIdempotency, JSON.stringify({ ...prev, monday_upload: uploadPrev })]
+                    );
+                    console.log('[emit] PDF re-subido — idempotencia preservada, sin re-emisión');
+                } catch (reuploadErr) {
+                    console.error('[emit] error re-subiendo PDF (la factura sigue válida en AFIP):', reuploadErr.message);
+                }
+                return; // CRÍTICO: jamás caer al flujo de emisión con una factura ya emitida.
             }
 
             await db.query(
@@ -5276,51 +5306,60 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
         } catch (err) {
             console.error(`❌ [emit] Error factura:`, err.message);
 
-            // Cambiar status a "Error - Mirar Comentarios"
+            // "Factura ya emitida" (idempotencia) NO es una falla: la factura
+            // existe y está bien. NO se toca el estado de la fila ni el status
+            // del item en monday — hacerlo corrompía una emisión exitosa y
+            // derivaba en facturas duplicadas (bug del caso IDVTA-153).
+            const isIdempotencyError = /idempotencia|ya emitida|ya completa/i.test(err?.message || '');
+
+            // Comentario en el item — siempre (informa qué pasó, incluso si fue
+            // un re-disparo bloqueado por idempotencia).
             try {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId && boardId) {
-                    // Primero publicar el comentario con el error (siempre se postea
-                    // — no esta gateado por flag, todos los clientes deberian ver
-                    // que paso si algo fallo)
                     await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
 
-                    // Luego cambiar el status — pero solo si el cliente activo
-                    // "Cambiar el estado del item" en mapeo visual.
-                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
-                    const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
-                    const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
-                    if (errAutoUpdateStatus && errStatusColId) {
-                        await updateMondayItemStatus({
-                            apiToken: errToken, boardId, itemId,
-                            statusColumnId: errStatusColId,
-                            label: COMPROBANTE_STATUS_FLOW.error,
-                        });
+                    // Cambiar el status del item a "Error" SOLO si NO es idempotencia
+                    // (y si el cliente activó "Cambiar el estado del item").
+                    if (!isIdempotencyError) {
+                        const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
+                        const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
+                        const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
+                        if (errAutoUpdateStatus && errStatusColId) {
+                            await updateMondayItemStatus({
+                                apiToken: errToken, boardId, itemId,
+                                statusColumnId: errStatusColId,
+                                label: COMPROBANTE_STATUS_FLOW.error,
+                            });
+                        }
                     }
                 }
             } catch (_) {}
 
-            // Persistir error en DB
-            try {
-                const company = await getCompanyByMondayAccountId(accountId);
-                if (company) {
-                    await db.query(
-                        `UPDATE invoice_emissions
-                         SET status='error', error_message=$5, updated_at=CURRENT_TIMESTAMP
-                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
-                        [company.id, boardId, itemId, resolvedType || 'AUTO', err.message]
-                    );
-                }
-            } catch (_) {}
+            // Persistir el error en la DB — NUNCA si es idempotencia: la fila es
+            // una factura exitosa y pisarla con status='error' la corrompe (era
+            // el origen del duplicado — el cron de reconciliación la "recuperaba"
+            // y un re-disparo posterior la borraba y re-emitía).
+            if (!isIdempotencyError) {
+                try {
+                    const company = await getCompanyByMondayAccountId(accountId);
+                    if (company) {
+                        await db.query(
+                            `UPDATE invoice_emissions
+                             SET status='error', error_message=$5, updated_at=CURRENT_TIMESTAMP
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
+                            [company.id, boardId, itemId, resolvedType || 'AUTO', err.message]
+                        );
+                    }
+                } catch (_) {}
+            }
 
             if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message);
 
             // Audit log central de TAP (FIRE-AND-FORGET) — registra la emisión fallida.
-            // Salteamos si el error es de idempotencia ("factura ya emitida"): la
-            // factura original ya está registrada del intento exitoso anterior, y
-            // este es solo el cliente reintentando algo bloqueado por el sistema.
-            const isIdempotencyError = /idempotencia|ya emitida|ya completa/i.test(err?.message || '');
+            // Se saltea si el error es de idempotencia ("factura ya emitida"): la
+            // factura original ya está registrada del intento exitoso anterior.
             if (!isIdempotencyError) {
                 logEmissionToAuditBoard({
                     accountId,
