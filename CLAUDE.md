@@ -61,23 +61,27 @@ GitHub Actions automáticamente:
 - Reload de `pm2 tap-monday-staging`
 - Smoke test contra `https://staging.theautomationpartner.com/api/health`
 
-### Paso 2 — Crear V14 (Draft) en monday (solo si no existe ya)
+### Paso 2 — Crear una versión Draft en monday (solo si no existe ya)
 
-Esto se hace UNA VEZ. Si ya existe V14 apuntando a staging, saltá al paso 3.
+Esto se hace UNA VEZ por feature. Si ya existe una versión Draft apuntando a
+staging, saltá al paso 3. (La versión Live actual es **v18**; cada feature crea
+la siguiente Draft — v19, v20, etc. Los números suben, el flujo es el mismo.)
 
 1. Abrí monday Centro de Desarrollo → app **Factura ARCA**
 2. Click en **"+ Versión nueva"** → queda como Borrador
-3. Cambiar URLs en V14 a staging:
-   - **Crea → Funciones → Vista del tablero → Deployment**:
+3. Cambiar las URLs de la Draft a staging:
+   - **Crea → Funciones → Vista del tablero → URL externa**:
      `https://staging.theautomationpartner.com`
    - **Crea → Funciones → Generar Factura AFIP → URL de ejecución**:
      `https://staging.theautomationpartner.com/api/invoices/emit`
+   - **Crea → Funciones → Crear Nota de Crédito AFIP → URL de ejecución**:
+     `https://staging.theautomationpartner.com/api/credit-notes/emit`
 4. Guardar (NO promover a Live)
 
-### Paso 3 — Probar el cambio en V14
+### Paso 3 — Probar el cambio en la versión Draft
 
-- TAP es **owner** de la app en monday → al abrir la app en cualquier board de tu cuenta, monday auto-aplica V14 (la draft más reciente).
-- Polifroni y Sofia siguen viendo V13 (Live) — no se enteran.
+- TAP es **owner** de la app en monday → al abrir la app en cualquier board de tu cuenta, monday auto-aplica la Draft más reciente.
+- Polifroni y Sofia siguen viendo la versión Live (producción) — no se enteran.
 - Si stagingdb no tiene los datos para probar, podés copiarlos de `defaultdb` (solo de TAP) con SQL — pedile al asistente que lo haga.
 - ⚠️ **Cuidado al emitir**: el `.env` de staging tiene `AFIP_ENV=PRODUCTION`, así que cualquier emisión va a AFIP real. Para test sin riesgo, solo navegá la UI / probá validaciones / no dispares la receta.
 
@@ -91,13 +95,13 @@ git push origin main
 
 GitHub Actions deploya automático a producción (mismo flujo, pero al clon `/opt/apps/App-monday/` y al pm2 `tap-monday`). En ~2 min Polifroni y Sofia ven el cambio.
 
-### Paso 5 — Eliminar V14 en monday
+### Paso 5 — Eliminar la versión Draft en monday
 
-Una vez que el código está en producción, V13 (Live) ya sirve el código nuevo (porque su URL `arca...` es donde se acaba de deployar). V14 ya no aporta nada → se elimina:
+Una vez que el código está en producción, la versión Live ya sirve el código nuevo (porque su URL `arca...` es donde se acaba de deployar). La Draft ya no aporta nada → se elimina:
 
-- Centro de Desarrollo → Factura ARCA → V14 → menú "..." → Eliminar
+- Centro de Desarrollo → Factura ARCA → versión Draft → menú "..." → Eliminar
 
-(Para el próximo cambio, creás otra V14 nueva en el paso 2. Es de un solo uso por feature.)
+(Para el próximo cambio, creás otra Draft nueva en el paso 2. Es de un solo uso por feature.)
 
 ---
 
@@ -229,10 +233,24 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 
 ---
 
+## Notas de Crédito — cómo se emiten
+
+- Endpoint propio: `POST /api/credit-notes/emit` (paralelo a `/api/invoices/emit`). Receta en monday: **"Crear Nota de Crédito AFIP"**.
+- La NC es un **espejo de la factura** que anula (NC total — la NC parcial por subítems es trabajo futuro).
+- Resuelve a qué factura anula de dos formas:
+  - **Por CAE** (modo nuevo): el board mapea la columna `factura_referencia`; la NC vive en su **propio item** y esa columna tiene el CAE de la factura a anular. La app la busca por `afip_result_json->>'cae'` (índice `idx_invoice_emissions_cae`).
+  - **Legacy** (fallback): sin esa columna mapeada, la NC se dispara sobre el mismo item que emitió la factura y se la busca por `item_id`.
+- Al emitir una **factura**, si `factura_referencia` está mapeada, la app escribe el CAE de la factura en esa columna del item (write-back) — así se copia fácil al item de la NC.
+- Mapeo: `tipo_comprobante` y `factura_referencia` son campos **OPCIONALES** del Mapeo Visual (no rompen a clientes que solo facturan). En la plantilla son `dropdown_mm3hbhc0` y `numeric_mm3h6y35` — se auto-mapean en instalaciones nuevas (`TEMPLATE_NC_MAPPING` en `App.jsx`).
+
+---
+
 ## Estado actual de las versiones en monday
 
-- **V13 (Live)** — la usan TAP, Polifroni, Sofia. URL: `arca.theautomationpartner.com`
-- **V14 (Draft)** — solo TAP la ve. URL: `staging.theautomationpartner.com`. Se elimina y recrea por feature.
+(Snapshot 2026-05-21 — los números de versión suben en cada feature.)
+
+- **v18 (Live)** — la usan TAP, Polifroni, Sofia. URL: `arca.theautomationpartner.com`
+- **Draft (v19+)** — solo TAP la ve. URL: `staging.theautomationpartner.com`. Se crea y elimina por feature.
 
 ---
 

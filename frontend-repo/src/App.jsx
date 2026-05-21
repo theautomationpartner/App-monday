@@ -109,6 +109,16 @@ const TEMPLATE_MAPPING = {
   unidad_medida:        "dropdown_mm2gk2mv",
   alicuota_iva:         "dropdown_mm2g198w",
 };
+// IDs fijos de las columnas OPCIONALES de Notas de Crédito en la plantilla.
+// Van aparte de TEMPLATE_MAPPING porque son opcionales: se pre-cargan solo si
+// la columna existe en el board. Las instalaciones anteriores a que la
+// plantilla incluyera estas columnas NO las tienen — no hay que apuntar a una
+// columna fantasma (rompería el flujo de NC: el endpoint creería que el board
+// está en "modo CAE" y leería una columna inexistente).
+const TEMPLATE_NC_MAPPING = {
+  tipo_comprobante:   "dropdown_mm3hbhc0",
+  factura_referencia: "numeric_mm3h6y35",
+};
 // Column IDs de la plantilla que no son de mapeo visual pero sí de config
 const TEMPLATE_STATUS_COLUMN_ID = "status";
 // ID de la columna File donde se sube el PDF emitido. Cuando un cliente clona
@@ -882,6 +892,20 @@ const App = () => {
     if (!detectedMapping) {
       console.log("[auto-mapeo] no se detectó plantilla (ni por IDs ni por nombre) — el cliente debe mapear manualmente");
       return;
+    }
+
+    // Pre-cargar las columnas OPCIONALES de Notas de Crédito (Tipo de
+    // Comprobante + CAE) si existen en el board. Vienen en la plantilla con
+    // IDs fijos; se suman al mapeo detectado SOLO si el board realmente las
+    // tiene — así las instalaciones viejas (sin estas columnas) no quedan
+    // apuntando a una columna fantasma.
+    const ncExtra = {};
+    for (const [field, colId] of Object.entries(TEMPLATE_NC_MAPPING)) {
+      if (columnIds.includes(colId)) ncExtra[field] = colId;
+    }
+    if (Object.keys(ncExtra).length > 0) {
+      detectedMapping = { ...detectedMapping, ...ncExtra };
+      console.log(`[auto-mapeo] columnas de NC pre-cargadas: ${Object.keys(ncExtra).join(", ")}`);
     }
 
     // Detectar la columna File donde se va a subir el PDF de la factura emitida.
