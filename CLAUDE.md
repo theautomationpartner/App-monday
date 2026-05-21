@@ -236,12 +236,12 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 ## Notas de Crédito — cómo se emiten
 
 - Endpoint propio: `POST /api/credit-notes/emit` (paralelo a `/api/invoices/emit`). Receta en monday: **"Crear Nota de Crédito AFIP"**.
-- La NC es un **espejo de la factura** que anula (NC total — la NC parcial por subítems es trabajo futuro).
-- Resuelve a qué factura anula de dos formas:
-  - **Por CAE** (modo nuevo): el board mapea la columna `factura_referencia`; la NC vive en su **propio item** y esa columna tiene el CAE de la factura a anular. La app la busca por `afip_result_json->>'cae'` (índice `idx_invoice_emissions_cae`).
-  - **Legacy** (fallback): sin esa columna mapeada, la NC se dispara sobre el mismo item que emitió la factura y se la busca por `item_id`.
-- Al emitir una **factura**, si `factura_referencia` está mapeada, la app escribe el CAE de la factura en esa columna del item (write-back) — así se copia fácil al item de la NC.
-- Mapeo: `tipo_comprobante` y `factura_referencia` son campos **OPCIONALES** del Mapeo Visual (no rompen a clientes que solo facturan). En la plantilla son `dropdown_mm3hbhc0` y `numeric_mm3h6y35` — se auto-mapean en instalaciones nuevas (`TEMPLATE_NC_MAPPING` en `App.jsx`).
+- La NC vive en su **propio item** de monday y referencia la factura a anular por el **CAE** escrito en la columna mapeada `factura_referencia` (obligatoria — sin ella no se emite). La app busca la factura por `afip_result_json->>'cae'` (índice `idx_invoice_emissions_cae`).
+- El importe sale de los **subítems del propio item de NC** (mismo mapeo que la factura). La app los lee, calcula neto/IVA/total y emite la NC parcial por ese monto. El encabezado (receptor, moneda, condición, letra) lo hereda de la factura.
+- Controles: la alícuota IVA de la NC debe coincidir con la de la factura; el total acreditado (NCs previas + esta) no puede superar el de la factura (control de saldo). Se permiten **varias NC parciales** sobre una factura mientras no se pasen del total.
+- Al emitir una **factura**, la app escribe su CAE en la columna `factura_referencia` del item (write-back) — así se copia fácil al item de la NC.
+- Mapeo: `tipo_comprobante` y `factura_referencia` son campos del Mapeo Visual. En la plantilla son `dropdown_mm3hbhc0` y `numeric_mm3h6y35`, auto-mapeados en instalaciones nuevas (`TEMPLATE_NC_MAPPING` en `App.jsx`).
+- La lógica fiscal de subítems→líneas vive en `buildLinesFromSubitems` (server.js); la emisión de factura tiene su propia copia inline — si se tocan, mantenerlas sincronizadas.
 
 ---
 

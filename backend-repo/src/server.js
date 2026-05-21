@@ -1690,6 +1690,101 @@ function getColumnTextById(columnValues, columnId) {
     return '';
 }
 
+// Procesa los subítems de un item de monday en líneas de comprobante + importes.
+// La lógica fiscal (validación de líneas, alícuota IVA única, cálculo de
+// neto/IVA/total) la usa hoy la Nota de Crédito parcial (/api/credit-notes/emit).
+// La emisión de factura tiene su propia copia inline (battle-tested) — unificar
+// ambas es un refactor aparte que conviene probar a fondo; si se hace, mantener
+// las dos sincronizadas.
+// Tira Error con mensaje claro si los subítems no son válidos.
+//   subitems       — array estilo fetchMondayItem (cada uno con .column_values)
+//   mapping        — mapeo visual del board
+//   precioColumnId — columna de precio unitario a leer (pesos o USD; lo decide
+//                    el caller según la moneda del comprobante)
+//   letra          — 'A' | 'B' | 'C' (C no lleva IVA)
+// Devuelve { validLines, lineas, alicuotaElegida, alicuotaConfig,
+//            importeNeto, importeIva, importeTotal }.
+function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
+    const ALICUOTA_MAP = {
+        '0':    { id: 3, rate: 0 },
+        '2.5':  { id: 9, rate: 0.025 },
+        '5':    { id: 8, rate: 0.05 },
+        '10.5': { id: 4, rate: 0.105 },
+        '21':   { id: 5, rate: 0.21 },
+        '27':   { id: 6, rate: 0.27 },
+    };
+
+    const rawLines = (subitems || []).map((sub) => ({
+        subitem_name:  sub.name || `Subitem #${sub.id}`,
+        concept:       getColumnTextById(sub.column_values, mapping.concepto) || sub.name || '',
+        quantity:      getColumnTextById(sub.column_values, mapping.cantidad),
+        unit_price:    getColumnTextById(sub.column_values, precioColumnId),
+        alicuota_iva:  mapping.alicuota_iva ? (getColumnTextById(sub.column_values, mapping.alicuota_iva) || '') : '',
+        unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
+    }));
+    const validLines = rawLines.filter((l) =>
+        l.concept && toNumberOrNull(l.quantity) !== null && toNumberOrNull(l.unit_price) !== null
+    );
+    if (validLines.length === 0) {
+        const detalleStr = rawLines.map((l) => {
+            const faltantes = [];
+            if (!l.concept) faltantes.push('Concepto');
+            if (toNumberOrNull(l.quantity) === null) faltantes.push('Cantidad');
+            if (toNumberOrNull(l.unit_price) === null) faltantes.push('Precio Unitario');
+            return `• "${l.subitem_name}": falta ${faltantes.join(', ')}`;
+        }).join('\n');
+        throw new Error(
+            `No hay líneas válidas en los subítems.\n` +
+            ((subitems || []).length === 0
+                ? 'El item no tiene subítems creados.'
+                : `Subítems con problemas:\n${detalleStr}`)
+        );
+    }
+
+    // Alícuota IVA: tiene que estar presente y ser la misma en todos los subítems.
+    const alicuotas = validLines.map((l) => ({
+        name: l.subitem_name,
+        normalized: String(l.alicuota_iva).replace(/[^0-9.,]/g, '').replace(',', '.').trim() || null,
+    }));
+    const sinAlicuota = alicuotas.filter((a) => !a.normalized);
+    if (mapping.alicuota_iva && sinAlicuota.length > 0) {
+        throw new Error(
+            `Alícuota IVA faltante en subítems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n` +
+            `Todos los subítems deben tener una alícuota IVA (0, 2.5, 5, 10.5, 21 o 27).`
+        );
+    }
+    const alicuotasUnicas = [...new Set(alicuotas.map((a) => a.normalized).filter(Boolean))];
+    if (alicuotasUnicas.length > 1) {
+        throw new Error(
+            `Alícuotas IVA diferentes entre subítems.\n` +
+            `Todos los subítems deben tener la misma alícuota IVA. Encontradas:\n` +
+            alicuotas.map((a) => `• "${a.name}": ${a.normalized}%`).join('\n')
+        );
+    }
+    const alicuotaElegida = alicuotasUnicas.length === 1 ? alicuotasUnicas[0] : '21';
+    const alicuotaConfig = ALICUOTA_MAP[alicuotaElegida];
+    if (!alicuotaConfig) {
+        throw new Error(
+            `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
+            `Las permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+        );
+    }
+
+    const lineas = validLines.map((l) => ({
+        concept:       l.concept,
+        quantity:      toNumberOrNull(l.quantity) || 0,
+        unit_price:    toNumberOrNull(l.unit_price) || 0,
+        alicuota_iva:  l.alicuota_iva || '',
+        unidad_medida: l.unidad_medida || '',
+    }));
+    const importeNeto  = Number(lineas.reduce((s, l) => s + l.quantity * l.unit_price, 0).toFixed(2));
+    const ivaRate      = (letra === 'C') ? 0 : alicuotaConfig.rate;
+    const importeIva   = Number((importeNeto * ivaRate).toFixed(2));
+    const importeTotal = Number((importeNeto + importeIva).toFixed(2));
+
+    return { validLines, lineas, alicuotaElegida, alicuotaConfig, importeNeto, importeIva, importeTotal };
+}
+
 async function ensureInvoiceEmissionsTable() {
     await db.query(
         `CREATE TABLE IF NOT EXISTS invoice_emissions (
@@ -5430,22 +5525,22 @@ function deepFindValue(obj, keyNames, depth = 0) {
 // NOTA DE CRÉDITO — emisión  (POST /api/credit-notes/emit)
 // ════════════════════════════════════════════════════════════════════════════
 // Endpoint paralelo a /api/invoices/emit, dedicado a emitir Notas de Crédito
-// que ANULAN una factura ya emitida. NC total — anula el importe completo
-// (la NC parcial es un paso posterior).
+// que ANULAN (total o parcialmente) una factura ya emitida.
 //
-// A diferencia de la factura, la NC NO recalcula importes: es un espejo exacto
-// de la factura original. Emite como Nota de Crédito (CbteTipo 3/8/13) y la
-// referencia vía el bloque CbtesAsoc.
+// La NC vive en su propio item de monday. Resuelve a qué factura anula por el
+// CAE escrito en la columna mapeada `factura_referencia` — esa columna es
+// OBLIGATORIA: sin ella no se puede emitir una NC. El importe a acreditar sale
+// de los subítems del propio item de NC: la app los lee, calcula neto/IVA/total
+// y emite la NC por ese monto. El encabezado (receptor, moneda, condición,
+// letra A/B/C) lo hereda de la factura referenciada.
 //
-// Cómo resuelve a qué factura anula:
-//   - Modo nuevo: si el board mapeó la columna `factura_referencia`, la NC vive
-//     en su propio item y esa columna tiene el CAE de la factura a anular. El
-//     endpoint busca la factura en invoice_emissions por ese CAE.
-//   - Modo legacy (fallback): sin esa columna mapeada, la NC se dispara sobre
-//     el mismo item que ya emitió la factura y se la busca por item_id.
+// Controles:
+//   - La alícuota IVA de la NC tiene que coincidir con la de la factura.
+//   - El total acreditado (NCs previas + esta) no puede superar el de la factura.
 //
-// El PDF ya se titula "NOTA DE CRÉDITO", escribe en el audit board de TAP y
-// actualiza la columna de status del item (si auto_update_status está activo).
+// Emite como Nota de Crédito (CbteTipo 3/8/13) referenciando la factura vía el
+// bloque CbtesAsoc. El PDF se titula "NOTA DE CRÉDITO", escribe en el audit
+// board de TAP y actualiza la columna de status del item.
 app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (req, res) => {
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
@@ -5512,9 +5607,11 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
             // referencia y la de Tipo de Comprobante (ver paso 3). La empresa
             // se resuelve por board (multi-empresa).
             let ncItemColumns = [];
+            let ncSubitems    = [];
             try {
                 const ncItemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
                 ncItemColumns = ncItemData.mainColumns || [];
+                ncSubitems    = ncItemData.subitems || [];
                 if (!boardId) boardId = String(ncItemData.boardId || '').trim();
             } catch (fetchErr) {
                 console.warn('[nc] no se pudo traer el item de monday:', fetchErr.message);
@@ -5574,68 +5671,52 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                 }
             }
 
-            // La factura tiene invoice_type distinto de 'NC' (normalmente 'AUTO').
-            //  - Modo nuevo: la columna factura_referencia tiene el CAE de la
-            //    factura a anular → la NC puede vivir en su propio item.
-            //  - Modo legacy (fallback): sin columna de referencia mapeada, la
-            //    NC se dispara sobre el mismo item que ya emitió la factura.
-            let factura = null;
-            if (ncMapping.factura_referencia) {
-                const caeRefRaw = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
-                if (!caeRefRaw) {
-                    throw new Error(
-                        'La columna de CAE de referencia está vacía. Cargá el CAE (14 dígitos) ' +
-                        'de la factura que esta Nota de Crédito debe anular.'
-                    );
-                }
-                // El CAE de AFIP son 14 dígitos. Toleramos que el usuario pegue
-                // el comentario entero ("CAE: 7512... (vto. ...)") quedándonos
-                // con los primeros 14 dígitos.
-                const caeRef = caeRefRaw.replace(/\D/g, '').slice(0, 14);
-                if (caeRef.length !== 14) {
-                    throw new Error(
-                        `El CAE de referencia "${caeRefRaw}" no es válido. El CAE de AFIP ` +
-                        `tiene 14 dígitos — copialo del PDF o del comentario de la factura.`
-                    );
-                }
-                const byCae = await db.query(
-                    `SELECT id, invoice_type, draft_json, afip_result_json,
-                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
-                     FROM invoice_emissions
-                     WHERE company_id=$1 AND board_id=$2
-                       AND afip_result_json->>'cae'=$3
-                       AND invoice_type <> 'NC' AND status='success'
-                     ORDER BY updated_at DESC LIMIT 1`,
-                    [company.id, boardId, caeRef]
+            // La NC referencia la factura a anular por el CAE escrito en la
+            // columna mapeada `factura_referencia`. Esa columna es OBLIGATORIA:
+            // sin ella mapeada no se puede emitir una Nota de Crédito.
+            if (!ncMapping.factura_referencia) {
+                throw new Error(
+                    'El tablero no tiene mapeada la columna del CAE de referencia. ' +
+                    'Configurala en el Mapeo Visual de la app (sección "Notas de Crédito") ' +
+                    'para poder emitir Notas de Crédito.'
                 );
-                factura = byCae.rows[0] || null;
-                if (!factura) {
-                    throw new Error(
-                        `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
-                        `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
-                        `desde este mismo tablero.`
-                    );
-                }
-                console.log(`[nc] factura resuelta por CAE ${caeRef} → emisión id=${factura.id}`);
-            } else {
-                const facturaResult = await db.query(
-                    `SELECT id, invoice_type, draft_json, afip_result_json,
-                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
-                     FROM invoice_emissions
-                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                       AND invoice_type <> 'NC' AND status='success'
-                     ORDER BY updated_at DESC LIMIT 1`,
-                    [company.id, boardId, itemId]
-                );
-                factura = facturaResult.rows[0] || null;
-                if (!factura) {
-                    throw new Error(
-                        'No hay una factura emitida para este item. La Nota de Crédito solo se ' +
-                        'puede emitir sobre un item que ya tenga su factura generada por la app.'
-                    );
-                }
-                console.log(`[nc] factura resuelta por item ${itemId} (modo legacy) → emisión id=${factura.id}`);
             }
+            const caeRefRaw = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
+            if (!caeRefRaw) {
+                throw new Error(
+                    'La columna de CAE de referencia está vacía. Cargá el CAE (14 dígitos) ' +
+                    'de la factura que esta Nota de Crédito debe anular.'
+                );
+            }
+            // El CAE de AFIP son 14 dígitos. Toleramos que el usuario pegue el
+            // comentario entero ("CAE: 7512... (vto. ...)") quedándonos con los
+            // primeros 14 dígitos.
+            const caeRef = caeRefRaw.replace(/\D/g, '').slice(0, 14);
+            if (caeRef.length !== 14) {
+                throw new Error(
+                    `El CAE de referencia "${caeRefRaw}" no es válido. El CAE de AFIP ` +
+                    `tiene 14 dígitos — copialo del PDF o del comentario de la factura.`
+                );
+            }
+            const byCae = await db.query(
+                `SELECT id, invoice_type, draft_json, afip_result_json,
+                        attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
+                 FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2
+                   AND afip_result_json->>'cae'=$3
+                   AND invoice_type <> 'NC' AND status='success'
+                 ORDER BY updated_at DESC LIMIT 1`,
+                [company.id, boardId, caeRef]
+            );
+            const factura = byCae.rows[0] || null;
+            if (!factura) {
+                throw new Error(
+                    `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
+                    `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
+                    `desde este mismo tablero.`
+                );
+            }
+            console.log(`[nc] factura resuelta por CAE ${caeRef} → emisión id=${factura.id}`);
             const facturaDraft = factura.draft_json || {};
             const facturaAfip  = factura.afip_result_json || {};
             const facturaCbteNro  = facturaAfip.numero_comprobante || factura.attempted_cbte_nro;
@@ -5666,30 +5747,6 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                     `(NC ${letra}, Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
                 );
             }
-            // Idempotencia adicional (modo nuevo, NC en item propio): no permitir
-            // una segunda NC exitosa que anule la MISMA factura. En el paso base
-            // la NC es total, así que dos NC sobre una factura sería una doble
-            // anulación. (El paso 2 — NC parcial — reemplaza esto por control de
-            // saldo.) Solo aplica al modo nuevo: en legacy la NC comparte item
-            // con la factura y el check de arriba ya alcanza.
-            if (ncMapping.factura_referencia) {
-                const dupNc = await db.query(
-                    `SELECT item_id, afip_result_json FROM invoice_emissions
-                     WHERE company_id=$1 AND board_id=$2 AND invoice_type='NC'
-                       AND status='success' AND related_emission_id=$3
-                       AND item_id <> $4
-                     LIMIT 1`,
-                    [company.id, boardId, factura.id, itemId]
-                );
-                if (dupNc.rows[0]) {
-                    const prevDup = dupNc.rows[0].afip_result_json || {};
-                    throw new Error(
-                        `Esa factura ya tiene una Nota de Crédito emitida ` +
-                        `(NC Nº ${prevDup.numero_comprobante || '—'}, CAE ${prevDup.cae || '—'}). ` +
-                        `No se puede emitir otra NC total sobre la misma factura.`
-                    );
-                }
-            }
             // Recovery Fase 1: si quedó un intento previo con cbteNro reservado
             // (timeout del SOAP), lo pasamos a afipIssueFactura para que consulte
             // AFIP antes de reemitir.
@@ -5711,14 +5768,84 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                 .toString(CryptoJS.enc.Utf8);
             const emisorKeyPem  = normalizePem(decryptedKey, 'PRIVATE KEY');
 
+            // ── Procesar los subítems del item de NC ───────────────────────────
+            // La NC parcial se arma con las líneas que el usuario cargó como
+            // subítems del item de NC (qué y cuánto acreditar). Sin subítems no
+            // se puede emitir. El encabezado (receptor, moneda, condición) lo
+            // hereda de la factura.
+            if (!ncSubitems || ncSubitems.length === 0) {
+                throw new Error(
+                    'El item de Nota de Crédito no tiene subítems. Cargá como subítems ' +
+                    'las líneas de lo que querés acreditar (concepto, cantidad y precio).'
+                );
+            }
+            // Columna de precio: si la factura era en moneda extranjera, la NC
+            // hereda esa moneda → lee la misma columna de precio que la factura.
+            const facturaMoneda = facturaDraft.moneda || 'PES';
+            const ncPrecioColId = (facturaMoneda === 'DOL' && ncMapping.precio_unitario_usd)
+                ? ncMapping.precio_unitario_usd
+                : ncMapping.precio_unitario;
+            const ncLines = buildLinesFromSubitems({
+                subitems: ncSubitems, mapping: ncMapping,
+                precioColumnId: ncPrecioColId, letra,
+            });
+
+            // Comprobante C no lleva IVA: la NC C tampoco.
+            if (letra === 'C' && ncLines.alicuotaElegida !== '0') {
+                throw new Error(
+                    'La Nota de Crédito C no lleva IVA. Poné la alícuota IVA de los subítems en 0%.'
+                );
+            }
+            // La alícuota IVA de la NC tiene que coincidir con la de la factura
+            // (se acredita al mismo IVA que se facturó). Si la factura es vieja y
+            // no guardó la alícuota, se omite el chequeo.
+            const facturaAlicuota = facturaDraft.alicuota_iva_pct;
+            if (facturaAlicuota != null && String(facturaAlicuota) !== String(ncLines.alicuotaElegida)) {
+                throw new Error(
+                    `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
+                    `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
+                    `alícuota IVA que la factura que anula.`
+                );
+            }
+
+            // ── Control de saldo: la NC no puede exceder lo facturado ──────────
+            // Sumamos los importes de las NC ya emitidas sobre esta factura. Lo
+            // ya acreditado + esta NC no puede superar el total de la factura.
+            const facturaTotal = Number(facturaDraft.importe_total) || 0;
+            const acreditadoRes = await db.query(
+                `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
+                 FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND invoice_type='NC'
+                   AND status='success' AND related_emission_id=$3 AND item_id <> $4`,
+                [company.id, boardId, factura.id, itemId]
+            );
+            const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
+            const saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
+            if (ncLines.importeTotal > saldo + 0.01) {
+                throw new Error(
+                    `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
+                    `disponible de la factura.\n` +
+                    `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado en NC previas: ` +
+                    `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+                );
+            }
+            console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
+
             // ── 6. Armar el draft de la NC ─────────────────────────────────────
-            // Espejo exacto de la factura (NC total): mismos importes, líneas,
-            // receptor, moneda y cotización. Solo cambia la fecha de emisión a hoy.
+            // Encabezado heredado de la factura (receptor, moneda, cotización,
+            // condición de venta, concepto, fechas de servicio). Líneas e
+            // importes propios de la NC (lo que se acredita). Fecha = hoy.
             const ncDraft = {
                 ...facturaDraft,
-                fecha_emision: new Date().toISOString().slice(0, 10),
-                // Datos de la factura que esta NC anula — el PDF (Fase 4) los
-                // muestra en el bloque "Comprobante Asociado".
+                fecha_emision:    new Date().toISOString().slice(0, 10),
+                lineas:           ncLines.lineas,
+                importe_neto:     ncLines.importeNeto,
+                importe_iva:      ncLines.importeIva,
+                importe_total:    ncLines.importeTotal,
+                alicuota_iva_id:  ncLines.alicuotaConfig.id,
+                alicuota_iva_pct: ncLines.alicuotaElegida,
+                // Datos de la factura que esta NC anula — el PDF los muestra en
+                // el bloque "Comprobante Asociado".
                 comprobante_asociado: {
                     letra:       letra,
                     punto_venta: facturaPtoVta,
@@ -5863,10 +5990,13 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
             const pvLargo  = String(ncDraft?.punto_venta || '').padStart(4, '0');
             const nroLargo = String(afipResult?.numero_comprobante || '').padStart(8, '0');
             const facturaNroLargo = String(facturaCbteNro).padStart(8, '0');
+            const saldoRestante = Number((saldo - ncLines.importeTotal).toFixed(2));
             const okBody = `✅ <b>Nota de Crédito emitida</b><br/><br/>` +
                 `Comprobante: <b>NC ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
                 `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>` +
-                `Anula la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
+                `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
+                ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
 
