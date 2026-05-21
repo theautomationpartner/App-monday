@@ -3306,6 +3306,31 @@ const App = () => {
               </div>
             </div>
 
+            {/* ─── Notas de Crédito · opcional ─── */}
+            {/* Estas 2 columnas solo hacen falta si el tablero emite Notas de */}
+            {/* Crédito. No son obligatorias: no cuentan para el contador de    */}
+            {/* campos mapeados ni bloquean el guardado del mapeo.              */}
+            <div className="rf-mapping-frame">
+              <div className="rf-mapping-frame-head">
+                <div>
+                  <div className="rf-mapping-frame-eyebrow">Notas de Crédito · opcional</div>
+                  <div className="rf-mapping-frame-title">
+                    Mapeá estas columnas solo si vas a emitir Notas de Crédito desde este tablero.
+                  </div>
+                </div>
+              </div>
+              <div className="rf-invoice-client">
+                <div>
+                  <div className="rf-invoice-client-label">Tipo de Comprobante</div>
+                  {mapSel("tipo_comprobante", "Opcional")}
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">CAE de la factura a anular</div>
+                  {mapSel("factura_referencia", "Opcional")}
+                </div>
+              </div>
+            </div>
+
             {inMappingEditMode && (
               <div className="form-actions" style={{marginTop: "8px"}}>
                 {!isMappingInitialSetup && (

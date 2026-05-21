@@ -1796,6 +1796,18 @@ async function ensureInvoiceEmissionsTable() {
         ALTER TABLE invoice_emissions
             ADD COLUMN IF NOT EXISTS related_emission_id INTEGER
     `);
+
+    // Migracion Fase 6b - Notas de Credito referenciadas por CAE:
+    // La NC puede vivir en su propio item y referenciar la factura a anular
+    // por el CAE escrito a mano en una columna del board. El endpoint resuelve
+    // la factura con `WHERE afip_result_json->>'cae' = <cae>`, asi que un
+    // indice de expresion sobre ese CAE hace el lookup barato al crecer la
+    // tabla. Idempotente: CREATE INDEX IF NOT EXISTS.
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_invoice_emissions_cae
+        ON invoice_emissions ((afip_result_json->>'cae'))
+        WHERE status = 'success'
+    `);
 }
 
 async function ensureUserApiTokensTable() {
@@ -5400,17 +5412,22 @@ function deepFindValue(obj, keyNames, depth = 0) {
 // NOTA DE CRÉDITO — emisión  (POST /api/credit-notes/emit)
 // ════════════════════════════════════════════════════════════════════════════
 // Endpoint paralelo a /api/invoices/emit, dedicado a emitir Notas de Crédito
-// que ANULAN una factura ya emitida (MVP: NC total — anula el importe completo).
+// que ANULAN una factura ya emitida. NC total — anula el importe completo
+// (la NC parcial es un paso posterior).
 //
-// A diferencia de la factura, la NC NO re-lee columnas de monday ni recalcula
-// importes: es un espejo exacto de la factura original. El endpoint busca la
-// factura en invoice_emissions (por item), copia su draft_json y la emite como
-// Nota de Crédito (CbteTipo 3/8/13) referenciándola vía el bloque CbtesAsoc.
+// A diferencia de la factura, la NC NO recalcula importes: es un espejo exacto
+// de la factura original. Emite como Nota de Crédito (CbteTipo 3/8/13) y la
+// referencia vía el bloque CbtesAsoc.
 //
-// Limitaciones conocidas del MVP (se completan en fases siguientes):
-//   - El PDF todavía se titula "FACTURA" (Fase 4 lo cambia a "NOTA DE CRÉDITO").
-//   - No escribe en el audit board de TAP (Fase 5).
-//   - No toca columnas de status del board; el feedback va por comentario.
+// Cómo resuelve a qué factura anula:
+//   - Modo nuevo: si el board mapeó la columna `factura_referencia`, la NC vive
+//     en su propio item y esa columna tiene el CAE de la factura a anular. El
+//     endpoint busca la factura en invoice_emissions por ese CAE.
+//   - Modo legacy (fallback): sin esa columna mapeada, la NC se dispara sobre
+//     el mismo item que ya emitió la factura y se la busca por item_id.
+//
+// El PDF ya se titula "NOTA DE CRÉDITO", escribe en el audit board de TAP y
+// actualiza la columna de status del item (si auto_update_status está activo).
 app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (req, res) => {
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
@@ -5470,12 +5487,19 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                 || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
             if (!mondayToken) throw new Error('No hay token de Monday para consultar el item');
 
-            // ── 2. Resolver boardId + empresa ──────────────────────────────────
-            // boardId normalmente viene en el payload de la receta. Si no, lo
-            // sacamos del item. La empresa se resuelve por board (multi-empresa).
-            if (!boardId) {
-                const itemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
-                boardId = String(itemData?.boardId || '').trim();
+            // ── 2. Resolver boardId + columnas del item NC ─────────────────────
+            // Traemos el item de monday una sola vez: nos da el boardId (si no
+            // vino en el payload de la receta) y las column_values del item NC.
+            // Esas columnas las necesitamos para leer la columna de CAE de
+            // referencia y la de Tipo de Comprobante (ver paso 3). La empresa
+            // se resuelve por board (multi-empresa).
+            let ncItemColumns = [];
+            try {
+                const ncItemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
+                ncItemColumns = ncItemData.mainColumns || [];
+                if (!boardId) boardId = String(ncItemData.boardId || '').trim();
+            } catch (fetchErr) {
+                console.warn('[nc] no se pudo traer el item de monday:', fetchErr.message);
             }
             if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
 
@@ -5502,24 +5526,97 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
             }
 
-            // ── 3. Buscar la factura original de este item ─────────────────────
-            // La factura tiene invoice_type distinto de 'NC' (normalmente 'AUTO').
-            // Tomamos la más reciente exitosa.
-            const facturaResult = await db.query(
-                `SELECT id, invoice_type, draft_json, afip_result_json,
-                        attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
-                 FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                   AND invoice_type <> 'NC' AND status='success'
-                 ORDER BY updated_at DESC LIMIT 1`,
-                [company.id, boardId, itemId]
-            );
-            const factura = facturaResult.rows[0];
-            if (!factura) {
-                throw new Error(
-                    'No hay una factura emitida para este item. La Nota de Crédito solo se ' +
-                    'puede emitir sobre un item que ya tenga su factura generada por la app.'
+            // ── 3. Resolver la factura que esta NC anula ───────────────────────
+            // Cargamos el mapeo del board para saber qué columnas del item NC
+            // son la referencia (CAE) y el Tipo de Comprobante. Si el board no
+            // tiene mapeo, ncMapping queda {} y caemos al modo legacy.
+            let ncMapping = {};
+            try {
+                const mapRes = await db.query(
+                    `SELECT mapping_json FROM visual_mappings
+                     WHERE company_id=$1 AND board_id=$2
+                     ORDER BY updated_at DESC LIMIT 1`,
+                    [company.id, boardId]
                 );
+                ncMapping = mapRes.rows[0]?.mapping_json || {};
+            } catch (mapErr) {
+                console.warn('[nc] no se pudo leer el mapeo del board:', mapErr.message);
+            }
+
+            // Validación opcional del Tipo de Comprobante: si esa columna está
+            // mapeada y dice claramente "Factura" (y no "Nota de Crédito"),
+            // abortamos — este item no debería disparar una NC.
+            if (ncMapping.tipo_comprobante) {
+                const tipoCompRaw = (getColumnTextById(ncItemColumns, ncMapping.tipo_comprobante) || '').trim();
+                if (tipoCompRaw && /factura/i.test(tipoCompRaw) && !/cr[eé]dito/i.test(tipoCompRaw)) {
+                    throw new Error(
+                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante. ` +
+                        `Para emitir una Nota de Crédito esa columna tiene que indicar "Nota de Crédito".`
+                    );
+                }
+            }
+
+            // La factura tiene invoice_type distinto de 'NC' (normalmente 'AUTO').
+            //  - Modo nuevo: la columna factura_referencia tiene el CAE de la
+            //    factura a anular → la NC puede vivir en su propio item.
+            //  - Modo legacy (fallback): sin columna de referencia mapeada, la
+            //    NC se dispara sobre el mismo item que ya emitió la factura.
+            let factura = null;
+            if (ncMapping.factura_referencia) {
+                const caeRefRaw = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
+                if (!caeRefRaw) {
+                    throw new Error(
+                        'La columna de CAE de referencia está vacía. Cargá el CAE (14 dígitos) ' +
+                        'de la factura que esta Nota de Crédito debe anular.'
+                    );
+                }
+                // El CAE de AFIP son 14 dígitos. Toleramos que el usuario pegue
+                // el comentario entero ("CAE: 7512... (vto. ...)") quedándonos
+                // con los primeros 14 dígitos.
+                const caeRef = caeRefRaw.replace(/\D/g, '').slice(0, 14);
+                if (caeRef.length !== 14) {
+                    throw new Error(
+                        `El CAE de referencia "${caeRefRaw}" no es válido. El CAE de AFIP ` +
+                        `tiene 14 dígitos — copialo del PDF o del comentario de la factura.`
+                    );
+                }
+                const byCae = await db.query(
+                    `SELECT id, invoice_type, draft_json, afip_result_json,
+                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
+                     FROM invoice_emissions
+                     WHERE company_id=$1 AND board_id=$2
+                       AND afip_result_json->>'cae'=$3
+                       AND invoice_type <> 'NC' AND status='success'
+                     ORDER BY updated_at DESC LIMIT 1`,
+                    [company.id, boardId, caeRef]
+                );
+                factura = byCae.rows[0] || null;
+                if (!factura) {
+                    throw new Error(
+                        `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
+                        `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
+                        `desde este mismo tablero.`
+                    );
+                }
+                console.log(`[nc] factura resuelta por CAE ${caeRef} → emisión id=${factura.id}`);
+            } else {
+                const facturaResult = await db.query(
+                    `SELECT id, invoice_type, draft_json, afip_result_json,
+                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
+                     FROM invoice_emissions
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                       AND invoice_type <> 'NC' AND status='success'
+                     ORDER BY updated_at DESC LIMIT 1`,
+                    [company.id, boardId, itemId]
+                );
+                factura = facturaResult.rows[0] || null;
+                if (!factura) {
+                    throw new Error(
+                        'No hay una factura emitida para este item. La Nota de Crédito solo se ' +
+                        'puede emitir sobre un item que ya tenga su factura generada por la app.'
+                    );
+                }
+                console.log(`[nc] factura resuelta por item ${itemId} (modo legacy) → emisión id=${factura.id}`);
             }
             const facturaDraft = factura.draft_json || {};
             const facturaAfip  = factura.afip_result_json || {};
@@ -5550,6 +5647,30 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                     `Ya se emitió una Nota de Crédito para este item ` +
                     `(NC ${letra}, Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
                 );
+            }
+            // Idempotencia adicional (modo nuevo, NC en item propio): no permitir
+            // una segunda NC exitosa que anule la MISMA factura. En el paso base
+            // la NC es total, así que dos NC sobre una factura sería una doble
+            // anulación. (El paso 2 — NC parcial — reemplaza esto por control de
+            // saldo.) Solo aplica al modo nuevo: en legacy la NC comparte item
+            // con la factura y el check de arriba ya alcanza.
+            if (ncMapping.factura_referencia) {
+                const dupNc = await db.query(
+                    `SELECT item_id, afip_result_json FROM invoice_emissions
+                     WHERE company_id=$1 AND board_id=$2 AND invoice_type='NC'
+                       AND status='success' AND related_emission_id=$3
+                       AND item_id <> $4
+                     LIMIT 1`,
+                    [company.id, boardId, factura.id, itemId]
+                );
+                if (dupNc.rows[0]) {
+                    const prevDup = dupNc.rows[0].afip_result_json || {};
+                    throw new Error(
+                        `Esa factura ya tiene una Nota de Crédito emitida ` +
+                        `(NC Nº ${prevDup.numero_comprobante || '—'}, CAE ${prevDup.cae || '—'}). ` +
+                        `No se puede emitir otra NC total sobre la misma factura.`
+                    );
+                }
             }
             // Recovery Fase 1: si quedó un intento previo con cbteNro reservado
             // (timeout del SOAP), lo pasamos a afipIssueFactura para que consulte
