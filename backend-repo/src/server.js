@@ -5286,6 +5286,24 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 }
             }
 
+            // Write-back del CAE a la columna del item (FIRE-AND-FORGET).
+            // Solo cuando:
+            //   - Emision exitosa (hay CAE)
+            //   - El cliente mapeo la columna factura_referencia (la misma que
+            //     una Nota de Credito usa para apuntar a la factura a anular).
+            // Asi la factura emitida queda "completa" mostrando su propio CAE en
+            // el board: para emitir una NC se copia ese CAE al item de la NC.
+            // Escribe siempre — una factura emitida no se re-emite con otro CAE.
+            // writeMondayNumericColumn usa change_simple_column_value, que sirve
+            // tanto para columnas numericas como de texto (el CAE son 14 digitos).
+            if (afipResult?.cae && mapping.factura_referencia) {
+                writeMondayNumericColumn({
+                    apiToken: mondayToken, boardId, itemId,
+                    columnId: mapping.factura_referencia,
+                    value:    afipResult.cae,
+                }).catch((e) => console.warn('[write-back] CAE fire-and-forget falló:', e.message));
+            }
+
             // Renombrar el item del cliente con el formato del comprobante emitido.
             // FIRE-AND-FORGET: la emisión ya fue exitosa, esto es solo cosmético.
             //
