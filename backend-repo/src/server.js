@@ -6787,8 +6787,9 @@ const AUDIT_COLS = {
     estado:           'color_mm2t2mrr',
     instalacion:      'board_relation_mm2x7ajc',
     empresa_emisora:  'dropdown_mm3hfsrw',  // nombre legal de la empresa emisora
-    tipo:             'dropdown_mm2ty1vv',
-    tipo_nc:          'dropdown_mm3hq4br',  // letra de la NC — columna separada de la factura
+    tipo_comprobante: 'dropdown_mm3kepzs',  // Factura / Nota de Crédito / Nota de Débito
+    tipo:             'dropdown_mm2ty1vv',  // letra del comprobante (A / B / C)
+    moneda:           'dropdown_mm3kw6n6',  // Pesos / Dólares
     nro_comprobante:  'numeric_mm2ts2xt',
     punto_venta:      'numeric_mm2wva2f',  // PTO Venta del comprobante
     cuit_emisor:      'numeric_mm2wjc48',  // CUIT del emisor (la company)
@@ -6936,7 +6937,12 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         cv[AUDIT_COLS.fecha_emision] = { date: fechaEmision };
         cv[AUDIT_COLS.estado]        = { label: success ? AUDIT_ESTADO.ok : classifyAuditError(error) };
         if (leadItemId)                              cv[AUDIT_COLS.instalacion]     = { item_ids: [Number(leadItemId)] };
-        if (tipo)                                    cv[esNotaCredito ? AUDIT_COLS.tipo_nc : AUDIT_COLS.tipo] = { labels: [String(tipo)] };
+        // Tipo de comprobante (Factura / Nota de Crédito) — siempre, incluso en error.
+        cv[AUDIT_COLS.tipo_comprobante] = { labels: [esNotaCredito ? 'Nota de Crédito' : 'Factura'] };
+        // Letra del comprobante (A / B / C).
+        if (tipo)                                    cv[AUDIT_COLS.tipo] = { labels: [String(tipo)] };
+        // Moneda — si hay draft. Sin moneda explícita se asume Pesos.
+        if (draft)                                   cv[AUDIT_COLS.moneda] = { labels: [draft.moneda === 'DOL' ? 'Dólares' : 'Pesos'] };
         if (afipResult?.numero_comprobante != null)  cv[AUDIT_COLS.nro_comprobante] = String(afipResult.numero_comprobante);
         if (draft?.punto_venta != null)              cv[AUDIT_COLS.punto_venta]     = String(draft.punto_venta);
         if (company?.cuit) {
