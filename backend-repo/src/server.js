@@ -4676,9 +4676,11 @@ async function comprobanteHandler(req, res) {
             if (tipoCompColId) {
                 const tipoComp = (getColumnTextById(mainColumns, tipoCompColId) || '').trim();
                 if (!tipoComp) {
+                    // Formato "Item incompleto" → buildErrorComment lo muestra
+                    // como lista de columnas faltantes con el nombre real.
                     throw new Error(
-                        'Elegí el Tipo de Comprobante (Factura / Nota de Crédito) en la columna ' +
-                        'del item antes de disparar la receta.'
+                        'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
+                        `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura o Nota de Crédito`
                     );
                 }
                 if (/cr[eé]dito/i.test(tipoComp)) {
@@ -6144,15 +6146,15 @@ function buildErrorComment(err) {
 
     const KNOWN_ERRORS = [
         {
-            // Item incompleto = la validateItemDataCompleteness fallo. El detalle
-            // de QUE columnas faltan viene en los bullets que arma esa funcion.
+            // Item incompleto = validateItemDataCompleteness (o el ruteo) falló.
+            // El detalle de QUÉ columnas faltan viene en los bullets del mensaje.
             match: /Item incompleto/i,
             title: 'Faltan datos en el item',
             detail: subitemDetails.length > 0
-                ? 'Para que el sistema pueda emitir la factura, completá estas columnas que están vacías o con datos inválidos:<br/><br/>' +
-                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;<b>•</b>&nbsp;${l}`).join('<br/>')
+                ? 'Completá estas columnas (vacías o con datos inválidos) y volvé a disparar la receta:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
                 : 'Hay campos obligatorios sin completar en el item o en sus subitems.',
-            solucion: 'Abrí el item, completá las columnas listadas arriba con los valores correctos y volvé a disparar la receta. Si una columna no aparece, revisá el <b>Mapeo Visual</b> en la vista de configuración de la app.',
+            solucion: 'Abrí el item, completá las columnas marcadas con ❌ y reintentá. Si una columna no aparece, revisá el <b>Mapeo Visual</b> en la vista de configuración de la app.',
         },
         {
             match: /falta.*mapeo|falta.*configurar.*mapeo|falta.*mapping/i,
@@ -6230,10 +6232,10 @@ function buildErrorComment(err) {
             solucion: 'Completá las columnas <b>Fecha Servicio Desde</b> y <b>Fecha Servicio Hasta</b> en el item. Son obligatorias cuando los subitems incluyen servicios.',
         },
         {
-            match: /alícuota iva incompatible con factura c/i,
-            title: 'Alícuota IVA incompatible con Factura C',
+            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva/i,
+            title: 'El comprobante C no lleva IVA',
             detail: mainMsg,
-            solucion: 'Las Facturas C no discriminan IVA porque el emisor es Monotributista o Exento. Abrí los subítems del item y cambiá la columna <b>Alícuota IVA %</b> a <b>0</b> en todos. Después reintentá la emisión.',
+            solucion: 'Los comprobantes C (Factura o Nota de Crédito) no discriminan IVA porque el emisor es Monotributista o Exento. Abrí los subítems del item y poné la columna <b>Alícuota IVA %</b> en <b>0</b> en todos. Después reintentá.',
         },
         {
             match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida/i,
@@ -6245,24 +6247,55 @@ function buildErrorComment(err) {
             solucion: 'Todos los subitems de una factura deben tener la <b>misma alícuota IVA</b>. Revisá la columna Alícuota IVA % y asegurate de que todos los subitems tengan el mismo valor (0, 2.5, 5, 10.5, 21 o 27).',
         },
         {
-            match: /idempotencia|ya emitida|ya completa/i,
-            title: 'Factura ya emitida para este item',
+            match: /nota de débito todavía no|notas de débito todavía no/i,
+            title: 'Nota de Débito no disponible',
             detail: mainMsg,
-            solucion: 'Cada item del tablero corresponde a <b>una sola factura</b>. ' +
-                'Para emitir una factura nueva, <b>creá un item nuevo</b> en el tablero ' +
-                'y disparálo desde ahí. Esto evita duplicar comprobantes en AFIP.',
+            solucion: 'Por ahora la app emite <b>Facturas</b> y <b>Notas de Crédito</b>. La Nota de Débito se va a habilitar más adelante.',
+        },
+        {
+            // Errores de la columna del CAE de referencia (Nota de Crédito).
+            match: /cae de referencia|columna del cae|no se encontró ninguna factura/i,
+            title: 'No se pudo identificar la factura a anular',
+            detail: mainMsg,
+            solucion: 'En el item de la Nota de Crédito, pegá en la columna del <b>CAE</b> el código de 14 dígitos de la factura que querés anular. Lo sacás del PDF de esa factura o del comentario que dejó la app cuando se emitió.',
+        },
+        {
+            match: /item de nota de crédito no tiene subítems/i,
+            title: 'La Nota de Crédito no tiene líneas para acreditar',
+            detail: mainMsg,
+            solucion: 'Agregá como <b>subítems</b> del item lo que querés acreditar — cada línea con Concepto, Cantidad y Precio. La Nota de Crédito se emite por la suma de esos subítems.',
+        },
+        {
+            match: /supera el saldo disponible de la factura/i,
+            title: 'La Nota de Crédito supera el saldo de la factura',
+            detail: mainMsg,
+            solucion: 'No se puede acreditar más de lo que se facturó. Bajá los importes de los subítems para que el total no supere el <b>saldo disponible</b> indicado arriba.',
+        },
+        {
+            match: /alícuota iva de la nota de crédito.*no coincide/i,
+            title: 'La alícuota IVA de la Nota de Crédito no coincide con la factura',
+            detail: mainMsg,
+            solucion: 'La Nota de Crédito se acredita con el mismo IVA que se facturó. Ajustá la columna <b>Alícuota IVA %</b> de los subítems para que coincida con la de la factura original.',
+        },
+        {
+            match: /idempotencia|ya emitida|ya completa|ya se emiti/i,
+            title: 'Ya se emitió un comprobante para este item',
+            detail: mainMsg,
+            solucion: 'Cada item del tablero corresponde a <b>un solo comprobante</b>. ' +
+                'Para emitir otro, <b>creá un item nuevo</b> en el tablero y disparálo ' +
+                'desde ahí. Esto evita duplicar comprobantes en AFIP.',
         },
     ];
 
     const known = KNOWN_ERRORS.find(e => e.match.test(msg));
 
     if (known) {
-        return `<b>Error al emitir factura</b><br/><br/>` +
+        return `<b>❌ No se pudo emitir el comprobante</b><br/><br/>` +
             `<b>Causa:</b> ${known.title}<br/>${known.detail}<br/><br/>` +
             `<b>Cómo solucionarlo:</b> ${known.solucion}`;
     }
 
-    return `<b>Error al emitir factura</b><br/><br/>` +
+    return `<b>❌ No se pudo emitir el comprobante</b><br/><br/>` +
         `<b>Causa:</b> ${mainMsg}<br/><br/>` +
         `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.`;
 }
@@ -6316,7 +6349,7 @@ async function notifyCallback(callbackUrl, actionUuid, success, errorMsg = null,
             ? { success: true, actionUuid, outputFields }
             : { success: false, actionUuid,
                 severityCode: 4000,
-                notificationErrorTitle: 'Error al emitir factura',
+                notificationErrorTitle: 'No se pudo emitir el comprobante',
                 notificationErrorDescription: errorMsg || 'Error desconocido' };
         await fetch(callbackUrl, {
             method: 'POST',
