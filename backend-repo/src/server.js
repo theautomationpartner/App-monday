@@ -5658,15 +5658,19 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
                 console.warn('[nc] no se pudo leer el mapeo del board:', mapErr.message);
             }
 
-            // Validación opcional del Tipo de Comprobante: si esa columna está
-            // mapeada y dice claramente "Factura" (y no "Nota de Crédito"),
-            // abortamos — este item no debería disparar una NC.
+            // Validación del Tipo de Comprobante: si esa columna está mapeada y
+            // tiene un valor, tiene que decir "crédito" (en cualquier combinación
+            // de mayúsculas/minúsculas: "Nota de Crédito", "NOTA DE CREDITO",
+            // "NoTa DE CreDito" — la regex es case-insensitive y tolera el acento).
+            // Cualquier otro valor —"Factura", "Nota de Débito", etc.— corta la
+            // emisión: este item no es una NC. Si la columna está vacía no se
+            // valida (la receta es el disparador real; esto es control secundario).
             if (ncMapping.tipo_comprobante) {
                 const tipoCompRaw = (getColumnTextById(ncItemColumns, ncMapping.tipo_comprobante) || '').trim();
-                if (tipoCompRaw && /factura/i.test(tipoCompRaw) && !/cr[eé]dito/i.test(tipoCompRaw)) {
+                if (tipoCompRaw && !/cr[eé]dito/i.test(tipoCompRaw)) {
                     throw new Error(
-                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante. ` +
-                        `Para emitir una Nota de Crédito esa columna tiene que indicar "Nota de Crédito".`
+                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
+                        `no como Nota de Crédito. Verificá que estés disparando la receta sobre el item correcto.`
                     );
                 }
             }
