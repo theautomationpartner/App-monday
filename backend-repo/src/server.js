@@ -4503,12 +4503,17 @@ function requireAutomationBlock(req, res, next) {
     }
 }
 
-// ─── Endpoint unificado para bloques de automatización (A, B, C) ──────────────
-// Monday llama a este endpoint cuando se dispara la receta.
+// ─── Handler de la receta unificada "Crear Comprobante" ──────────────────────
+// Monday llama a este endpoint cuando se dispara la receta. Es UN solo punto de
+// entrada: lee la columna mapeada `tipo_comprobante` del item y rutea —
+//   - "Factura" (o columna sin mapear)  → emite la factura (lógica de abajo).
+//   - "Nota de Crédito"                 → delega en creditNoteHandler.
+//   - "Nota de Débito"                  → todavía no implementado (error claro).
+// Se registra en /api/invoices/emit (compat) y /api/comprobantes/emit (nuevo).
 // Flujo:
 //   1. Responde 200 inmediatamente (monday requiere respuesta rápida)
-//   2. En background: consulta padrón → valida tipo → emite → genera PDF → sube a monday
-app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, res) => {
+//   2. En background: rutea por tipo → emite → genera PDF → sube a monday
+async function comprobanteHandler(req, res) {
     const { payload, runtimeMetadata } = req.body || {};
     const inbound      = payload?.inboundFieldValues || {};
     const inputFields  = payload?.inputFields || {};
@@ -4659,6 +4664,43 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
                 throw new Error(formatMissingConfigError(readiness.missing));
             }
 
+            // ── 2b-ter. Ruteo por Tipo de Comprobante ──────────────────────────
+            // Receta unificada "Crear Comprobante": la columna mapeada
+            // `tipo_comprobante` decide qué se emite. Si el item es una Nota de
+            // Crédito, delegamos en creditNoteHandler y cortamos acá. Si la
+            // columna no está mapeada (clientes que solo facturan), se ignora y
+            // se emite factura como siempre. Va ANTES del cambio de status y de
+            // la validación de datos de factura (un item de NC no tiene por qué
+            // cumplir las reglas de una factura).
+            const tipoCompColId = readiness.mapping?.tipo_comprobante;
+            if (tipoCompColId) {
+                const tipoComp = (getColumnTextById(mainColumns, tipoCompColId) || '').trim();
+                if (!tipoComp) {
+                    throw new Error(
+                        'Elegí el Tipo de Comprobante (Factura / Nota de Crédito) en la columna ' +
+                        'del item antes de disparar la receta.'
+                    );
+                }
+                if (/cr[eé]dito/i.test(tipoComp)) {
+                    console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Crédito`);
+                    await creditNoteHandler(req, res);
+                    return;
+                }
+                if (/d[eé]bito/i.test(tipoComp)) {
+                    throw new Error(
+                        `El item está marcado como "${tipoComp}". La emisión de Notas de Débito ` +
+                        `todavía no está disponible.`
+                    );
+                }
+                if (!/factura/i.test(tipoComp)) {
+                    throw new Error(
+                        `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
+                        `Tiene que ser "Factura", "Nota de Crédito" o "Nota de Débito".`
+                    );
+                }
+                // tipoComp dice "factura" → seguimos con la emisión de factura.
+            }
+
             // ── 2b-bis. Pre-flight 2: bloquear si faltan valores en celdas ─────
             // Tiene que quedar ANTES del cambio de status: si los datos están mal,
             // no queremos pasar por "Creando Comprobante" y de ahí saltar a error.
@@ -4805,24 +4847,6 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             if (!mappingResult.rows[0]?.mapping_json) throw new Error('Falta configurar el mapeo de columnas para este tablero');
 
             const mapping = mappingResult.rows[0].mapping_json;
-
-            // Guarda: este endpoint emite SOLO Facturas. Si el board mapeó la
-            // columna Tipo de Comprobante y el item dice "Nota de Crédito" o
-            // "Nota de Débito", cortamos — la receta que disparó fue la de
-            // factura sobre un item que no es una factura. (El control simétrico
-            // está en /api/credit-notes/emit.) Columna vacía o sin mapear: no se
-            // valida — la receta es el disparador real, esto es control extra.
-            if (mapping.tipo_comprobante) {
-                const tipoCompRaw = (getColumnTextById(mainColumns, mapping.tipo_comprobante) || '').trim();
-                if (tipoCompRaw && !/factura/i.test(tipoCompRaw)) {
-                    throw new Error(
-                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                        `no como Factura. Esta receta emite Facturas — para emitir una Nota de Crédito ` +
-                        `usá la receta "Crear Nota de Crédito AFIP".`
-                    );
-                }
-            }
-
             const fechaEmisionRaw = getColumnTextById(mainColumns, mapping.fecha_emision);
             const receptorCuitRaw = getColumnTextById(mainColumns, mapping.receptor_cuit) || null;
             const receptorNombre  = getColumnTextById(mainColumns, mapping.receptor_nombre) || null;
@@ -5521,7 +5545,9 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             }
         }
     });
-});
+}
+app.post('/api/invoices/emit',     emitLimiter, requireAutomationBlock, comprobanteHandler);
+app.post('/api/comprobantes/emit', emitLimiter, requireAutomationBlock, comprobanteHandler);
 
 // Busca recursivamente el primer valor de cualquiera de las claves dadas dentro
 // de un objeto. Permite extraer itemId/boardId del webhook sin depender del
@@ -5559,7 +5585,12 @@ function deepFindValue(obj, keyNames, depth = 0) {
 // Emite como Nota de Crédito (CbteTipo 3/8/13) referenciando la factura vía el
 // bloque CbtesAsoc. El PDF se titula "NOTA DE CRÉDITO", escribe en el audit
 // board de TAP y actualiza la columna de status del item.
-app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (req, res) => {
+// Handler de emisión de Nota de Crédito. Se registra en /api/credit-notes/emit
+// (compat) y también lo invoca comprobanteHandler cuando la receta unificada
+// "Crear Comprobante" recibe un item marcado como Nota de Crédito. Cuando lo
+// llama el router, `res` ya respondió 200 → los `res` van guardados con
+// `!res.headersSent`.
+async function creditNoteHandler(req, res) {
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
     const inputFields   = payload?.inputFields || {};
@@ -5594,11 +5625,16 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
     if (!accountId || !itemId) {
         console.error('[nc] FAIL: faltan datos. accountId:', accountId, 'itemId:', itemId,
             '| body:', JSON.stringify(req.body || {}).slice(0, 1500));
-        return res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+        if (!res.headersSent) {
+            res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+        }
+        return;
     }
 
-    // Responder inmediatamente (acción asíncrona de monday)
-    res.status(200).json({ status: 'received', actionUuid });
+    // Responder inmediatamente (acción asíncrona de monday). Si headersSent ya
+    // es true, fue invocado por comprobanteHandler (la respuesta ya se mandó) →
+    // seguimos directo al trabajo en background.
+    if (!res.headersSent) res.status(200).json({ status: 'received', actionUuid });
 
     // ── Procesar en background ────────────────────────────────────────────────
     setImmediate(async () => {
@@ -6094,7 +6130,8 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, async (r
             if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message).catch(() => {});
         }
     });
-});
+}
+app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, creditNoteHandler);
 
 // ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
 function buildErrorComment(err) {
