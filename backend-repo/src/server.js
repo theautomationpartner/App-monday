@@ -4857,13 +4857,30 @@ async function comprobanteHandler(req, res) {
                 return; // CRÍTICO: jamás caer al flujo de emisión con una factura ya emitida.
             }
 
-            await db.query(
+            // ── 3b. Reservar la fila (claim atómico — anti doble emisión) ──────
+            // A1: el UPDATE solo prospera si la fila NO está ya 'processing'
+            // (otra emisión en curso) ni 'success' (ya emitida). Una fila
+            // 'processing' vieja (>5 min — server caído mid-emisión) se puede
+            // re-reclamar. Si no devuelve fila → hay otra emisión corriendo en
+            // paralelo → abortamos SIN tocar la fila (es de la otra emisión).
+            const emClaim = await db.query(
                 `INSERT INTO invoice_emissions (company_id, board_id, item_id, invoice_type, status, request_json)
                  VALUES ($1,$2,$3,$4,'processing',$5)
                  ON CONFLICT (company_id, board_id, item_id, invoice_type)
-                 DO UPDATE SET status='processing', error_message=NULL, updated_at=CURRENT_TIMESTAMP`,
+                 DO UPDATE SET status='processing', error_message=NULL, updated_at=CURRENT_TIMESTAMP
+                 WHERE invoice_emissions.status NOT IN ('processing','success')
+                    OR invoice_emissions.updated_at < NOW() - INTERVAL '5 minutes'
+                 RETURNING id`,
                 [company.id, boardId, itemId, typeForIdempotency, JSON.stringify(inbound)]
             );
+            if (emClaim.rows.length === 0) {
+                console.warn(`[emit] claim falló item ${itemId} — ya hay una emisión en curso, abortando sin tocar la fila`);
+                await postMondayUpdate({
+                    apiToken: mondayToken, itemId,
+                    body: '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
+                }).catch(() => {});
+                return;
+            }
 
             // ── 4. Certificados AFIP del emisor ────────────────────────────────
             const certResult = await db.query(
@@ -5919,29 +5936,6 @@ async function creditNoteHandler(req, res) {
                 );
             }
 
-            // ── Control de saldo: la NC no puede exceder lo facturado ──────────
-            // Sumamos los importes de las NC ya emitidas sobre esta factura. Lo
-            // ya acreditado + esta NC no puede superar el total de la factura.
-            const facturaTotal = Number(facturaDraft.importe_total) || 0;
-            const acreditadoRes = await db.query(
-                `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
-                 FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND invoice_type='NC'
-                   AND status='success' AND related_emission_id=$3 AND item_id <> $4`,
-                [company.id, boardId, factura.id, itemId]
-            );
-            const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
-            const saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
-            if (ncLines.importeTotal > saldo + 0.01) {
-                throw new Error(
-                    `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
-                    `disponible de la factura.\n` +
-                    `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado en NC previas: ` +
-                    `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
-                );
-            }
-            console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
-
             // ── 6. Armar el draft de la NC ─────────────────────────────────────
             // Encabezado heredado de la factura (receptor, moneda, cotización,
             // condición de venta, concepto, fechas de servicio). Líneas e
@@ -5975,22 +5969,71 @@ async function creditNoteHandler(req, res) {
                 cbteFch: facturaDraft.fecha_emision || null,
             }];
 
-            // ── 7. Insertar/actualizar fila de NC (idempotente) ────────────────
-            await db.query(
+            // ── 7. Reservar la fila de NC (claim atómico — anti doble emisión) ─
+            // A1: el UPDATE solo prospera si la fila NO está ya 'processing'
+            // (otra emisión en curso) ni 'success' (ya emitida). Una fila
+            // 'processing' vieja (>5 min — server caído mid-emisión) se puede
+            // re-reclamar. Si no devuelve fila → hay otra emisión corriendo en
+            // paralelo → abortamos SIN tocar la fila (es de la otra emisión).
+            // draft_json se persiste acá mismo: el control de saldo de las NC
+            // concurrentes necesita ver el importe que esta NC está reservando.
+            const ncClaim = await db.query(
                 `INSERT INTO invoice_emissions
-                    (company_id, board_id, item_id, invoice_type, status, request_json, related_emission_id)
-                 VALUES ($1,$2,$3,'NC','processing',$4,$5)
+                    (company_id, board_id, item_id, invoice_type, status, request_json,
+                     draft_json, related_emission_id)
+                 VALUES ($1,$2,$3,'NC','processing',$4,$5,$6)
                  ON CONFLICT (company_id, board_id, item_id, invoice_type)
                  DO UPDATE SET status='processing', error_message=NULL,
-                               related_emission_id=$5, updated_at=CURRENT_TIMESTAMP`,
-                [company.id, boardId, itemId, JSON.stringify(inbound), factura.id]
+                               request_json=$4, draft_json=$5, related_emission_id=$6,
+                               updated_at=CURRENT_TIMESTAMP
+                 WHERE invoice_emissions.status NOT IN ('processing','success')
+                    OR invoice_emissions.updated_at < NOW() - INTERVAL '5 minutes'
+                 RETURNING id`,
+                [company.id, boardId, itemId, JSON.stringify(inbound),
+                 JSON.stringify(ncDraft), factura.id]
             );
-            // Persistir draft_json ANTES del SOAP (para recovery del cron Fase 3).
-            await db.query(
-                `UPDATE invoice_emissions SET draft_json=$4, updated_at=CURRENT_TIMESTAMP
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
-                [company.id, boardId, itemId, JSON.stringify(ncDraft)]
-            ).catch((e) => console.warn('[nc] error persistiendo draft pre-SOAP:', e.message));
+            if (ncClaim.rows.length === 0) {
+                console.warn(`[nc] claim falló item ${itemId} — ya hay una NC en curso, abortando sin tocar la fila`);
+                await postMondayUpdate({
+                    apiToken: mondayToken, itemId,
+                    body: '⏳ Ya hay una Nota de Crédito en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
+                }).catch(() => {});
+                return;
+            }
+
+            // ── 8. Control de saldo: la NC no puede exceder lo facturado ───────
+            // Suma los importes de las NC de esta factura emitidas ('success') o
+            // reservadas en curso ('processing', excluyendo esta). Incluir las
+            // 'processing' cierra la ventana de carrera entre dos NC parciales
+            // concurrentes sobre la misma factura (A2).
+            const facturaTotal = Number(facturaDraft.importe_total) || 0;
+            const acreditadoRes = await db.query(
+                `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
+                 FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND invoice_type='NC'
+                   AND status IN ('success','processing')
+                   AND related_emission_id=$3 AND item_id <> $4`,
+                [company.id, boardId, factura.id, itemId]
+            );
+            const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
+            const saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
+            if (ncLines.importeTotal > saldo + 0.01) {
+                // Liberar la reserva: esta NC no se emite, no debe contar al saldo.
+                await db.query(
+                    `UPDATE invoice_emissions SET status='error',
+                         error_message='NC supera el saldo de la factura',
+                         updated_at=CURRENT_TIMESTAMP
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                    [company.id, boardId, itemId]
+                ).catch(() => {});
+                throw new Error(
+                    `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
+                    `disponible de la factura.\n` +
+                    `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
+                    `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+                );
+            }
+            console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado/en curso=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
 
             // Status del item → "Creando Comprobante" (fire-and-forget).
             if (autoUpdateStatus && statusColumnId) {
