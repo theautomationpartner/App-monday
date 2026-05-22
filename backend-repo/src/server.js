@@ -6351,10 +6351,21 @@ function buildErrorComment(err) {
             solucion: 'Generá nuevos certificados en AFIP/ARCA y subílos en la vista de la app → sección <b>Certificados ARCA</b>.',
         },
         {
-            match: /tipo de factura incorrecto|factura.*incorrecto|corresponde.*[ABC]/i,
+            // Solo el mensaje real de resolveInvoiceType ("Tipo de factura
+            // incorrecto: solicitaste X pero corresponde Y"). Antes la regex
+            // tenía alternativas flojas (corresponde.*[ABC]) que con el flag /i
+            // matcheaban cualquier mensaje con "corresponde" + una a/b/c suelta.
+            match: /tipo de factura incorrecto/i,
             title: 'Tipo de factura incorrecto',
             detail: 'Los datos fiscales del emisor o del receptor no coinciden con el tipo de factura que se intentó emitir.',
             solucion: 'Revisá dos cosas:<br/>&nbsp;&nbsp;1) En la app, abrí <b>Datos Fiscales</b> y confirmá que la <b>Condición IVA</b> de tu empresa esté bien cargada (Responsable Inscripto, Monotributo, etc.).<br/>&nbsp;&nbsp;2) En el item, confirmá que el <b>CUIT del receptor</b> sea correcto. La app consulta automáticamente a AFIP la condición del receptor para decidir si corresponde A, B o C.',
+        },
+        {
+            // Guardia "un item = un solo comprobante" (factura + NC en el mismo item).
+            match: /este item ya emitió/i,
+            title: 'Este item ya tiene un comprobante',
+            detail: mainMsg,
+            solucion: 'Cada item corresponde a <b>un solo comprobante</b>. Para emitir otro — o la Nota de Crédito de esta factura — creá un <b>item nuevo</b> en el tablero. La NC referencia la factura por su CAE.',
         },
         {
             match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
