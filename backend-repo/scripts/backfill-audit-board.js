@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 /**
- * One-off: vuelca al board "Comp Emitidos" TODAS las emisiones EXITOSAS de la
- * base apuntada por DATABASE_URL.
+ * One-off: sincroniza el board "Comp Emitidos" con TODAS las emisiones
+ * EXITOSAS de la base apuntada por DATABASE_URL.
  *
- *  - Idempotente: si el CAE de la emisión ya está en el board, se saltea (no
- *    re-crea). Re-correr el script es seguro.
- *  - Si dentro de la misma corrida aparece un CAE repetido, el item se crea
- *    igual pero con "(duplicada)" en el nombre — así no se pierde nada.
+ *  - Si el CAE de la emisión NO está en el board → crea el item.
+ *  - Si el CAE YA está en el board → actualiza ese item, completando los
+ *    datos que falten (ej. columnas nuevas Tipo de Comprobante / Moneda).
+ *  - Si dentro de la misma corrida aparece un CAE repetido, el item nuevo se
+ *    crea con "(duplicada)" en el nombre — así no se pierde nada.
  *  - Registra cada item creado en audit_log_items, para que el cron de
  *    backfill normal no lo vuelva a agregar.
+ *
+ * Idempotente: re-correrlo solo refresca/agrega, nunca duplica.
  *
  * Correr UNA vez por base, SIEMPRE con MONDAY_AUDIT_BOARD_ID = board de prod:
  *   set -a; . .env; set +a            # carga board + token (+ defaultdb)
@@ -65,11 +68,12 @@ function ymd(v) {
     if (m) return `${m[1]}-${m[2]}-${m[3]}`;
     return null;
 }
-const pad = (v, n) => String(v ?? '').padStart(n, '0');
+const pad   = (v, n) => String(v ?? '').padStart(n, '0');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// Lee todos los CAEs que ya están cargados en el board (paginado).
-async function getBoardCaes() {
-    const caes = new Set();
+// Lee los items del board: devuelve Map(CAE → itemId).
+async function getBoardItems() {
+    const byCae = new Map();
     let cursor = null;
     do {
         const data = await gql(`
@@ -77,18 +81,18 @@ async function getBoardCaes() {
               boards(ids: [$b]) {
                 items_page(limit: 450, cursor: $c) {
                   cursor
-                  items { column_values(ids: ["${COL.cae}"]) { text } }
+                  items { id column_values(ids: ["${COL.cae}"]) { text } }
                 }
               }
             }`, { b: String(BOARD_ID), c: cursor });
         const page = data?.boards?.[0]?.items_page;
         for (const it of (page?.items || [])) {
             const t = (it.column_values?.[0]?.text || '').replace(/\D/g, '');
-            if (t) caes.add(t);
+            if (t && !byCae.has(t)) byCae.set(t, it.id);
         }
         cursor = page?.cursor || null;
     } while (cursor);
-    return caes;
+    return byCae;
 }
 
 function buildColumnValues(row) {
@@ -152,9 +156,9 @@ async function main() {
         )
     `);
 
-    console.log('[backfill] leyendo CAEs que ya están en el board…');
-    const boardCaes = await getBoardCaes();
-    console.log(`[backfill] el board ya tiene ${boardCaes.size} comprobante(s).`);
+    console.log('[backfill] leyendo items que ya están en el board…');
+    const boardByCae = await getBoardItems();
+    console.log(`[backfill] el board ya tiene ${boardByCae.size} comprobante(s).`);
 
     const { rows } = await db.query(`
         SELECT ie.item_id, ie.invoice_type, ie.draft_json, ie.afip_result_json,
@@ -167,45 +171,60 @@ async function main() {
     `);
     console.log(`[backfill] ${rows.length} emisión(es) exitosa(s) en la base.`);
 
-    const seen = new Set(boardCaes);
-    let creadas = 0, dups = 0, salteadas = 0, errores = 0;
+    const seen = new Set(boardByCae.keys());
+    let creadas = 0, actualizadas = 0, dups = 0, salteadas = 0, errores = 0;
 
     for (const row of rows) {
         const a = row.afip_result_json || {};
         const cae = a.cae ? String(a.cae).replace(/\D/g, '') : null;
-        if (!cae)                { salteadas++; continue; }   // sin CAE → no es emisión válida
-        if (boardCaes.has(cae))  { salteadas++; continue; }   // ya está en el board
-        const esDup = seen.has(cae);                          // CAE repetido en esta corrida
+        if (!cae) { salteadas++; continue; }   // sin CAE → no es emisión válida
 
         try {
-            const name = buildName(row, esDup);
-            const data = await gql(`
-                mutation ($b: ID!, $n: String!, $cv: JSON!) {
-                  create_item(board_id: $b, item_name: $n, column_values: $cv, create_labels_if_missing: true) { id }
-                }`, { b: String(BOARD_ID), n: name, cv: JSON.stringify(buildColumnValues(row)) });
-            const auditItemId = data?.create_item?.id;
-            if (!auditItemId) throw new Error('create_item no devolvió id');
+            const cv = buildColumnValues(row);
 
-            const clientItemId = row.invoice_type === 'NC' ? `${row.item_id}:NC` : String(row.item_id);
-            await db.query(`
-                INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id, workspace_id, company_id)
-                VALUES ($1,$2,$3,$4,$5)
-                ON CONFLICT (monday_account_id, client_item_id) DO NOTHING
-            `, [String(row.monday_account_id), clientItemId, String(auditItemId),
-                row.workspace_id ? String(row.workspace_id) : null, row.company_id]);
+            if (boardByCae.has(cae)) {
+                // Ya está en el board → actualizar/completar sus columnas.
+                await gql(`
+                    mutation ($b: ID!, $i: ID!, $cv: JSON!) {
+                      change_multiple_column_values(
+                        board_id: $b, item_id: $i, column_values: $cv, create_labels_if_missing: true
+                      ) { id }
+                    }`, { b: String(BOARD_ID), i: String(boardByCae.get(cae)), cv: JSON.stringify(cv) });
+                actualizadas++;
+                console.log(`[backfill] ↻ ${buildName(row, false)}  (CAE ${cae})`);
+            } else {
+                // Nuevo → crear item + registrar el mapeo.
+                const esDup = seen.has(cae);
+                const name = buildName(row, esDup);
+                const data = await gql(`
+                    mutation ($b: ID!, $n: String!, $cv: JSON!) {
+                      create_item(board_id: $b, item_name: $n, column_values: $cv, create_labels_if_missing: true) { id }
+                    }`, { b: String(BOARD_ID), n: name, cv: JSON.stringify(cv) });
+                const auditItemId = data?.create_item?.id;
+                if (!auditItemId) throw new Error('create_item no devolvió id');
 
-            seen.add(cae);
-            if (esDup) { dups++; } else { creadas++; }
-            console.log(`[backfill] ✓ ${name}  (CAE ${cae})`);
-            await new Promise((r) => setTimeout(r, 150));   // no saturar la API de monday
+                const clientItemId = row.invoice_type === 'NC' ? `${row.item_id}:NC` : String(row.item_id);
+                await db.query(`
+                    INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id, workspace_id, company_id)
+                    VALUES ($1,$2,$3,$4,$5)
+                    ON CONFLICT (monday_account_id, client_item_id) DO NOTHING
+                `, [String(row.monday_account_id), clientItemId, String(auditItemId),
+                    row.workspace_id ? String(row.workspace_id) : null, row.company_id]);
+
+                seen.add(cae);
+                boardByCae.set(cae, auditItemId);
+                if (esDup) { dups++; } else { creadas++; }
+                console.log(`[backfill] ✓ ${name}  (CAE ${cae})`);
+            }
+            await sleep(150);   // no saturar la API de monday
         } catch (err) {
             errores++;
             console.error(`[backfill] ✗ item ${row.item_id}: ${err.message}`);
         }
     }
 
-    console.log(`\n[backfill] LISTO — creadas=${creadas}  duplicadas=${dups}  ` +
-        `salteadas(ya en board / sin CAE)=${salteadas}  errores=${errores}`);
+    console.log(`\n[backfill] LISTO — creadas=${creadas}  actualizadas=${actualizadas}  ` +
+        `duplicadas=${dups}  salteadas(sin CAE)=${salteadas}  errores=${errores}`);
     process.exit(0);
 }
 
