@@ -4805,6 +4805,24 @@ app.post('/api/invoices/emit', emitLimiter, requireAutomationBlock, async (req, 
             if (!mappingResult.rows[0]?.mapping_json) throw new Error('Falta configurar el mapeo de columnas para este tablero');
 
             const mapping = mappingResult.rows[0].mapping_json;
+
+            // Guarda: este endpoint emite SOLO Facturas. Si el board mapeó la
+            // columna Tipo de Comprobante y el item dice "Nota de Crédito" o
+            // "Nota de Débito", cortamos — la receta que disparó fue la de
+            // factura sobre un item que no es una factura. (El control simétrico
+            // está en /api/credit-notes/emit.) Columna vacía o sin mapear: no se
+            // valida — la receta es el disparador real, esto es control extra.
+            if (mapping.tipo_comprobante) {
+                const tipoCompRaw = (getColumnTextById(mainColumns, mapping.tipo_comprobante) || '').trim();
+                if (tipoCompRaw && !/factura/i.test(tipoCompRaw)) {
+                    throw new Error(
+                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
+                        `no como Factura. Esta receta emite Facturas — para emitir una Nota de Crédito ` +
+                        `usá la receta "Crear Nota de Crédito AFIP".`
+                    );
+                }
+            }
+
             const fechaEmisionRaw = getColumnTextById(mainColumns, mapping.fecha_emision);
             const receptorCuitRaw = getColumnTextById(mainColumns, mapping.receptor_cuit) || null;
             const receptorNombre  = getColumnTextById(mainColumns, mapping.receptor_nombre) || null;
