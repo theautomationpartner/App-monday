@@ -4741,6 +4741,25 @@ async function comprobanteHandler(req, res) {
                 // tipoComp dice "factura" → seguimos con la emisión de factura.
             }
 
+            // Un item = un solo comprobante. Si este item ya emitió una Nota de
+            // Crédito, no se puede emitir una factura encima — va en un item
+            // nuevo. (El control simétrico — NC sobre item con factura — está en
+            // creditNoteHandler.) Cortamos antes de tocar el status.
+            const ncEnEsteItem = await db.query(
+                `SELECT afip_result_json FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                   AND invoice_type='NC' AND status='success' LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            if (ncEnEsteItem.rows[0]) {
+                const n = ncEnEsteItem.rows[0].afip_result_json || {};
+                throw new Error(
+                    `Este item ya emitió una Nota de Crédito (N° ${n.numero_comprobante || '—'}, ` +
+                    `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
+                    `cada item corresponde a un solo comprobante. Creá un item nuevo.`
+                );
+            }
+
             // ── 2b-bis. Pre-flight 2: bloquear si faltan valores en celdas ─────
             // Tiene que quedar ANTES del cambio de status: si los datos están mal,
             // no queremos pasar por "Creando Comprobante" y de ahí saltar a error.
@@ -5859,6 +5878,26 @@ async function creditNoteHandler(req, res) {
             const letra = facturaDraft.tipo_comprobante;  // 'A' | 'B' | 'C'
             if (!['A', 'B', 'C'].includes(letra)) {
                 throw new Error(`No se pudo determinar la letra de la factura original (tipo='${letra}').`);
+            }
+
+            // Un item = un solo comprobante. Si ESTE item de NC ya emitió una
+            // factura, está mal usado: la NC va en un item NUEVO, separado de la
+            // factura. Cortamos acá — antes de tocar el status — así no queda el
+            // item colgado en "Creando Comprobante".
+            const facturaEnEsteItem = await db.query(
+                `SELECT afip_result_json FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                   AND invoice_type <> 'NC' AND status='success' LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            if (facturaEnEsteItem.rows[0]) {
+                const f = facturaEnEsteItem.rows[0].afip_result_json || {};
+                throw new Error(
+                    `Este item ya emitió una factura (N° ${f.numero_comprobante || '—'}, ` +
+                    `CAE ${f.cae || '—'}). La Nota de Crédito tiene que ir en un item NUEVO ` +
+                    `— con el CAE de la factura a anular en la columna de referencia. ` +
+                    `Cada item corresponde a un solo comprobante.`
+                );
             }
 
             // ── 4. Idempotencia: no permitir doble NC sobre el mismo item ──────
