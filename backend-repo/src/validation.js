@@ -95,13 +95,19 @@ const REQUIRED_MAPPING_FIELDS = [
     'alicuota_iva',
 ];
 
-// Campos de mapeo OPCIONALES para Notas de Crédito. No se exigen nunca (un
-// cliente que solo emite facturas no necesita mapearlos), por eso quedan
-// fuera de REQUIRED_MAPPING_FIELDS. El schema `mapping` es un z.record abierto,
-// así que estas claves viajan solas; se listan acá solo como documentación:
+// Campos de mapeo OPCIONALES. No se exigen nunca (un cliente que solo emite
+// facturas con la config básica no necesita mapearlos), por eso quedan fuera de
+// REQUIRED_MAPPING_FIELDS. El schema `mapping` es un z.record abierto, así que
+// estas claves viajan solas; se listan acá solo como documentación:
 //   - tipo_comprobante    → columna que indica Factura / Nota de Crédito / ND.
-//   - factura_referencia  → columna de texto con el CAE de la factura a anular.
-const OPTIONAL_NC_MAPPING_FIELDS = ['tipo_comprobante', 'factura_referencia'];
+//   - factura_referencia  → columna con el CAE de la factura a anular (NC).
+//   - nro_factura         → write-back: N° del comprobante "PPPP-NNNNNNNN".
+//   - nro_comprobante     → write-back: solo el número del comprobante.
+//   - letra_comprobante   → write-back: la letra A / B / C.
+const OPTIONAL_NC_MAPPING_FIELDS = [
+    'tipo_comprobante', 'factura_referencia',
+    'nro_factura', 'nro_comprobante', 'letra_comprobante',
+];
 
 const MappingSchema = z.object({
     monday_account_id: z.union([z.string(), z.number()]).optional(),

@@ -5443,6 +5443,15 @@ async function comprobanteHandler(req, res) {
                 }).catch((e) => console.warn('[write-back] CAE fire-and-forget falló:', e.message));
             }
 
+            // Write-back de N° de comprobante / letra a columnas opcionales del
+            // item (si el board las mapeó). FIRE-AND-FORGET.
+            writeComprobanteColumns({
+                apiToken: mondayToken, boardId, itemId, mapping,
+                letra:      tipo,
+                puntoVenta: draft.punto_venta,
+                numero:     afipResult.numero_comprobante,
+            }).catch((e) => console.warn('[write-back] columnas comprobante fire-and-forget falló:', e.message));
+
             // Renombrar el item del cliente con el formato del comprobante emitido.
             // FIRE-AND-FORGET: la emisión ya fue exitosa, esto es solo cosmético.
             //
@@ -6014,9 +6023,16 @@ async function creditNoteHandler(req, res) {
                 }).catch((e) => console.warn('[nc] status success fire-and-forget falló:', e.message));
             }
 
+            // Write-back de N° de comprobante / letra a columnas opcionales del
+            // item de NC (si el board las mapeó). FIRE-AND-FORGET.
+            writeComprobanteColumns({
+                apiToken: mondayToken, boardId, itemId, mapping: ncMapping,
+                letra,
+                puntoVenta: ncDraft.punto_venta,
+                numero:     afipResult.numero_comprobante,
+            }).catch((e) => console.warn('[nc] write-back columnas comprobante falló:', e.message));
+
             // ── 10. Generar PDF ────────────────────────────────────────────────
-            // NOTA Fase 4: generateFacturaPdfBuffer todavía titula "FACTURA".
-            // La Fase 4 lo parametriza para que las NC digan "NOTA DE CRÉDITO".
             try {
                 pdfBuffer = await generateFacturaPdfBuffer({ company, draft: ncDraft, afipResult, itemId });
                 console.log(`[nc] PDF generado, ${pdfBuffer?.length || 0} bytes`);
@@ -6446,6 +6462,73 @@ async function writeMondayNumericColumn({ apiToken, boardId, itemId, columnId, v
         }
     } catch (err) {
         console.warn(`[write-numeric] excepción col=${columnId}:`, err.message);
+    }
+}
+
+// Escribe una etiqueta en una columna dropdown del item. create_labels_if_missing
+// crea la etiqueta si todavía no existe (ej: la letra "A"/"B"/"C"). Fire-and-forget.
+async function writeMondayDropdownColumn({ apiToken, boardId, itemId, columnId, label }) {
+    if (!apiToken || !boardId || !itemId || !columnId || !label) return;
+    try {
+        const mutation = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: String!) {
+            change_simple_column_value(
+                board_id: $boardId,
+                item_id: $itemId,
+                column_id: $columnId,
+                value: $value,
+                create_labels_if_missing: true
+            ) { id }
+        }`;
+        const res = await fetchWithRetry('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({
+                query: mutation,
+                variables: { boardId: String(boardId), itemId: String(itemId), columnId, value: String(label) },
+            }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'write-dropdown' });
+        const j = await res.json();
+        if (j?.errors?.length) {
+            console.warn(`[write-dropdown] errors col=${columnId}:`, JSON.stringify(j.errors).slice(0, 300));
+        } else {
+            console.log(`[write-dropdown] col=${columnId} item=${itemId} label=${label} OK`);
+        }
+    } catch (err) {
+        console.warn(`[write-dropdown] excepción col=${columnId}:`, err.message);
+    }
+}
+
+// Write-back de los datos del comprobante emitido a columnas OPCIONALES del item.
+// Si el board mapeó alguna de estas columnas, la app la completa al emitir
+// (factura o NC); si no están mapeadas, no hace nada. Fire-and-forget.
+//   - nro_factura       (texto)    → "PPPP-NNNNNNNN"  (ej: "0005-00000070")
+//   - nro_comprobante   (numérica) → solo el número   (ej: 70)
+//   - letra_comprobante (dropdown) → la letra A / B / C
+async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero }) {
+    if (!apiToken || !boardId || !itemId || !mapping) return;
+    const pv  = String(puntoVenta ?? '').replace(/\D/g, '');
+    const nro = String(numero ?? '').replace(/\D/g, '');
+
+    if (mapping.nro_factura && pv && nro) {
+        await writeMondayNumericColumn({
+            apiToken, boardId, itemId,
+            columnId: mapping.nro_factura,
+            value: `${pv.padStart(4, '0')}-${nro.padStart(8, '0')}`,
+        });
+    }
+    if (mapping.nro_comprobante && nro) {
+        await writeMondayNumericColumn({
+            apiToken, boardId, itemId,
+            columnId: mapping.nro_comprobante,
+            value: Number(nro),
+        });
+    }
+    if (mapping.letra_comprobante && letra) {
+        await writeMondayDropdownColumn({
+            apiToken, boardId, itemId,
+            columnId: mapping.letra_comprobante,
+            label: String(letra),
+        });
     }
 }
 
