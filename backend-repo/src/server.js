@@ -1690,6 +1690,35 @@ function getColumnTextById(columnValues, columnId) {
     return '';
 }
 
+// Extrae un CAE (14 dígitos) de una columna del item, funcione la columna como
+// numérica o como texto. Para columnas numéricas el `value` crudo es más
+// confiable que `text` (monday puede formatear el número en `text`). Devuelve
+// el string de 14 dígitos, o null si no se pudo extraer un CAE válido.
+function extractCaeFromColumn(columnValues, columnId) {
+    if (!columnId) return null;
+    const col = (columnValues || []).find((c) => c.id === columnId);
+    if (!col) return null;
+    let raw = '';
+    if (col.value) {
+        try {
+            const parsed = JSON.parse(col.value);
+            if (typeof parsed === 'number' && Number.isFinite(parsed)) {
+                raw = String(Math.trunc(parsed));        // columna numérica
+            } else if (typeof parsed === 'string') {
+                raw = parsed;                            // columna de texto
+            }
+        } catch (_) {
+            raw = String(col.value);
+        }
+    }
+    if (!raw) raw = col.text || col.display_value || '';
+    const digits = String(raw).replace(/\D/g, '');
+    // El CAE de AFIP son exactamente 14 dígitos. Si hay más (ej: pegaron
+    // "CAE 7512... vto 2026...") tomamos los primeros 14.
+    if (digits.length < 14) return null;
+    return digits.slice(0, 14);
+}
+
 // Procesa los subítems de un item de monday en líneas de comprobante + importes.
 // La lógica fiscal (validación de líneas, alícuota IVA única, cálculo de
 // neto/IVA/total) la usa hoy la Nota de Crédito parcial (/api/credit-notes/emit).
@@ -1722,16 +1751,25 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
         alicuota_iva:  mapping.alicuota_iva ? (getColumnTextById(sub.column_values, mapping.alicuota_iva) || '') : '',
         unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
     }));
-    const validLines = rawLines.filter((l) =>
-        l.concept && toNumberOrNull(l.quantity) !== null && toNumberOrNull(l.unit_price) !== null
-    );
+    // Una línea es válida si tiene concepto y cantidad/precio numéricos y > 0.
+    // (Un precio o cantidad en 0 o negativo daría un comprobante de importe 0 o
+    // negativo que AFIP rechaza con un error críptico — lo cortamos acá.)
+    const validLines = rawLines.filter((l) => {
+        const q = toNumberOrNull(l.quantity);
+        const p = toNumberOrNull(l.unit_price);
+        return l.concept && q !== null && q > 0 && p !== null && p > 0;
+    });
     if (validLines.length === 0) {
         const detalleStr = rawLines.map((l) => {
             const faltantes = [];
             if (!l.concept) faltantes.push('Concepto');
-            if (toNumberOrNull(l.quantity) === null) faltantes.push('Cantidad');
-            if (toNumberOrNull(l.unit_price) === null) faltantes.push('Precio Unitario');
-            return `• "${l.subitem_name}": falta ${faltantes.join(', ')}`;
+            const q = toNumberOrNull(l.quantity);
+            const p = toNumberOrNull(l.unit_price);
+            if (q === null) faltantes.push('Cantidad');
+            else if (q <= 0) faltantes.push('Cantidad (tiene que ser mayor a 0)');
+            if (p === null) faltantes.push('Precio Unitario');
+            else if (p <= 0) faltantes.push('Precio Unitario (tiene que ser mayor a 0)');
+            return `• "${l.subitem_name}": ${faltantes.join(', ')}`;
         }).join('\n');
         throw new Error(
             `No hay líneas válidas en los subítems.\n` +
@@ -5753,21 +5791,22 @@ async function creditNoteHandler(req, res) {
                     'para poder emitir Notas de Crédito.'
                 );
             }
-            const caeRefRaw = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
-            if (!caeRefRaw) {
+            // Lectura robusta del CAE: la columna puede ser numérica o de texto.
+            const caeRef = extractCaeFromColumn(ncItemColumns, ncMapping.factura_referencia);
+            if (!caeRef) {
+                // Distinguir "vacía" de "valor inválido" para un mensaje útil.
+                const rawShown = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
+                if (!rawShown) {
+                    throw new Error(
+                        'La columna del CAE de referencia está vacía. Pegá ahí el CAE ' +
+                        '(14 dígitos) de la factura que esta Nota de Crédito debe anular — lo ' +
+                        'encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.'
+                    );
+                }
                 throw new Error(
-                    'La columna de CAE de referencia está vacía. Cargá el CAE (14 dígitos) ' +
-                    'de la factura que esta Nota de Crédito debe anular.'
-                );
-            }
-            // El CAE de AFIP son 14 dígitos. Toleramos que el usuario pegue el
-            // comentario entero ("CAE: 7512... (vto. ...)") quedándonos con los
-            // primeros 14 dígitos.
-            const caeRef = caeRefRaw.replace(/\D/g, '').slice(0, 14);
-            if (caeRef.length !== 14) {
-                throw new Error(
-                    `El CAE de referencia "${caeRefRaw}" no es válido. El CAE de AFIP ` +
-                    `tiene 14 dígitos — copialo del PDF o del comentario de la factura.`
+                    `El CAE de referencia "${rawShown}" no es válido: el CAE de AFIP tiene ` +
+                    `14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). ` +
+                    `La columna puede ser numérica o de texto, las dos sirven.`
                 );
             }
             const byCae = await db.query(
@@ -7660,7 +7699,11 @@ async function reconcileSingleEmission(row) {
         cae: recovered.cae,
         cae_vencimiento: recovered.cae_vencimiento,
         numero_comprobante: recovered.cbte_nro,
-        tipo_comprobante: row.invoice_type,
+        // Letra (A/B/C) y tipo AFIP (1/6/11 factura, 3/8/13 NC). cbte_tipo_afip
+        // es lo que usa el PDF para titular "FACTURA" vs "NOTA DE CRÉDITO" — sin
+        // esto una NC recuperada por el cron saldría titulada "FACTURA".
+        tipo_comprobante: row.draft_json?.tipo_comprobante || row.invoice_type,
+        cbte_tipo_afip: row.attempted_cbte_tipo || null,
         imp_neto: recovered.imp_neto,
         imp_iva: recovered.imp_iva,
         observacion: null,
@@ -7693,6 +7736,11 @@ async function reconcileSingleEmission(row) {
         console.warn(`${tag} draft_json es NULL — CAE persistido pero PDF/monday no se actualizan automaticamente. El usuario puede re-disparar la receta para regenerar (Fase 1 reusara el CAE).`);
         return;
     }
+
+    // NC vs Factura — para el filename del PDF y el texto del comentario.
+    const esNC      = row.invoice_type === 'NC';
+    const docNombre = esNC ? 'Nota de Crédito' : 'Factura';
+    const letraDoc  = draft.tipo_comprobante || row.invoice_type;
 
     // 8. Generar PDF
     let pdfBuffer = null;
@@ -7730,7 +7778,7 @@ async function reconcileSingleEmission(row) {
                     apiToken: mondayToken, itemId: row.item_id,
                     fileColumnId: pdfColumnId,
                     pdfBuffer,
-                    filename: `Factura_${row.invoice_type}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                    filename: `${esNC ? 'Nota_Credito' : 'Factura'}_${letraDoc}_Nro_${pvPadded}-${nroPadded}.pdf`,
                 });
                 console.log(`${tag} PDF subido a monday`);
             } else {
@@ -7767,9 +7815,9 @@ async function reconcileSingleEmission(row) {
     try {
         const body =
             `<b>🛠 Recuperacion automatica</b><br/><br/>` +
-            `La emision anterior tuvo un timeout de red, pero la factura SI fue emitida correctamente en AFIP.<br/>` +
-            `El sistema la recupero automaticamente:<br/><br/>` +
-            `<b>Tipo:</b> Factura ${row.invoice_type}<br/>` +
+            `La emision anterior tuvo un timeout de red, pero el comprobante SI fue emitido correctamente en AFIP.<br/>` +
+            `El sistema lo recupero automaticamente:<br/><br/>` +
+            `<b>Tipo:</b> ${docNombre} ${letraDoc}<br/>` +
             `<b>Nº de comprobante:</b> ${recovered.cbte_nro}<br/>` +
             `<b>CAE:</b> ${recovered.cae}<br/>` +
             `<b>Vto CAE:</b> ${recovered.cae_vencimiento || '—'}<br/>` +
