@@ -5925,9 +5925,14 @@ async function creditNoteHandler(req, res) {
                 );
             }
             // La alícuota IVA de la NC tiene que coincidir con la de la factura
-            // (se acredita al mismo IVA que se facturó). Si la factura es vieja y
-            // no guardó la alícuota, se omite el chequeo.
-            const facturaAlicuota = facturaDraft.alicuota_iva_pct;
+            // (se acredita al mismo IVA que se facturó). Para facturas viejas que
+            // no guardaron alicuota_iva_pct, la derivamos del alicuota_iva_id
+            // (A8). Si tampoco hay id, se omite el chequeo.
+            const ALICUOTA_ID_TO_PCT = { 3: '0', 9: '2.5', 8: '5', 4: '10.5', 5: '21', 6: '27' };
+            let facturaAlicuota = facturaDraft.alicuota_iva_pct;
+            if (facturaAlicuota == null && facturaDraft.alicuota_iva_id != null) {
+                facturaAlicuota = ALICUOTA_ID_TO_PCT[facturaDraft.alicuota_iva_id] ?? null;
+            }
             if (facturaAlicuota != null && String(facturaAlicuota) !== String(ncLines.alicuotaElegida)) {
                 throw new Error(
                     `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
@@ -6006,7 +6011,13 @@ async function creditNoteHandler(req, res) {
             // reservadas en curso ('processing', excluyendo esta). Incluir las
             // 'processing' cierra la ventana de carrera entre dos NC parciales
             // concurrentes sobre la misma factura (A2).
-            const facturaTotal = Number(facturaDraft.importe_total) || 0;
+            // A7: facturas viejas pueden no tener importe_total en el draft → lo
+            // derivamos del afip_result_json (imp_neto + imp_iva) para no
+            // bloquear la NC con un saldo 0.
+            let facturaTotal = Number(facturaDraft.importe_total) || 0;
+            if (!facturaTotal) {
+                facturaTotal = (Number(facturaAfip.imp_neto) || 0) + (Number(facturaAfip.imp_iva) || 0);
+            }
             const acreditadoRes = await db.query(
                 `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
                  FROM invoice_emissions
@@ -6356,6 +6367,12 @@ function buildErrorComment(err) {
                   subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
                 : mainMsg,
             solucion: 'Todos los subitems de una factura deben tener la <b>misma alícuota IVA</b>. Revisá la columna Alícuota IVA % y asegurate de que todos los subitems tengan el mismo valor (0, 2.5, 5, 10.5, 21 o 27).',
+        },
+        {
+            match: /tipo de comprobante no reconocido/i,
+            title: 'Tipo de Comprobante no reconocido',
+            detail: mainMsg,
+            solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b> o <b>Nota de Crédito</b>. Corregí el valor y volvé a disparar la receta.',
         },
         {
             match: /nota de débito todavía no|notas de débito todavía no/i,
