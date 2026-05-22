@@ -5658,6 +5658,7 @@ async function creditNoteHandler(req, res) {
         // o "Error - Mirar Comentarios".
         let statusColumnId   = null;
         let autoUpdateStatus = true;
+        let autoRenameItem   = true;
 
         try {
             // ── 1. Token de Monday ─────────────────────────────────────────────
@@ -5694,13 +5695,15 @@ async function creditNoteHandler(req, res) {
             // queda en false y la app no toca la columna.
             try {
                 const cfgRes = await db.query(
-                    `SELECT status_column_id, auto_update_status FROM board_automation_configs
+                    `SELECT status_column_id, auto_update_status, auto_rename_item
+                     FROM board_automation_configs
                      WHERE company_id=$1 AND board_id=$2 LIMIT 1`,
                     [company.id, boardId]
                 );
                 if (cfgRes.rows[0]) {
                     statusColumnId   = cfgRes.rows[0].status_column_id || null;
                     autoUpdateStatus = cfgRes.rows[0].auto_update_status !== false;
+                    autoRenameItem   = cfgRes.rows[0].auto_rename_item !== false;
                 }
             } catch (cfgErr) {
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
@@ -6075,6 +6078,16 @@ async function creditNoteHandler(req, res) {
                 ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
+
+            // Renombrar el item con el formato del comprobante (si está activado
+            // "Renombrar el item" en el board config). FIRE-AND-FORGET: la NC ya
+            // se emitió, esto es solo cosmético.
+            if (autoRenameItem && afipResult?.numero_comprobante) {
+                renameMondayItem({
+                    apiToken: mondayToken, boardId, itemId,
+                    newName: `Nota de Crédito ${letra} N° ${pvLargo}-${nroLargo}`,
+                }).catch((e) => console.warn('[nc] rename fire-and-forget falló:', e.message));
+            }
 
             // Audit board de TAP (fire-and-forget) — la NC se registra como item
             // propio (clave :NC), separado del item de auditoría de la factura.
