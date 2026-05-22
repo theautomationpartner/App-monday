@@ -7667,6 +7667,100 @@ function scheduleReconciliationCron() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// Backfill del audit board — re-loguea emisiones exitosas que nunca llegaron
+// ─────────────────────────────────────────────────────────────────────────
+// logEmissionToAuditBoard() es fire-and-forget: si la API de Monday falla en
+// el momento de la emisión, la factura igual sale (CAE real) pero la fila del
+// board "Comp Emitidos" nunca se crea y nada la reintenta → el board subcuenta.
+// Este cron busca emisiones success que NO tienen fila en audit_log_items (la
+// tabla puente client_item → audit_item) y vuelve a loguearlas.
+//
+// Idempotente: logEmissionToAuditBoard dedupe por findAuditItemId. En staging
+// no escribe nada — logEmissionToAuditBoard skipea solo cuando APP_ENV=staging,
+// así que acá NO cortamos por APP_ENV (queremos que la query se ejerza igual).
+const AUDIT_BACKFILL_INTERVAL_MS   = 15 * 60 * 1000;  // cada 15 min
+const AUDIT_BACKFILL_BATCH_SIZE    = 25;
+const AUDIT_BACKFILL_MAX_AGE_DAYS  = 45;
+
+async function backfillAuditBoard() {
+    // Sin board o token no hay nada que hacer (ni siquiera vale la query).
+    if (!process.env.MONDAY_AUDIT_BOARD_ID || !process.env.DEV_MONDAY_TOKEN) {
+        return { found: 0, processed: 0 };
+    }
+
+    let rows;
+    try {
+        const result = await db.query(`
+            SELECT ie.id, ie.item_id, ie.invoice_type, ie.draft_json, ie.afip_result_json,
+                   c.id AS company_id, c.monday_account_id,
+                   c.business_name, c.cuit, c.workspace_id
+            FROM invoice_emissions ie
+            JOIN companies c ON c.id = ie.company_id
+            LEFT JOIN audit_log_items ali
+              ON ali.monday_account_id = c.monday_account_id
+             AND ali.client_item_id = ie.item_id
+                 || (CASE WHEN ie.invoice_type = 'NC' THEN ':NC' ELSE '' END)
+            WHERE ie.status = 'success'
+              AND ali.audit_item_id IS NULL
+              AND ie.created_at >= NOW() - INTERVAL '${AUDIT_BACKFILL_MAX_AGE_DAYS} days'
+            ORDER BY ie.created_at ASC
+            LIMIT $1
+        `, [AUDIT_BACKFILL_BATCH_SIZE]);
+        rows = result.rows;
+    } catch (err) {
+        console.error('[audit-backfill] error buscando emisiones sin loguear:', err.message);
+        return { found: 0, processed: 0 };
+    }
+
+    if (rows.length === 0) return { found: 0, processed: 0 };
+    console.log(`[audit-backfill] ${rows.length} emisión(es) exitosa(s) sin fila en el board — re-logueando…`);
+
+    let processed = 0;
+    for (const row of rows) {
+        try {
+            const draft       = row.draft_json || {};
+            const afipResult  = row.afip_result_json || {};
+            const esNotaCredito = row.invoice_type === 'NC';
+            const tipo = afipResult.tipo_comprobante || draft.tipo_comprobante || null;
+
+            // logEmissionToAuditBoard es idempotente (findAuditItemId): si por
+            // un race ya existiera la fila, hace UPDATE en vez de duplicar.
+            await logEmissionToAuditBoard({
+                accountId: String(row.monday_account_id),
+                success: true,
+                clientItemId: row.item_id,
+                sourceItemName: null,   // en éxito el nombre se arma del comprobante
+                draft,
+                afipResult,
+                tipo,
+                receptorRazonSocial: draft.receptor_nombre || null,
+                company: {
+                    id: row.company_id,
+                    business_name: row.business_name,
+                    cuit: row.cuit,
+                    workspace_id: row.workspace_id,
+                },
+                esNotaCredito,
+            });
+            processed++;
+            console.log(`[audit-backfill] emisión id=${row.id} re-logueada (${tipo || '?'} ${draft.punto_venta || '?'}-${afipResult.numero_comprobante || '?'})`);
+        } catch (err) {
+            console.error(`[audit-backfill] error re-logueando emisión id=${row.id}:`, err.message);
+        }
+    }
+    return { found: rows.length, processed };
+}
+
+function scheduleAuditBoardBackfill() {
+    setInterval(() => {
+        backfillAuditBoard().catch(err =>
+            console.error('[audit-backfill] error en corrida:', err.message)
+        );
+    }, AUDIT_BACKFILL_INTERVAL_MS);
+    console.log(`[audit-backfill] scheduled — corrida cada ${AUDIT_BACKFILL_INTERVAL_MS / 60000} min`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // Endpoint admin para disparar la auditoria nocturna a demanda (testing).
 // ─────────────────────────────────────────────────────────────────────────
 // Auth: header `x-admin-token` debe coincidir con DEV_MONDAY_TOKEN del env.
@@ -7723,6 +7817,46 @@ app.post('/api/admin/run-nightly-audit', async (req, res) => {
     }
 });
 
+// ─────────────────────────────────────────────────────────────────────────
+// Endpoint admin para disparar el backfill del audit board a demanda.
+// ─────────────────────────────────────────────────────────────────────────
+// Auth: header `x-admin-token` debe coincidir con DEV_MONDAY_TOKEN del env.
+// Re-loguea al board "Comp Emitidos" las emisiones exitosas que nunca
+// llegaron (fire-and-forget que falló). Procesa un batch; si quedan más,
+// el cron de los 15 min las toma — o se vuelve a llamar este endpoint.
+app.post('/api/admin/run-audit-backfill', async (req, res) => {
+    const adminToken = process.env.DEV_MONDAY_TOKEN;
+    const provided = req.headers['x-admin-token'];
+    if (!adminToken) {
+        return res.status(500).json({ error: 'DEV_MONDAY_TOKEN no configurado en el server' });
+    }
+    if (!provided || provided !== adminToken) {
+        return res.status(403).json({ error: 'forbidden' });
+    }
+
+    console.log('[admin] disparando backfillAuditBoard a demanda');
+    const startedAt = Date.now();
+    try {
+        const result = await backfillAuditBoard();
+        return res.status(200).json({
+            status: 'completed',
+            duration_ms: Date.now() - startedAt,
+            found: result.found,
+            processed: result.processed,
+            note: result.found > result.processed
+                ? 'Quedaron emisiones sin procesar (fallaron o superan el batch). Volvé a llamar el endpoint o esperá al cron.'
+                : 'Sin pendientes en este batch.',
+        });
+    } catch (err) {
+        console.error('[admin] backfillAuditBoard fallo:', err.message);
+        return res.status(500).json({
+            status: 'failed',
+            error: err.message,
+            duration_ms: Date.now() - startedAt,
+        });
+    }
+});
+
 // Arranca el servidor (local y monday code)
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
@@ -7771,6 +7905,16 @@ app.listen(PORT, async () => {
         reconcileStuckEmissions().catch(err =>
             console.error('[reconcile-cron startup] error:', err.message));
     }, 60000);
+
+    // Cron de backfill del audit board: cada 15 min re-loguea al board
+    // "Comp Emitidos" las emisiones exitosas cuyo log fire-and-forget falló.
+    // La corrida post-boot (90s) recupera lo que quedó colgado de antes.
+    scheduleAuditBoardBackfill();
+    setTimeout(() => {
+        console.log('[audit-backfill startup] disparando primera corrida post-boot');
+        backfillAuditBoard().catch(err =>
+            console.error('[audit-backfill startup] error:', err.message));
+    }, 90000);
 
     // Cron de auditoria nocturna (Fase 4): cada noche a las 3 AM Argentina
     // verifica todas las facturas exitosas contra AFIP via FECompConsultar.
