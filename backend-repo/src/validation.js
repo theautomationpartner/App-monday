@@ -104,9 +104,12 @@ const REQUIRED_MAPPING_FIELDS = [
 //   - nro_factura         → write-back: N° del comprobante "PPPP-NNNNNNNN".
 //   - nro_comprobante     → write-back: solo el número del comprobante.
 //   - letra_comprobante   → write-back: la letra A / B / C.
+//   - punto_venta         → columna donde el usuario elige el punto de venta a
+//                           facturar (por ítem). Sin mapear → usa el default.
 const OPTIONAL_NC_MAPPING_FIELDS = [
     'tipo_comprobante', 'factura_referencia',
     'nro_factura', 'nro_comprobante', 'letra_comprobante',
+    'punto_venta',
 ];
 
 const MappingSchema = z.object({

@@ -5154,10 +5154,30 @@ async function comprobanteHandler(req, res) {
             const importeIva   = Number((importeNeto * ivaRate).toFixed(2));
             const importeTotal = Number((importeNeto + importeIva).toFixed(2));
 
+            // Punto de venta: si el board mapeó la columna "Punto de Venta", sale
+            // de ahí (por ítem) — el usuario lo elige en cada factura. Si no está
+            // mapeada o está vacía, usa el default de la empresa (comportamiento
+            // histórico). El PV es solo un parámetro AFIP: el mismo certificado
+            // del CUIT sirve para todos los PV.
+            let ptoVentaItem = company.default_point_of_sale;
+            if (mapping.punto_venta) {
+                const pvRaw = (getColumnTextById(mainColumns, mapping.punto_venta) || '').trim();
+                if (pvRaw) {
+                    const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
+                    if (!pvNum || pvNum <= 0) {
+                        throw new Error(
+                            `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
+                            `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
+                        );
+                    }
+                    ptoVentaItem = pvNum;
+                }
+            }
+
             const draft = {
                 tipo_comprobante:    tipo,
                 cuit_emisor:         company.cuit,
-                punto_venta:         company.default_point_of_sale,
+                punto_venta:         ptoVentaItem,
                 fecha_emision:       fechaEmision,
                 receptor_cuit_o_dni: receptorInfo.cuitUsado || receptorCuitRaw,
                 receptor_nombre:     receptorInfo.nombre || receptorNombre,
@@ -5255,7 +5275,7 @@ async function comprobanteHandler(req, res) {
                 return afipIssueFactura({
                     token: tokenData.token, sign: tokenData.sign,
                     cuit:        company.cuit,
-                    pointOfSale: company.default_point_of_sale,
+                    pointOfSale: ptoVentaItem,
                     draft,
                     invoiceType: tipo,
                     previousCbteNro,
@@ -6103,7 +6123,9 @@ async function creditNoteHandler(req, res) {
                 return afipIssueFactura({
                     token: tokenData.token, sign: tokenData.sign,
                     cuit:        company.cuit,
-                    pointOfSale: company.default_point_of_sale,
+                    // La NC se emite desde el MISMO punto de venta que la factura
+                    // que anula (coherencia de numeración), no el default.
+                    pointOfSale: facturaPtoVta,
                     draft:       ncDraft,
                     invoiceType: letra,
                     previousCbteNro,

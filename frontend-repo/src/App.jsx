@@ -121,6 +121,7 @@ const TEMPLATE_NC_MAPPING = {
   nro_factura:        "text_mm3k5zh4",
   nro_comprobante:    "numeric_mm3kg6ph",
   letra_comprobante:  "dropdown_mm3kzmy5",
+  punto_venta:        "dropdown_mm3skjcc",
 };
 // Column IDs de la plantilla que no son de mapeo visual pero sí de config
 const TEMPLATE_STATUS_COLUMN_ID = "status";
@@ -3346,7 +3347,7 @@ const App = () => {
                   </div>
                 </div>
               </div>
-              <div className="rf-invoice-client">
+              <div className="rf-invoice-client cols-3">
                 <div>
                   <div className="rf-invoice-client-label">Tipo de Comprobante</div>
                   {mapSel("tipo_comprobante", "Opcional")}
@@ -3354,6 +3355,10 @@ const App = () => {
                 <div>
                   <div className="rf-invoice-client-label">CAE de la factura a anular</div>
                   {mapSel("factura_referencia", "Opcional")}
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">Punto de Venta</div>
+                  {mapSel("punto_venta", "Opcional")}
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
