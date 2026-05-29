@@ -5920,6 +5920,27 @@ async function creditNoteHandler(req, res) {
                 throw new Error(`No se pudo determinar la letra de la factura original (tipo='${letra}').`);
             }
 
+            // El usuario NO elige el punto de venta de la NC: se emite SIEMPRE desde
+            // el mismo PV que la factura que anula (coherencia de numeración). Si el
+            // board mapeó la columna "Punto de Venta" y el usuario cargó un valor que
+            // NO coincide con el de la factura, cortamos con un error claro — así no
+            // cree que la NC sale del PV que eligió cuando en realidad sale del de la
+            // factura. Va antes del status/claim (igual que el resto de validaciones).
+            if (ncMapping.punto_venta) {
+                const pvSelRaw = (getColumnTextById(ncItemColumns, ncMapping.punto_venta) || '').trim();
+                if (pvSelRaw) {
+                    const pvSel = parseInt(pvSelRaw.replace(/\D/g, ''), 10);
+                    if (pvSel && pvSel !== Number(facturaPtoVta)) {
+                        throw new Error(
+                            `Seleccionaste el Punto de Venta ${pvSel}, pero esta Nota de Crédito anula la ` +
+                            `Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
+                            `que es del Punto de Venta ${facturaPtoVta}. La NC se emite desde el MISMO punto de venta que ` +
+                            `la factura — cambiá el Punto de Venta a ${facturaPtoVta} o dejá esa columna vacía.`
+                        );
+                    }
+                }
+            }
+
             // Un item = un solo comprobante. Si ESTE item de NC ya emitió una
             // factura, está mal usado: la NC va en un item NUEVO, separado de la
             // factura. Cortamos acá — antes de tocar el status — así no queda el
