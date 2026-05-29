@@ -4729,19 +4729,18 @@ async function comprobanteHandler(req, res) {
                     // como lista de columnas faltantes con el nombre real.
                     throw new Error(
                         'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
-                        `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura o Nota de Crédito`
+                        `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura, Nota de Crédito o Nota de Débito`
                     );
                 }
                 if (/cr[eé]dito/i.test(tipoComp)) {
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Crédito`);
-                    await creditNoteHandler(req, res);
+                    await emitNotaHandler(req, res, 'NC');
                     return;
                 }
                 if (/d[eé]bito/i.test(tipoComp)) {
-                    throw new Error(
-                        `El item está marcado como "${tipoComp}". La emisión de Notas de Débito ` +
-                        `todavía no está disponible.`
-                    );
+                    console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Débito`);
+                    await emitNotaHandler(req, res, 'ND');
+                    return;
                 }
                 if (!/factura/i.test(tipoComp)) {
                     throw new Error(
@@ -4753,19 +4752,20 @@ async function comprobanteHandler(req, res) {
             }
 
             // Un item = un solo comprobante. Si este item ya emitió una Nota de
-            // Crédito, no se puede emitir una factura encima — va en un item
-            // nuevo. (El control simétrico — NC sobre item con factura — está en
-            // creditNoteHandler.) Cortamos antes de tocar el status.
+            // Crédito o de Débito, no se puede emitir una factura encima — va en un
+            // item nuevo. (El control simétrico — NC/ND sobre item con factura —
+            // está en emitNotaHandler.) Cortamos antes de tocar el status.
             const ncEnEsteItem = await db.query(
-                `SELECT afip_result_json FROM invoice_emissions
+                `SELECT afip_result_json, invoice_type FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                   AND invoice_type='NC' AND status='success' LIMIT 1`,
+                   AND invoice_type IN ('NC','ND') AND status='success' LIMIT 1`,
                 [company.id, boardId, itemId]
             );
             if (ncEnEsteItem.rows[0]) {
                 const n = ncEnEsteItem.rows[0].afip_result_json || {};
+                const docPrevio = ncEnEsteItem.rows[0].invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito';
                 throw new Error(
-                    `Este item ya emitió una Nota de Crédito (N° ${n.numero_comprobante || '—'}, ` +
+                    `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
                     `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
                     `cada item corresponde a un solo comprobante. Creá un item nuevo.`
                 );
@@ -5726,7 +5726,12 @@ function deepFindValue(obj, keyNames, depth = 0) {
 // "Crear Comprobante" recibe un item marcado como Nota de Crédito. Cuando lo
 // llama el router, `res` ya respondió 200 → los `res` van guardados con
 // `!res.headersSent`.
-async function creditNoteHandler(req, res) {
+async function emitNotaHandler(req, res, clase = 'NC') {
+    if (clase !== 'NC' && clase !== 'ND') clase = 'NC';
+    const esND      = clase === 'ND';
+    const docLabel  = esND ? 'Nota de Débito' : 'Nota de Crédito';
+    const docAbbr   = esND ? 'ND' : 'NC';
+    const tipoRegex = esND ? /d[eé]bito/i : /cr[eé]dito/i;
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
     const inputFields   = payload?.inputFields || {};
@@ -5860,10 +5865,10 @@ async function creditNoteHandler(req, res) {
             // valida (la receta es el disparador real; esto es control secundario).
             if (ncMapping.tipo_comprobante) {
                 const tipoCompRaw = (getColumnTextById(ncItemColumns, ncMapping.tipo_comprobante) || '').trim();
-                if (tipoCompRaw && !/cr[eé]dito/i.test(tipoCompRaw)) {
+                if (tipoCompRaw && !tipoRegex.test(tipoCompRaw)) {
                     throw new Error(
                         `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                        `no como Nota de Crédito. Verificá que estés disparando la receta sobre el item correcto.`
+                        `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
                     );
                 }
             }
@@ -5902,7 +5907,7 @@ async function creditNoteHandler(req, res) {
                  FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2
                    AND afip_result_json->>'cae'=$3
-                   AND invoice_type <> 'NC' AND status='success'
+                   AND invoice_type NOT IN ('NC','ND') AND status='success'
                  ORDER BY updated_at DESC LIMIT 1`,
                 [company.id, boardId, caeRef]
             );
@@ -5964,14 +5969,14 @@ async function creditNoteHandler(req, res) {
             const facturaEnEsteItem = await db.query(
                 `SELECT afip_result_json FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                   AND invoice_type <> 'NC' AND status='success' LIMIT 1`,
+                   AND invoice_type <> '${clase}' AND status='success' LIMIT 1`,
                 [company.id, boardId, itemId]
             );
             if (facturaEnEsteItem.rows[0]) {
                 const f = facturaEnEsteItem.rows[0].afip_result_json || {};
                 throw new Error(
-                    `Este item ya emitió una factura (N° ${f.numero_comprobante || '—'}, ` +
-                    `CAE ${f.cae || '—'}). La Nota de Crédito tiene que ir en un item NUEVO ` +
+                    `Este item ya emitió un comprobante (N° ${f.numero_comprobante || '—'}, ` +
+                    `CAE ${f.cae || '—'}). La ${docLabel} tiene que ir en un item NUEVO ` +
                     `— con el CAE de la factura a anular en la columna de referencia. ` +
                     `Cada item corresponde a un solo comprobante.`
                 );
@@ -5981,14 +5986,14 @@ async function creditNoteHandler(req, res) {
             const existingNc = await db.query(
                 `SELECT id, status, afip_result_json, attempted_cbte_nro
                  FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC' LIMIT 1`,
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}' LIMIT 1`,
                 [company.id, boardId, itemId]
             );
             if (existingNc.rows[0]?.status === 'success') {
                 const prev = existingNc.rows[0].afip_result_json || {};
                 throw new Error(
-                    `Ya se emitió una Nota de Crédito para este item ` +
-                    `(NC ${letra}, Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
+                    `Ya se emitió una ${docLabel} para este item ` +
+                    `(${docAbbr} ${letra}, Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
                 );
             }
             // Recovery Fase 1: si quedó un intento previo con cbteNro reservado
@@ -6037,24 +6042,28 @@ async function creditNoteHandler(req, res) {
             // Comprobante C no lleva IVA: la NC C tampoco.
             if (letra === 'C' && ncLines.alicuotaElegida !== '0') {
                 throw new Error(
-                    'La Nota de Crédito C no lleva IVA. Poné la alícuota IVA de los subítems en 0%.'
+                    `La ${docLabel} C no lleva IVA. Poné la alícuota IVA de los subítems en 0%.`
                 );
             }
             // La alícuota IVA de la NC tiene que coincidir con la de la factura
             // (se acredita al mismo IVA que se facturó). Para facturas viejas que
             // no guardaron alicuota_iva_pct, la derivamos del alicuota_iva_id
             // (A8). Si tampoco hay id, se omite el chequeo.
-            const ALICUOTA_ID_TO_PCT = { 3: '0', 9: '2.5', 8: '5', 4: '10.5', 5: '21', 6: '27' };
-            let facturaAlicuota = facturaDraft.alicuota_iva_pct;
-            if (facturaAlicuota == null && facturaDraft.alicuota_iva_id != null) {
-                facturaAlicuota = ALICUOTA_ID_TO_PCT[facturaDraft.alicuota_iva_id] ?? null;
-            }
-            if (facturaAlicuota != null && String(facturaAlicuota) !== String(ncLines.alicuotaElegida)) {
-                throw new Error(
-                    `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
-                    `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
-                    `alícuota IVA que la factura que anula.`
-                );
+            // La ND NO exige coincidir con la alícuota de la factura: AFIP permite
+            // emitir una Nota de Débito con cualquier alícuota.
+            if (!esND) {
+                const ALICUOTA_ID_TO_PCT = { 3: '0', 9: '2.5', 8: '5', 4: '10.5', 5: '21', 6: '27' };
+                let facturaAlicuota = facturaDraft.alicuota_iva_pct;
+                if (facturaAlicuota == null && facturaDraft.alicuota_iva_id != null) {
+                    facturaAlicuota = ALICUOTA_ID_TO_PCT[facturaDraft.alicuota_iva_id] ?? null;
+                }
+                if (facturaAlicuota != null && String(facturaAlicuota) !== String(ncLines.alicuotaElegida)) {
+                    throw new Error(
+                        `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
+                        `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
+                        `alícuota IVA que la factura que anula.`
+                    );
+                }
             }
 
             // Observaciones PROPIAS del item de NC: NO se heredan de la factura.
@@ -6137,7 +6146,7 @@ async function creditNoteHandler(req, res) {
                 `INSERT INTO invoice_emissions
                     (company_id, board_id, item_id, invoice_type, status, request_json,
                      draft_json, related_emission_id)
-                 VALUES ($1,$2,$3,'NC','processing',$4,$5,$6)
+                 VALUES ($1,$2,$3,'${clase}','processing',$4,$5,$6)
                  ON CONFLICT (company_id, board_id, item_id, invoice_type)
                  DO UPDATE SET status='processing', error_message=NULL,
                                request_json=$4, draft_json=$5, related_emission_id=$6,
@@ -6165,37 +6174,42 @@ async function creditNoteHandler(req, res) {
             // A7: facturas viejas pueden no tener importe_total en el draft → lo
             // derivamos del afip_result_json (imp_neto + imp_iva) para no
             // bloquear la NC con un saldo 0.
-            let facturaTotal = Number(facturaDraft.importe_total) || 0;
-            if (!facturaTotal) {
-                facturaTotal = (Number(facturaAfip.imp_neto) || 0) + (Number(facturaAfip.imp_iva) || 0);
-            }
-            const acreditadoRes = await db.query(
-                `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
-                 FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND invoice_type='NC'
-                   AND status IN ('success','processing')
-                   AND related_emission_id=$3 AND item_id <> $4`,
-                [company.id, boardId, factura.id, itemId]
-            );
-            const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
-            const saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
-            if (ncLines.importeTotal > saldo + 0.01) {
-                // Liberar la reserva: esta NC no se emite, no debe contar al saldo.
-                await db.query(
-                    `UPDATE invoice_emissions SET status='error',
-                         error_message='NC supera el saldo de la factura',
-                         updated_at=CURRENT_TIMESTAMP
-                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
-                    [company.id, boardId, itemId]
-                ).catch(() => {});
-                throw new Error(
-                    `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
-                    `disponible de la factura.\n` +
-                    `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
-                    `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+            // La ND NO tiene tope de saldo: AFIP no la limita (la ND suma deuda),
+            // así que el control entero se saltea para ND y `saldo` queda en null.
+            let saldo = null;
+            if (!esND) {
+                let facturaTotal = Number(facturaDraft.importe_total) || 0;
+                if (!facturaTotal) {
+                    facturaTotal = (Number(facturaAfip.imp_neto) || 0) + (Number(facturaAfip.imp_iva) || 0);
+                }
+                const acreditadoRes = await db.query(
+                    `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
+                     FROM invoice_emissions
+                     WHERE company_id=$1 AND board_id=$2 AND invoice_type='${clase}'
+                       AND status IN ('success','processing')
+                       AND related_emission_id=$3 AND item_id <> $4`,
+                    [company.id, boardId, factura.id, itemId]
                 );
+                const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
+                saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
+                if (ncLines.importeTotal > saldo + 0.01) {
+                    // Liberar la reserva: esta NC no se emite, no debe contar al saldo.
+                    await db.query(
+                        `UPDATE invoice_emissions SET status='error',
+                             error_message='NC supera el saldo de la factura',
+                             updated_at=CURRENT_TIMESTAMP
+                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
+                        [company.id, boardId, itemId]
+                    ).catch(() => {});
+                    throw new Error(
+                        `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
+                        `disponible de la factura.\n` +
+                        `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
+                        `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+                    );
+                }
+                console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado/en curso=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
             }
-            console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado/en curso=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
 
             // Status del item → "Creando Comprobante" (fire-and-forget).
             if (autoUpdateStatus && statusColumnId) {
@@ -6220,6 +6234,7 @@ async function creditNoteHandler(req, res) {
                     pointOfSale: facturaPtoVta,
                     draft:       ncDraft,
                     invoiceType: letra,
+                    comprobanteClass: clase,
                     previousCbteNro,
                     monId:    ncDraft.moneda || 'PES',
                     monCotiz: ncDraft.cotizacion || 1.0,
@@ -6229,7 +6244,7 @@ async function creditNoteHandler(req, res) {
                             `UPDATE invoice_emissions
                              SET attempted_cbte_tipo=$4, attempted_pto_vta=$5,
                                  attempted_cbte_nro=$6, updated_at=CURRENT_TIMESTAMP
-                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
                             [company.id, boardId, itemId, cbteType, pv, cbteNro]
                         );
                     },
@@ -6257,7 +6272,7 @@ async function creditNoteHandler(req, res) {
                 `UPDATE invoice_emissions
                  SET status='success', draft_json=$4, afip_result_json=$5,
                      moneda=$6, cotizacion=$7, updated_at=CURRENT_TIMESTAMP
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
                 [company.id, boardId, itemId,
                  JSON.stringify(ncDraft), JSON.stringify(afipResult),
                  ncDraft.moneda || 'PES', ncDraft.cotizacion || 1.0]
@@ -6314,7 +6329,7 @@ async function creditNoteHandler(req, res) {
                             apiToken: mondayToken, itemId,
                             fileColumnId: pdfColumnId,
                             pdfBuffer,
-                            filename: `Nota_Credito_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                            filename: `${esND ? 'Nota_Debito' : 'Nota_Credito'}_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
                         });
                         console.log('[nc] PDF de la NC subido a Monday');
                     } else {
@@ -6329,13 +6344,20 @@ async function creditNoteHandler(req, res) {
             const pvLargo  = String(ncDraft?.punto_venta || '').padStart(4, '0');
             const nroLargo = String(afipResult?.numero_comprobante || '').padStart(8, '0');
             const facturaNroLargo = String(facturaCbteNro).padStart(8, '0');
-            const saldoRestante = Number((saldo - ncLines.importeTotal).toFixed(2));
-            const okBody = `✅ <b>Nota de Crédito emitida</b><br/><br/>` +
-                `Comprobante: <b>NC ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
-                `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>` +
-                `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
-                `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
-                ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
+            let okBody = `✅ <b>${docLabel} emitida</b><br/><br/>` +
+                `Comprobante: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
+                `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>`;
+            if (esND) {
+                okBody +=
+                    `Importe: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                    `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
+            } else {
+                const saldoRestante = Number((saldo - ncLines.importeTotal).toFixed(2));
+                okBody +=
+                    `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                    `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
+                    ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
+            }
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
 
@@ -6345,7 +6367,7 @@ async function creditNoteHandler(req, res) {
             if (autoRenameItem && afipResult?.numero_comprobante) {
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
-                    newName: `Nota de Crédito ${letra} N° ${pvLargo}-${nroLargo}`,
+                    newName: `${docLabel} ${letra} N° ${pvLargo}-${nroLargo}`,
                 }).catch((e) => console.warn('[nc] rename fire-and-forget falló:', e.message));
             }
 
@@ -6362,12 +6384,13 @@ async function creditNoteHandler(req, res) {
                 durationMs: Date.now() - tStart,
                 receptorRazonSocial: ncDraft.receptor_nombre || null,
                 company,
-                esNotaCredito: true,
+                esNotaCredito: !esND,
+                esNotaDebito: esND,
             }).catch((e) => console.warn('[nc] audit-log fire-and-forget falló:', e.message));
 
             if (callbackUrl) {
                 notifyCallback(callbackUrl, actionUuid, true, null, {
-                    invoiceType: `NC ${letra}`,
+                    invoiceType: `${docAbbr} ${letra}`,
                     cae:    afipResult.cae,
                     numero: afipResult.numero_comprobante,
                 }).catch((e) => console.warn('[nc] callback fire-and-forget falló:', e.message));
@@ -6399,7 +6422,7 @@ async function creditNoteHandler(req, res) {
                 if (company && boardId) {
                     await db.query(
                         `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
-                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='NC'`,
+                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
                         [company.id, boardId, itemId, err.message]
                     );
                 }
@@ -6414,7 +6437,8 @@ async function creditNoteHandler(req, res) {
                     error: err,
                     durationMs: Date.now() - tStart,
                     company: company || null,
-                    esNotaCredito: true,
+                    esNotaCredito: !esND,
+                    esNotaDebito: esND,
                 }).catch((e) => console.warn('[nc] audit-log error fire-and-forget falló:', e.message));
             } catch (_) {}
 
@@ -6422,7 +6446,8 @@ async function creditNoteHandler(req, res) {
         }
     });
 }
-app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, creditNoteHandler);
+app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, (req, res) => emitNotaHandler(req, res, 'NC'));
+app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, (req, res) => emitNotaHandler(req, res, 'ND'));
 
 // ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
 function buildErrorComment(err) {
@@ -6550,13 +6575,7 @@ function buildErrorComment(err) {
             match: /tipo de comprobante no reconocido/i,
             title: 'Tipo de Comprobante no reconocido',
             detail: mainMsg,
-            solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b> o <b>Nota de Crédito</b>. Corregí el valor y volvé a disparar la receta.',
-        },
-        {
-            match: /nota de débito todavía no|notas de débito todavía no/i,
-            title: 'Nota de Débito no disponible',
-            detail: mainMsg,
-            solucion: 'Por ahora la app emite <b>Facturas</b> y <b>Notas de Crédito</b>. La Nota de Débito se va a habilitar más adelante.',
+            solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Corregí el valor y volvé a disparar la receta.',
         },
         {
             // Errores de la columna del CAE de referencia (Nota de Crédito).
@@ -7053,7 +7072,7 @@ async function notifySlackSystemError({ accountId, clientItemName, errorMessage,
 // Cobertura ante fallas: si es Error sistema, se dispara Slack EN PARALELO con
 // el create/update del audit item. Así, aunque Monday API esté caída, igual
 // llega la alerta a Slack.
-async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company, esNotaCredito = false }) {
+async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company, esNotaCredito = false, esNotaDebito = false }) {
     // Staging TAMBIÉN registra en "Comp Emitidos": como staging emite con
     // AFIP_ENV=production, sus comprobantes son reales (CAE real) y tienen que
     // quedar registrados igual que los de prod. (Staging y prod comparten el
@@ -7086,7 +7105,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         cv[AUDIT_COLS.estado]        = { label: success ? AUDIT_ESTADO.ok : classifyAuditError(error) };
         if (leadItemId)                              cv[AUDIT_COLS.instalacion]     = { item_ids: [Number(leadItemId)] };
         // Tipo de comprobante (Factura / Nota de Crédito) — siempre, incluso en error.
-        cv[AUDIT_COLS.tipo_comprobante] = { labels: [esNotaCredito ? 'Nota de Crédito' : 'Factura'] };
+        cv[AUDIT_COLS.tipo_comprobante] = { labels: [esNotaDebito ? 'Nota de Débito' : esNotaCredito ? 'Nota de Crédito' : 'Factura'] };
         // Letra del comprobante (A / B / C).
         if (tipo)                                    cv[AUDIT_COLS.tipo] = { labels: [String(tipo)] };
         // Moneda — si hay draft. Sin moneda explícita se asume Pesos.
@@ -7121,7 +7140,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         // Nombre final del audit item:
         // - éxito  → "Factura C N° 0005-00000048" (formato de comprobante)
         // - error  → nombre original del item del cliente, para que sepas qué factura falló
-        const docLabel = esNotaCredito ? 'Nota de Crédito' : 'Factura';
+        const docLabel = esNotaDebito ? 'Nota de Débito' : esNotaCredito ? 'Nota de Crédito' : 'Factura';
         const successName = success && afipResult?.numero_comprobante
             ? `${docLabel} ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim()
             : null;
@@ -7132,7 +7151,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         // Idempotencia: ¿ya existe un audit item para este client_item_id?
         // La NC usa una clave distinta (sufijo :NC) para NO colisionar con el
         // item de auditoría de su factura → cada comprobante tiene su fila propia.
-        const auditKey = esNotaCredito ? `${clientItemId}:NC` : clientItemId;
+        const auditKey = esNotaDebito ? `${clientItemId}:ND` : esNotaCredito ? `${clientItemId}:NC` : clientItemId;
         const existingAuditItemId = await findAuditItemId(accountId, auditKey);
 
         // Disparar Slack ya con la info que tenemos (incluye link si ya existía el item).
@@ -8001,9 +8020,10 @@ async function reconcileSingleEmission(row) {
         return;
     }
 
-    // NC vs Factura — para el filename del PDF y el texto del comentario.
+    // NC / ND / Factura — para el filename del PDF y el texto del comentario.
     const esNC      = row.invoice_type === 'NC';
-    const docNombre = esNC ? 'Nota de Crédito' : 'Factura';
+    const esND      = row.invoice_type === 'ND';
+    const docNombre = esND ? 'Nota de Débito' : esNC ? 'Nota de Crédito' : 'Factura';
     const letraDoc  = draft.tipo_comprobante || row.invoice_type;
 
     // 8. Generar PDF
@@ -8042,7 +8062,7 @@ async function reconcileSingleEmission(row) {
                     apiToken: mondayToken, itemId: row.item_id,
                     fileColumnId: pdfColumnId,
                     pdfBuffer,
-                    filename: `${esNC ? 'Nota_Credito' : 'Factura'}_${letraDoc}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                    filename: `${esND ? 'Nota_Debito' : esNC ? 'Nota_Credito' : 'Factura'}_${letraDoc}_Nro_${pvPadded}-${nroPadded}.pdf`,
                 });
                 console.log(`${tag} PDF subido a monday`);
             } else {
@@ -8201,7 +8221,9 @@ async function backfillAuditBoard() {
             LEFT JOIN audit_log_items ali
               ON ali.monday_account_id = c.monday_account_id
              AND ali.client_item_id = ie.item_id
-                 || (CASE WHEN ie.invoice_type = 'NC' THEN ':NC' ELSE '' END)
+                 || (CASE WHEN ie.invoice_type = 'NC' THEN ':NC'
+                          WHEN ie.invoice_type = 'ND' THEN ':ND'
+                          ELSE '' END)
             WHERE ie.status = 'success'
               AND ali.audit_item_id IS NULL
               AND ie.created_at >= NOW() - INTERVAL '${AUDIT_BACKFILL_MAX_AGE_DAYS} days'
@@ -8223,6 +8245,7 @@ async function backfillAuditBoard() {
             const draft       = row.draft_json || {};
             const afipResult  = row.afip_result_json || {};
             const esNotaCredito = row.invoice_type === 'NC';
+            const esNotaDebito  = row.invoice_type === 'ND';
             const tipo = afipResult.tipo_comprobante || draft.tipo_comprobante || null;
 
             // logEmissionToAuditBoard es idempotente (findAuditItemId): si por
@@ -8243,6 +8266,7 @@ async function backfillAuditBoard() {
                     workspace_id: row.workspace_id,
                 },
                 esNotaCredito,
+                esNotaDebito,
             });
             processed++;
             console.log(`[audit-backfill] emisión id=${row.id} re-logueada (${tipo || '?'} ${draft.punto_venta || '?'}-${afipResult.numero_comprobante || '?'})`);

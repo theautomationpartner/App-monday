@@ -280,6 +280,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 ?? TIPO_CBTE_NUM[tipoLetra]
                 ?? 11;
             const isNotaCredito = [3, 8, 13].includes(Number(cbteTipoNum));
+            const isNotaDebito  = [2, 7, 12].includes(Number(cbteTipoNum));
             const tipoCod = String(cbteTipoNum).padStart(2, '0');
             const isFacturaA = tipoLetra === 'A';
             // PASO 3 USD — moneda + simbolo a usar en este PDF. Defaults a PES
@@ -393,7 +394,9 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const rx = centerX + centerW;
             const rightColW = colRight - rx - 8;
             const facturaFontSize = 16;
-            const tituloComprobante = isNotaCredito ? 'NOTA DE CRÉDITO' : 'FACTURA';
+            const tituloComprobante = isNotaCredito ? 'NOTA DE CRÉDITO'
+                : isNotaDebito ? 'NOTA DE DÉBITO'
+                : 'FACTURA';
             doc.fontSize(facturaFontSize).font('Helvetica-Bold')
                .text(tituloComprobante, rx, bannerCenterY - facturaFontSize / 2,
                      { width: rightColW, align: 'center', lineBreak: false });
