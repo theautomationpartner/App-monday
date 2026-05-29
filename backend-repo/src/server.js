@@ -6009,10 +6009,22 @@ async function creditNoteHandler(req, res) {
                 );
             }
 
+            // Observaciones PROPIAS del item de NC: NO se heredan de la factura.
+            // Mismo patrón que la factura (columna mapeada opcional, trim, máx 255).
+            const ncObservacionesRaw = ncMapping.observaciones
+                ? (getColumnTextById(ncItemColumns, ncMapping.observaciones) || '')
+                : '';
+            let ncObservaciones = (ncObservacionesRaw || '').trim();
+            if (ncObservaciones.length > 255) {
+                console.warn(`[nc] observaciones truncadas a 255 chars (original ${ncObservaciones.length})`);
+                ncObservaciones = ncObservaciones.slice(0, 255);
+            }
+
             // ── 6. Armar el draft de la NC ─────────────────────────────────────
             // Encabezado heredado de la factura (receptor, moneda, cotización,
             // condición de venta, concepto, fechas de servicio). Líneas e
             // importes propios de la NC (lo que se acredita). Fecha = hoy.
+            // La observación es propia del item de NC (pisa la heredada por spread).
             const ncDraft = {
                 ...facturaDraft,
                 fecha_emision:    new Date().toISOString().slice(0, 10),
@@ -6022,6 +6034,7 @@ async function creditNoteHandler(req, res) {
                 importe_total:    ncLines.importeTotal,
                 alicuota_iva_id:  ncLines.alicuotaConfig.id,
                 alicuota_iva_pct: ncLines.alicuotaElegida,
+                observaciones:    ncObservaciones || null,
                 // Datos de la factura que esta NC anula — el PDF los muestra en
                 // el bloque "Comprobante Asociado".
                 comprobante_asociado: {
