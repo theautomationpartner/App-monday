@@ -6925,8 +6925,9 @@ function toMondayDate(s) {
 // del equipo de TAP — bugs, infra, casos no clasificables).
 // FIRE-AND-FORGET: nunca tira excepción. Tiene reintentos.
 async function notifySlackSystemError({ accountId, clientItemName, errorMessage, auditItemId }) {
-    // Staging usa los mismos secrets pero los errores ahi son ruido para TAP
-    // (datos de prueba, no clientes reales). Mismo patron que logEmissionToAuditBoard.
+    // Las alertas de Slack son SOLO para prod: los errores en staging son ruido
+    // para el equipo de TAP. (A diferencia del audit board, que SÍ registra
+    // staging — logEmissionToAuditBoard ya no skipea por APP_ENV.)
     if (process.env.APP_ENV === 'staging') {
         console.log('[slack] APP_ENV=staging — skip alerta a Slack (canal solo para prod)');
         return;
@@ -6981,14 +6982,12 @@ async function notifySlackSystemError({ accountId, clientItemName, errorMessage,
 // el create/update del audit item. Así, aunque Monday API esté caída, igual
 // llega la alerta a Slack.
 async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourceItemName, draft, afipResult, tipo, error, durationMs, receptorRazonSocial, company, esNotaCredito = false }) {
-    // Skip si estamos en staging — el audit board y las alertas de Slack
-    // son solo para clientes reales en produccion. Las pruebas que hagamos
-    // en staging no contaminan ese board (ni disparan alertas falsas).
-    if (process.env.APP_ENV === 'staging') {
-        console.log('[audit-log] APP_ENV=staging — skip log al audit board (board solo para prod)');
-        return;
-    }
-
+    // Staging TAMBIÉN registra en "Comp Emitidos": como staging emite con
+    // AFIP_ENV=production, sus comprobantes son reales (CAE real) y tienen que
+    // quedar registrados igual que los de prod. (Staging y prod comparten el
+    // mismo MONDAY_AUDIT_BOARD_ID.) Las alertas de Slack SÍ siguen prod-only:
+    // notifySlackSystemError se auto-skipea cuando APP_ENV=staging, así que
+    // sacar el skip de acá no genera ruido en el canal.
     const boardId = process.env.MONDAY_AUDIT_BOARD_ID;
     const token   = process.env.DEV_MONDAY_TOKEN;
     if (!boardId || !token) {
@@ -8104,9 +8103,11 @@ function scheduleReconciliationCron() {
 // Este cron busca emisiones success que NO tienen fila en audit_log_items (la
 // tabla puente client_item → audit_item) y vuelve a loguearlas.
 //
-// Idempotente: logEmissionToAuditBoard dedupe por findAuditItemId. En staging
-// no escribe nada — logEmissionToAuditBoard skipea solo cuando APP_ENV=staging,
-// así que acá NO cortamos por APP_ENV (queremos que la query se ejerza igual).
+// Idempotente: logEmissionToAuditBoard dedupe por findAuditItemId (tabla
+// audit_log_items de la DB local). Corre en prod Y en staging — staging también
+// registra sus comprobantes reales (CAE real) en el board, así que NO cortamos
+// por APP_ENV. Dedup es por DB; el board es compartido prod/staging pero cada
+// entorno tiene su propia audit_log_items, así que no colisionan items distintos.
 const AUDIT_BACKFILL_INTERVAL_MS   = 15 * 60 * 1000;  // cada 15 min
 const AUDIT_BACKFILL_BATCH_SIZE    = 25;
 const AUDIT_BACKFILL_MAX_AGE_DAYS  = 45;
