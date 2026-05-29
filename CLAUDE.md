@@ -123,7 +123,7 @@ Para un commit específico no reciente: `git revert <hash>`. Nunca uses `git res
 
 2. **Datos en `defaultdb` son sagrados.** `stagingdb` es para tests. **NUNCA** hagas `DELETE` o `UPDATE` en `defaultdb` sin estar 100% seguro y haber chequeado el `WHERE`.
 
-3. **`APP_ENV=staging` en el `.env` de staging clone.** Controla el skip del audit board (`logEmissionToAuditBoard`). Si lo borrás, las pruebas en staging contaminan el board "Comp Emitidos" de producción.
+3. **`APP_ENV=staging` en el `.env` de staging clone.** Controla el skip de las **alertas de Slack** (`notifySlackSystemError` + resumen nocturno de auditoría) — los errores de staging son ruido para el canal de prod. **NO** skipea el audit board: staging emite con `AFIP_ENV=production`, así que sus comprobantes son reales (CAE real) y SÍ se registran en "Comp Emitidos" (staging y prod comparten `MONDAY_AUDIT_BOARD_ID`; el dedup de `logEmissionToAuditBoard` es por DB local, así que no colisionan items de distintos entornos).
 
 4. **Migrations idempotentes en `runStartupMigrations()`** (en `server.js`). Toda migración de schema va ahí, con `IF NOT EXISTS` o `try/catch`. Corren al arrancar `pm2` → cada DB (defaultdb y stagingdb) se migra sola.
 
