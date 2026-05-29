@@ -6020,6 +6020,26 @@ async function creditNoteHandler(req, res) {
                 ncObservaciones = ncObservaciones.slice(0, 255);
             }
 
+            // Fecha de emisión de la NC = hoy. La usamos también para corregir el
+            // vencimiento de pago heredado (ver abajo).
+            const ncFechaEmision = new Date().toISOString().slice(0, 10);
+
+            // FchVtoPago: AFIP exige (error 10036) que el vencimiento de pago sea
+            // >= a la fecha del comprobante. La NC hereda el vto de la factura, que
+            // pudo haber vencido (la NC se emite días/semanas después) → usamos el
+            // posterior entre el vto heredado y la fecha de emisión de la NC. Solo
+            // se envía a AFIP con Concepto 2/3 (servicios); con Productos no se manda
+            // igual, pero dejarlo corregido no molesta. Si viene null, afipIssue cae
+            // al fallback = fecha de emisión (hoy), que también es válido.
+            let ncVtoPago = facturaDraft.fecha_vto_pago || null;
+            if (ncVtoPago) {
+                const vtoDigits = String(ncVtoPago).replace(/\D/g, '').slice(0, 8);
+                const hoyDigits = ncFechaEmision.replace(/\D/g, '');
+                if (vtoDigits.length === 8 && vtoDigits < hoyDigits) {
+                    ncVtoPago = ncFechaEmision;
+                }
+            }
+
             // ── 6. Armar el draft de la NC ─────────────────────────────────────
             // Encabezado heredado de la factura (receptor, moneda, cotización,
             // condición de venta, concepto, fechas de servicio). Líneas e
@@ -6027,7 +6047,7 @@ async function creditNoteHandler(req, res) {
             // La observación es propia del item de NC (pisa la heredada por spread).
             const ncDraft = {
                 ...facturaDraft,
-                fecha_emision:    new Date().toISOString().slice(0, 10),
+                fecha_emision:    ncFechaEmision,
                 lineas:           ncLines.lineas,
                 importe_neto:     ncLines.importeNeto,
                 importe_iva:      ncLines.importeIva,
@@ -6035,6 +6055,8 @@ async function creditNoteHandler(req, res) {
                 alicuota_iva_id:  ncLines.alicuotaConfig.id,
                 alicuota_iva_pct: ncLines.alicuotaElegida,
                 observaciones:    ncObservaciones || null,
+                // Vto de pago corregido para no caer en el error 10036 de AFIP.
+                fecha_vto_pago:   ncVtoPago,
                 // Datos de la factura que esta NC anula — el PDF los muestra en
                 // el bloque "Comprobante Asociado".
                 comprobante_asociado: {
