@@ -1248,6 +1248,8 @@ const INVOICE_TYPE_CONFIG = {
 // La letra de la NC sigue la letra de la factura que anula. Se usa solo
 // cuando afipIssueFactura recibe `cbtesAsoc` (ver Fase 1 — Notas de Crédito).
 const CREDIT_NOTE_CBTE_TYPE = { A: 3, B: 8, C: 13 };
+// Nota de Débito: misma letra que la factura que ajusta. CbteTipo 2/7/12.
+const DEBIT_NOTE_CBTE_TYPE  = { A: 2, B: 7, C: 12 };
 
 // ─── Cotizacion de monedas (FEParamGetCotizacion) ─────────────────────────
 // Consulta la cotizacion oficial de AFIP para una moneda extranjera.
@@ -1347,19 +1349,28 @@ async function afipIssueFactura({
     // Cada elemento: { tipo, ptoVta, nro, cuit, cbteFch (YYYY-MM-DD o YYYYMMDD) }.
     // Si es null o [], la emisión es una factura normal (comportamiento histórico).
     cbtesAsoc = null,
+    // Clase de comprobante: 'NC' (Nota de Crédito) o 'ND' (Nota de Débito). Tanto
+    // NC como ND llevan cbtesAsoc, así que NO alcanza con inferir por su presencia:
+    // hay que decir explícitamente cuál es. Si no se pasa pero sí hay cbtesAsoc, se
+    // asume NC (compat con el caller histórico de NC); sin cbtesAsoc → factura.
+    comprobanteClass = null,
 }) {
     const config = INVOICE_TYPE_CONFIG[invoiceType];
     if (!config) throw new Error(`Tipo de factura no soportado: ${invoiceType}`);
 
     const endpoints = getAfipEndpoints();
-    // Una NC se reconoce por traer comprobantes asociados: usa el CbteTipo de
-    // Nota de Crédito (3/8/13) en vez del de factura (1/6/11). `invoiceType`
-    // sigue siendo la letra A/B/C para no alterar el resto de la lógica.
-    const isCreditNote = Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0;
-    if (isCreditNote && !CREDIT_NOTE_CBTE_TYPE[invoiceType]) {
-        throw new Error(`Tipo de Nota de Crédito no soportado: ${invoiceType}`);
+    // CbteTipo según la clase. `invoiceType` sigue siendo la letra A/B/C.
+    //   ND → 2/7/12 ; NC → 3/8/13 ; factura → 1/6/11.
+    const isDebitNote  = comprobanteClass === 'ND';
+    const isCreditNote = !isDebitNote
+        && (comprobanteClass === 'NC' || (Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0));
+    const cbteTypeMap = isDebitNote ? DEBIT_NOTE_CBTE_TYPE
+        : isCreditNote ? CREDIT_NOTE_CBTE_TYPE
+        : null;
+    if (cbteTypeMap && !cbteTypeMap[invoiceType]) {
+        throw new Error(`Tipo de ${isDebitNote ? 'Nota de Débito' : 'Nota de Crédito'} no soportado: ${invoiceType}`);
     }
-    const cbteType = isCreditNote ? CREDIT_NOTE_CBTE_TYPE[invoiceType] : config.cbteType;
+    const cbteType = cbteTypeMap ? cbteTypeMap[invoiceType] : config.cbteType;
 
     // ── Fase 1 — Recovery de attempt previo ──────────────────────────────
     // Si hay cbteNro de un intento anterior, primero consultar AFIP. Si la
@@ -1478,10 +1489,10 @@ async function afipIssueFactura({
             </ar:Iva>`
         : '';
 
-    // Comprobantes asociados (CbtesAsoc) — referencia la(s) factura(s) que
-    // esta NC anula. Obligatorio para Notas de Crédito; vacío para facturas.
-    // Cuit y CbteFch son opcionales en el XSD: se incluyen solo si vienen.
-    const cbtesAsocXml = isCreditNote
+    // Comprobantes asociados (CbtesAsoc) — referencia la factura que esta NC anula
+    // o que esta ND ajusta. Obligatorio para NC y ND (AFIP error 10197/10153);
+    // vacío para facturas. Cuit y CbteFch son opcionales en el XSD: solo si vienen.
+    const cbtesAsocXml = (Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0)
         ? `<ar:CbtesAsoc>
               ${cbtesAsoc.map((c) => {
                   const cuitDigits = String(c.cuit || cuit || '').replace(/\D/g, '');
