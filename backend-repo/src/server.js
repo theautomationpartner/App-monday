@@ -6935,9 +6935,30 @@ const AUDIT_CONCEPTO = { 1: 'Productos', 2: 'Servicios', 3: 'Productos y Servici
 // Clasifica el error en uno de los 3 buckets de Estado para el log central.
 function classifyAuditError(err) {
     const msg = String(err?.message || '');
-    if (/wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout|padr[oó]n/i.test(msg)) return AUDIT_ESTADO.error_afip;
-    if (/falta|incompleta|incompatible|inv[aá]lid|obligator|no hay|sin .|ya emitida|certificad/i.test(msg)) return AUDIT_ESTADO.error_validacion;
-    return AUDIT_ESTADO.error_sistema;
+    // 1) AFIP / infra del web service (auth WSAA, SOAP, padrón, HTTP/timeout de
+    //    AFIP). Incluye los nombres de los métodos WSFE (FECAESolicitar,
+    //    FECompUltimoAutorizado, FEParamGetCotizacion, etc.), que es como los
+    //    helpers SOAP nombran sus errores de HTTP/red. (Un rechazo de NEGOCIO de
+    //    AFIP — "AFIP rechazó: [10119]..." — NO entra acá: es dato corregible →
+    //    cae en validación más abajo.)
+    if (/wsfe|wsaa|soap|loginCms|padr[oó]n|FECAE|FEComp|FEParam|FEDummy|afip.*http|afip.*timeout/i.test(msg)) {
+        return AUDIT_ESTADO.error_afip;
+    }
+    // 2) Error de SISTEMA = bug inesperado: excepción técnica de runtime, fallo de
+    //    red, o sin mensaje. SON los que requieren acción del equipo de TAP y
+    //    disparan alerta a Slack. Se detectan por firmas técnicas (en inglés) — NO
+    //    por los throw deliberados de la app, que llevan mensaje en español al
+    //    usuario. El item de test "make-errores-" entra acá a propósito.
+    if (!msg
+        || /cannot read|reading '|of undefined|of null|is not a function|is not defined|is not iterable|TypeError|ReferenceError|SyntaxError|RangeError|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EPIPE|socket hang up|unexpected token|in JSON|JSON\.parse|prototype|fetch failed|Maximum call stack/i.test(msg)
+        || /error sistema|sistema simulado|TEST forzado/i.test(msg)) {
+        return AUDIT_ESTADO.error_sistema;
+    }
+    // 3) Por defecto: error de VALIDACIÓN / negocio — dato del usuario corregible
+    //    (item incompleto, punto de venta en conflicto, comprobante ya emitido,
+    //    subítems faltantes, mapeo faltante, alícuota que no coincide, etc.).
+    //    NO dispara alerta a Slack: el usuario lo resuelve solo.
+    return AUDIT_ESTADO.error_validacion;
 }
 
 async function getInstallationLeadItemId(accountId) {
