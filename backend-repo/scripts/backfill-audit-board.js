@@ -44,6 +44,7 @@ const COL = {
     importe_iva:      'numeric_mm2tqb1d',
     concepto_afip:    'dropdown_mm2tge43',
     condicion_venta:  'dropdown_mm2t75pn',
+    instalacion:      'board_relation_mm2x7ajc',
 };
 const CONCEPTO = { 1: 'Productos', 2: 'Servicios', 3: 'Productos y Servicios' };
 
@@ -121,6 +122,10 @@ function buildColumnValues(row) {
     if (d.importe_iva != null)                        cv[COL.importe_iva]     = String(d.importe_iva);
     if (d.concepto_afip)                              cv[COL.concepto_afip]   = { labels: [CONCEPTO[d.concepto_afip] || 'Productos'] };
     if (d.condicion_venta)                            cv[COL.condicion_venta] = { labels: [String(d.condicion_venta)] };
+    // Instalación: connect al lead de la cuenta (board de leads compartido). El
+    // lead_item_id viene del JOIN a installation_leads. La duración NO se backfillea
+    // (no se persiste en invoice_emissions; solo existe en el log en vivo).
+    if (row.lead_item_id)                             cv[COL.instalacion]     = { item_ids: [Number(row.lead_item_id)] };
     return cv;
 }
 
@@ -163,9 +168,10 @@ async function main() {
     const { rows } = await db.query(`
         SELECT ie.item_id, ie.invoice_type, ie.draft_json, ie.afip_result_json,
                ie.company_id, c.monday_account_id, c.workspace_id,
-               c.business_name, c.cuit
+               c.business_name, c.cuit, il.lead_item_id
           FROM invoice_emissions ie
           JOIN companies c ON c.id = ie.company_id
+          LEFT JOIN installation_leads il ON il.monday_account_id = c.monday_account_id
          WHERE ie.status = 'success'
          ORDER BY ie.created_at ASC
     `);
