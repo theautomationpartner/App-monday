@@ -5925,10 +5925,15 @@ async function creditNoteHandler(req, res) {
             // board mapeó la columna "Punto de Venta" y el usuario cargó un valor que
             // NO coincide con el de la factura, cortamos con un error claro — así no
             // cree que la NC sale del PV que eligió cuando en realidad sale del de la
-            // factura. Va antes del status/claim (igual que el resto de validaciones).
+            // factura. Si la dejó VACÍA, la completamos con el PV de la factura DESPUÉS
+            // de emitir (write-back más abajo) para que el item quede consistente.
+            // Va antes del status/claim (igual que el resto de validaciones).
+            let ncPvColumnNeedsBackfill = false;
             if (ncMapping.punto_venta) {
                 const pvSelRaw = (getColumnTextById(ncItemColumns, ncMapping.punto_venta) || '').trim();
-                if (pvSelRaw) {
+                if (!pvSelRaw) {
+                    ncPvColumnNeedsBackfill = true;
+                } else {
                     const pvSel = parseInt(pvSelRaw.replace(/\D/g, ''), 10);
                     if (pvSel && pvSel !== Number(facturaPtoVta)) {
                         throw new Error(
@@ -6264,6 +6269,20 @@ async function creditNoteHandler(req, res) {
                 puntoVenta: ncDraft.punto_venta,
                 numero:     afipResult.numero_comprobante,
             }).catch((e) => console.warn('[nc] write-back columnas comprobante falló:', e.message));
+
+            // Si el board mapea "Punto de Venta" y el usuario la dejó VACÍA, la
+            // completamos con el PV de la factura (el que realmente usó la NC) para
+            // que el item quede consistente en monday. Solo si estaba vacía — un
+            // valor en conflicto ya cortó la emisión antes. La columna suele ser
+            // dropdown (create_labels_if_missing crea la opción si falta); si fuera
+            // numérica/texto, el simple-value writer también sirve. Fire-and-forget.
+            if (ncPvColumnNeedsBackfill && ncMapping.punto_venta) {
+                const pvCol = ncMapping.punto_venta;
+                const pvWrite = pvCol.startsWith('dropdown_')
+                    ? writeMondayDropdownColumn({ apiToken: mondayToken, boardId, itemId, columnId: pvCol, label: String(facturaPtoVta) })
+                    : writeMondayNumericColumn({ apiToken: mondayToken, boardId, itemId, columnId: pvCol, value: facturaPtoVta });
+                pvWrite.catch((e) => console.warn('[nc] write-back punto_venta falló:', e.message));
+            }
 
             // ── 10. Generar PDF ────────────────────────────────────────────────
             try {
