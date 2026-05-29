@@ -4776,6 +4776,34 @@ async function comprobanteHandler(req, res) {
                 );
             }
 
+            // Punto de venta del ítem. Si el board mapeó la columna "Punto de
+            // Venta", elegirlo es OBLIGATORIO (no hay default silencioso). Va acá,
+            // en el pre-flight, ANTES del claim y del cambio de status: un PV
+            // faltante o inválido es un dato incompleto del item, no una falla de
+            // emisión — no debe reservar la fila ni pasar por "Creando" (si no, la
+            // fila quedaba clavada en 'processing'). Si el board NO mapea la
+            // columna, usa el default de la empresa (clientes sin multi-PV intactos).
+            // El PV es solo un parámetro AFIP: el mismo certificado del CUIT sirve
+            // para todos los PV.
+            let ptoVentaItem = company.default_point_of_sale;
+            if (readiness.mapping?.punto_venta) {
+                const pvRaw = (getColumnTextById(mainColumns, readiness.mapping.punto_venta) || '').trim();
+                if (!pvRaw) {
+                    throw new Error(
+                        'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
+                        `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Punto de Venta')}`
+                    );
+                }
+                const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
+                if (!pvNum || pvNum <= 0) {
+                    throw new Error(
+                        `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
+                        `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
+                    );
+                }
+                ptoVentaItem = pvNum;
+            }
+
             markEnd('preflight');
 
             // ── 2c. Disparar status "Creando Comprobante" EN PARALELO ─────────
@@ -5154,34 +5182,8 @@ async function comprobanteHandler(req, res) {
             const importeIva   = Number((importeNeto * ivaRate).toFixed(2));
             const importeTotal = Number((importeNeto + importeIva).toFixed(2));
 
-            // Punto de venta: si el board mapeó la columna "Punto de Venta", sale
-            // de ahí (por ítem) — el usuario lo elige en cada factura. Si no está
-            // mapeada o está vacía, usa el default de la empresa (comportamiento
-            // histórico). El PV es solo un parámetro AFIP: el mismo certificado
-            // del CUIT sirve para todos los PV.
-            // Si el board mapeó la columna "Punto de Venta", elegirlo es
-            // OBLIGATORIO: no hay default silencioso, el usuario tiene que
-            // seleccionar el PV en cada item. Si el board NO mapea la columna,
-            // usa el default de la empresa (comportamiento histórico — así los
-            // clientes que no usan multi-PV no se ven afectados).
-            let ptoVentaItem = company.default_point_of_sale;
-            if (mapping.punto_venta) {
-                const pvRaw = (getColumnTextById(mainColumns, mapping.punto_venta) || '').trim();
-                if (!pvRaw) {
-                    throw new Error(
-                        'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
-                        `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, mapping.punto_venta, 'Punto de Venta')}`
-                    );
-                }
-                const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
-                if (!pvNum || pvNum <= 0) {
-                    throw new Error(
-                        `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
-                        `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
-                    );
-                }
-                ptoVentaItem = pvNum;
-            }
+            // El punto de venta (ptoVentaItem) ya se resolvió y validó en el
+            // pre-flight, antes del claim/status — ver sección 2b-bis arriba.
 
             const draft = {
                 tipo_comprobante:    tipo,
@@ -5624,12 +5626,21 @@ async function comprobanteHandler(req, res) {
             // y un re-disparo posterior la borraba y re-emitía).
             if (!isIdempotencyError) {
                 try {
-                    const company = await getCompanyByMondayAccountId(accountId);
+                    // Misma resolución que el claim (getCompanyForBoard, que ya cae
+                    // al lookup por cuenta si hace falta): en cuentas multi-empresa
+                    // el board puede no ser de la primera empresa, y un company.id
+                    // distinto dejaría la fila AUTO sin limpiar (clavada en processing).
+                    const company = await getCompanyForBoard(accountId, boardId);
                     if (company) {
+                        // La fila se reservó como 'AUTO' (el tipo real recién se
+                        // resuelve más adelante en el flujo), así que limpiamos
+                        // tanto el tipo resuelto como el placeholder 'AUTO'. Nunca
+                        // pisamos un 'success' (una emisión ya válida no se corrompe).
                         await db.query(
                             `UPDATE invoice_emissions
                              SET status='error', error_message=$5, updated_at=CURRENT_TIMESTAMP
-                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                               AND invoice_type IN ($4, 'AUTO') AND status <> 'success'`,
                             [company.id, boardId, itemId, resolvedType || 'AUTO', err.message]
                         );
                     }
