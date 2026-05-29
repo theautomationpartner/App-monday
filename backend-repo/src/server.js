@@ -5159,19 +5159,28 @@ async function comprobanteHandler(req, res) {
             // mapeada o está vacía, usa el default de la empresa (comportamiento
             // histórico). El PV es solo un parámetro AFIP: el mismo certificado
             // del CUIT sirve para todos los PV.
+            // Si el board mapeó la columna "Punto de Venta", elegirlo es
+            // OBLIGATORIO: no hay default silencioso, el usuario tiene que
+            // seleccionar el PV en cada item. Si el board NO mapea la columna,
+            // usa el default de la empresa (comportamiento histórico — así los
+            // clientes que no usan multi-PV no se ven afectados).
             let ptoVentaItem = company.default_point_of_sale;
             if (mapping.punto_venta) {
                 const pvRaw = (getColumnTextById(mainColumns, mapping.punto_venta) || '').trim();
-                if (pvRaw) {
-                    const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
-                    if (!pvNum || pvNum <= 0) {
-                        throw new Error(
-                            `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
-                            `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
-                        );
-                    }
-                    ptoVentaItem = pvNum;
+                if (!pvRaw) {
+                    throw new Error(
+                        'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
+                        `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, mapping.punto_venta, 'Punto de Venta')}`
+                    );
                 }
+                const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
+                if (!pvNum || pvNum <= 0) {
+                    throw new Error(
+                        `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
+                        `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
+                    );
+                }
+                ptoVentaItem = pvNum;
             }
 
             const draft = {
