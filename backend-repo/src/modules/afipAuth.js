@@ -15,6 +15,18 @@ const config = require('../config');
 // ─── Caché en memoria: { [cacheKey]: { token, sign, expiresAt } } ─────────────
 const _cache = {};
 
+// Margen de seguridad: consideramos "expirado" un token cuando faltan < 5 min
+// para su `expirationTime`. Esto cubre latencia de red y el round-trip al SOAP.
+//
+// ⚠ RIESGO conocido: si el reloj del server adelanta > 5 min respecto al reloj
+// de AFIP, podemos devolver un token que para nosotros aún tiene vida pero que
+// AFIP ya rechaza con error [600] ("ValidacionDeToken: Token expirado"). El
+// flujo de retry-on-[600] en `afipIssueFactura` (y en `emitirNcConToken`) ya
+// lo cubre invalidando el caché y re-autenticándose, pero es un attempt
+// desperdiciado. Si vemos [600] frecuente sin causa aparente, chequear NTP
+// del droplet (`timedatectl status`) antes de tocar este valor.
+const WSAA_EXPIRATION_MARGIN_MS = 5 * 60 * 1000;
+
 // ─── Storage opcional (DB) — inyectado desde server.js al arrancar ────────
 // Permite persistir tokens más allá del ciclo de vida del proceso. Si no está
 // configurado, afipAuth funciona 100% igual que antes (solo cache in-memory).
@@ -132,8 +144,8 @@ async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false
     const key = cacheKey(service, cuit);
     const cached = _cache[key];
 
-    // Capa 1: cache in-memory. Reutilizar si queda más de 5 minutos de vida.
-    if (!force && cached && cached.expiresAt > Date.now() + 5 * 60 * 1000) {
+    // Capa 1: cache in-memory. Reutilizar si queda más que el margen de vida.
+    if (!force && cached && cached.expiresAt > Date.now() + WSAA_EXPIRATION_MARGIN_MS) {
         return { token: cached.token, sign: cached.sign };
     }
 
@@ -143,7 +155,7 @@ async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false
     if (!force && _dbStorage?.load) {
         try {
             const dbToken = await _dbStorage.load({ service, companyId });
-            if (dbToken && dbToken.expiresAt > Date.now() + 5 * 60 * 1000) {
+            if (dbToken && dbToken.expiresAt > Date.now() + WSAA_EXPIRATION_MARGIN_MS) {
                 _cache[key] = { token: dbToken.token, sign: dbToken.sign, expiresAt: dbToken.expiresAt };
                 console.log(`[wsaa] cache HIT DB (service=${service}, cuit=${cuit})`);
                 return { token: dbToken.token, sign: dbToken.sign };

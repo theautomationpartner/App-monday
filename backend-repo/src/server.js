@@ -1695,6 +1695,7 @@ async function afipIssueFactura({
     // (pero no fail — el CAE es valido y la factura existe).
     let verification = null;
     let verificationError = null;
+    let phase2Mismatches = [];
     try {
         verification = await afipConsultarComprobante({
             token, sign, cuit,
@@ -1711,6 +1712,7 @@ async function afipIssueFactura({
             if (Math.abs(verification.imp_total - totalAmount) > 0.01) mismatches.push(`importe: emitido=${totalAmount} vs verificado=${verification.imp_total}`);
             if (mismatches.length > 0) {
                 console.warn(`[wsfe] verify: MISMATCH detectado para cbteNro=${nextVoucher}: ${mismatches.join(' | ')}`);
+                phase2Mismatches = mismatches;
             } else {
                 console.log(`[wsfe] verify: OK cbteNro=${nextVoucher} CAE=${cae}`);
             }
@@ -1722,6 +1724,17 @@ async function afipIssueFactura({
         console.warn(`[wsfe] verify: error consultando cbteNro=${nextVoucher}: ${verifyErr.message}`);
     }
 
+    // Si Fase 2 detectó mismatch real (CAE / importe / cbteNro), taggeamos el
+    // campo observacion con [FASE2_MISMATCH] + detalle. Es la señal que la
+    // auditoría nocturna (classifyAuditError + Slack) puede levantar para
+    // alertarnos — disparar Slack directo desde acá no es viable porque
+    // notifySlackSystemError necesita accountId, que no está en este scope.
+    let observacionFinal = observation;
+    if (phase2Mismatches.length > 0) {
+        const tag = `[FASE2_MISMATCH] ${phase2Mismatches.join(' | ')}`;
+        observacionFinal = observacionFinal ? `${tag} — ${observacionFinal}` : tag;
+    }
+
     return {
         resultado: result || 'N/D',
         cae: cae || null,
@@ -1731,7 +1744,7 @@ async function afipIssueFactura({
         cbte_tipo_afip: cbteType,
         imp_neto: impNeto,
         imp_iva: impIva,
-        observacion: observation,
+        observacion: observacionFinal,
         raw_xml: xml.slice(0, 2000),
         verification: verification ? {
             cae_match: verification.cae === cae,
@@ -2537,7 +2550,17 @@ async function recordAuditMapping(accountId, clientItemId, auditItemId, opts = {
                 updated_at    = CURRENT_TIMESTAMP`,
             [String(accountId), String(clientItemId), String(auditItemId), companyId, workspaceId]
         );
-    } catch (err) { console.warn('[audit-log] error guardando mapeo:', err.message); }
+    } catch (err) {
+        // El item del audit board YA existe en monday (la mutation create_item
+        // se hizo arriba). Si acá falla, queda "huérfano" desde el lado del
+        // dedup: la próxima corrida no lo va a encontrar en audit_log_items y
+        // creará un duplicado en el board. Logueamos audit_item_id + client_item_id
+        // para poder recuperar/reconstruir el mapeo a mano si hace falta.
+        console.warn(
+            `[audit-log] ORPHAN audit item — error guardando mapeo: ${err.message} ` +
+            `(account=${accountId} client_item=${clientItemId} audit_item=${auditItemId})`
+        );
+    }
 }
 
 // Wrapper de fetch con reintentos: hasta `attempts` intentos con `delayMs` entre
@@ -4697,7 +4720,11 @@ function requireAutomationBlock(req, res, next) {
 //   - "Factura" (o columna sin mapear)  → emite la factura (lógica de abajo).
 //   - "Nota de Crédito"                 → delega en emitNotaHandler(req, res, 'NC').
 //   - "Nota de Débito"                  → delega en emitNotaHandler(req, res, 'ND').
-// Se registra en /api/invoices/emit (compat) y /api/comprobantes/emit (nuevo).
+// URLs:
+//   - /api/invoices/emit       → endpoint unificado (factura + NC + ND vía tipo_comprobante)
+//   - /api/comprobantes/emit   → alias del anterior (misma función)
+//   - /api/credit-notes/emit   → emisión directa de NC (recipe "Crear Nota de Crédito AFIP")
+//   - /api/debit-notes/emit    → emisión directa de ND (recipe "Crear Nota de Débito AFIP")
 // Flujo:
 //   1. Responde 200 inmediatamente (monday requiere respuesta rápida)
 //   2. En background: rutea por tipo → emite → genera PDF → sube a monday
@@ -4995,12 +5022,21 @@ async function comprobanteHandler(req, res) {
             // visual. Si el flag esta apagado, la app no toca el status.
             const statusColumnId = readiness.boardConfig?.status_column_id;
             const autoUpdateStatus = readiness.boardConfig?.auto_update_status !== false;
+            // Labels custom del board (si el cliente los cambió en mapeo visual);
+            // fallback al flow estándar. El reconcile cron ya las honra — acá
+            // las honramos también en el flujo en vivo para consistencia.
+            const processingLabel = readiness.boardConfig?.processing_label
+                || COMPROBANTE_STATUS_FLOW.processing;
+            const successLabel = readiness.boardConfig?.success_label
+                || COMPROBANTE_STATUS_FLOW.success;
+            const errorLabel = readiness.boardConfig?.error_label
+                || COMPROBANTE_STATUS_FLOW.error;
             if (autoUpdateStatus && statusColumnId) {
                 markStart('status_processing');
                 updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
                     statusColumnId,
-                    label: COMPROBANTE_STATUS_FLOW.processing,
+                    label: processingLabel,
                 })
                     .then(() => markEnd('status_processing'))
                     .catch((err) => console.warn('[status] fire-and-forget processing falló:', err.message));
@@ -5648,7 +5684,7 @@ async function comprobanteHandler(req, res) {
                 updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
                     statusColumnId,
-                    label: COMPROBANTE_STATUS_FLOW.success,
+                    label: successLabel,
                 })
                     .then(() => markEnd('status_success'))
                     .catch((err) => console.warn('[status] fire-and-forget success falló:', err.message));
@@ -5816,11 +5852,13 @@ async function comprobanteHandler(req, res) {
                         const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
                         const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
                         const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
+                        const errLabel = readinessForErr?.boardConfig?.error_label
+                            || COMPROBANTE_STATUS_FLOW.error;
                         if (errAutoUpdateStatus && errStatusColId) {
                             await updateMondayItemStatus({
                                 apiToken: errToken, boardId, itemId,
                                 statusColumnId: errStatusColId,
-                                label: COMPROBANTE_STATUS_FLOW.error,
+                                label: errLabel,
                             });
                         }
                     }
@@ -6012,6 +6050,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         let statusColumnId   = null;
         let autoUpdateStatus = true;
         let autoRenameItem   = true;
+        let successLabel     = COMPROBANTE_STATUS_FLOW.success;
+        let errorLabel       = COMPROBANTE_STATUS_FLOW.error;
+        let processingLabel  = COMPROBANTE_STATUS_FLOW.processing;
 
         try {
             // ── 1. Token de Monday ─────────────────────────────────────────────
@@ -6048,7 +6089,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // queda en false y la app no toca la columna.
             try {
                 const cfgRes = await db.query(
-                    `SELECT status_column_id, auto_update_status, auto_rename_item
+                    `SELECT status_column_id, auto_update_status, auto_rename_item,
+                            success_label, error_label
                      FROM board_automation_configs
                      WHERE company_id=$1 AND board_id=$2 LIMIT 1`,
                     [company.id, boardId]
@@ -6057,6 +6099,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     statusColumnId   = cfgRes.rows[0].status_column_id || null;
                     autoUpdateStatus = cfgRes.rows[0].auto_update_status !== false;
                     autoRenameItem   = cfgRes.rows[0].auto_rename_item !== false;
+                    // Labels custom (si el cliente los cambió en mapeo visual);
+                    // fallback al flow estándar. Consistente con factura y con
+                    // el reconcile cron, que ya honra estos campos.
+                    successLabel    = cfgRes.rows[0].success_label || COMPROBANTE_STATUS_FLOW.success;
+                    errorLabel      = cfgRes.rows[0].error_label   || COMPROBANTE_STATUS_FLOW.error;
                 }
             } catch (cfgErr) {
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
@@ -6476,7 +6523,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (autoUpdateStatus && statusColumnId) {
                 updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
-                    statusColumnId, label: COMPROBANTE_STATUS_FLOW.processing,
+                    statusColumnId, label: processingLabel,
                 }).catch((e) => console.warn('[nc] status processing fire-and-forget falló:', e.message));
             }
 
@@ -6546,7 +6593,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (autoUpdateStatus && statusColumnId) {
                 updateMondayItemStatus({
                     apiToken: mondayToken, boardId, itemId,
-                    statusColumnId, label: COMPROBANTE_STATUS_FLOW.success,
+                    statusColumnId, label: successLabel,
                 }).catch((e) => console.warn('[nc] status success fire-and-forget falló:', e.message));
             }
 
@@ -6681,7 +6728,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     if (!isIdempotencyError && autoUpdateStatus && statusColumnId && boardId) {
                         await updateMondayItemStatus({
                             apiToken: errToken, boardId, itemId,
-                            statusColumnId, label: COMPROBANTE_STATUS_FLOW.error,
+                            statusColumnId, label: errorLabel,
                         });
                     }
                 }
@@ -8344,6 +8391,12 @@ async function reconcileSingleEmission(row) {
         const tipoLetra = afipResult.tipo_comprobante
             || draftForAudit.tipo_comprobante
             || (row.invoice_type === 'AUTO' ? null : row.invoice_type);
+        // NOTA: pasamos success=true, así que logEmissionToAuditBoard arma el
+        // nombre del audit item desde el comprobante ("Factura C N° …"), no
+        // desde sourceItemName. Por eso null acá es seguro. Si en el futuro se
+        // logueara también el fallo del recovery (status='abandoned'), habría
+        // que recuperar el nombre original del item del cliente (fetchMondayItem
+        // por row.item_id) para no caer en el fallback genérico "Error emisión…".
         logEmissionToAuditBoard({
             accountId: String(company.monday_account_id),
             success: true,
@@ -8422,14 +8475,17 @@ async function reconcileSingleEmission(row) {
     }
 
     // 11. Cambiar status del item a "Comprobante Creado"
+    //     Respetar `auto_update_status` del board: si el cliente lo desactivó,
+    //     el flujo en vivo no toca la columna y este cron tampoco debería.
     try {
         const readiness = await validateEmissionReadiness({
             mondayAccountId: company.monday_account_id, boardId: row.board_id,
         }).catch(() => null);
         const statusColId = readiness?.boardConfig?.status_column_id;
+        const autoUpdateStatus = readiness?.boardConfig?.auto_update_status !== false;
         const successLabel = readiness?.boardConfig?.success_label
             || COMPROBANTE_STATUS_FLOW.success;
-        if (statusColId) {
+        if (autoUpdateStatus && statusColId) {
             await updateMondayItemStatus({
                 apiToken: mondayToken,
                 boardId: row.board_id,
@@ -8438,6 +8494,8 @@ async function reconcileSingleEmission(row) {
                 label: successLabel,
             });
             console.log(`${tag} status del item cambiado a "${successLabel}"`);
+        } else if (!autoUpdateStatus) {
+            console.log(`${tag} status NO cambiado — auto_update_status=false en el board`);
         }
     } catch (statusErr) {
         console.warn(`${tag} error cambiando status en monday:`, statusErr.message);
@@ -8608,7 +8666,11 @@ async function backfillAuditBoard() {
                 accountId: String(row.monday_account_id),
                 success: true,
                 clientItemId: row.item_id,
-                sourceItemName: null,   // en éxito el nombre se arma del comprobante
+                // En éxito el nombre del audit item se arma del comprobante
+                // ("Factura C N° …"), no de sourceItemName, así que null es OK.
+                // Solo importaría si algún día logueamos backfill de errores
+                // — ahí habría que recuperar el nombre real del item del cliente.
+                sourceItemName: null,
                 draft,
                 afipResult,
                 tipo,

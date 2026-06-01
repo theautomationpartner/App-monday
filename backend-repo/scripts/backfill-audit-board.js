@@ -39,6 +39,7 @@ const COL = {
     vto_cae:          'date_mm2tnn5a',
     cuit_receptor:    'numeric_mm2tdk2h',
     razon_social:     'text_mm2t7wza',
+    mensaje_error:    'long_text_mm2tx4ka',
     importe_total:    'numeric_mm2t5pm8',
     importe_neto:     'numeric_mm2t5f9x',
     importe_iva:      'numeric_mm2tqb1d',
@@ -104,6 +105,10 @@ function buildColumnValues(row) {
     const cv = {};
     const fe = ymd(d.fecha_emision);                 if (fe) cv[COL.fecha_emision] = { date: fe };
     cv[COL.estado] = { label: 'Emitida OK' };
+    // Si este item ya estuvo en estado de error en una corrida previa, el
+    // mensaje viejo seguiría visible aunque ahora marquemos "Emitida OK".
+    // Mandar long_text vacío lo limpia (sin pisar nada si ya estaba vacío).
+    cv[COL.mensaje_error] = { text: '' };
     cv[COL.tipo_comprobante] = { labels: [esND ? 'Nota de Débito' : esNC ? 'Nota de Crédito' : 'Factura'] };
     const letra = a.tipo_comprobante || d.tipo_comprobante;
     if (letra)                                        cv[COL.tipo] = { labels: [String(letra)] };

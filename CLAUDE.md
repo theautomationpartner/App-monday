@@ -149,6 +149,7 @@ Para un commit específico no reciente: `git revert <hash>`. Nunca uses `git res
 backend-repo/
   src/
     server.js                    # ÚNICO archivo grande — endpoints + crons + lifecycle + audit
+    config.js                    # endpoints AFIP por entorno (homo vs prod) + constantes (CBTE_TYPE, IVA_CONDITION)
     db.js                        # pool PostgreSQL (SSL verify-full con CA cert de DO)
     validation.js                # Zod schemas (BoardConfigSchema, MappingSchema, etc.)
     onboarding.html              # página de bienvenida iframe-friendly (/onboarding)
