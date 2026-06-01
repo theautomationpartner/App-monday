@@ -710,7 +710,7 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
                     auto_rename_item, auto_update_status
              FROM board_automation_configs
              WHERE company_id=$1 AND board_id=$2
-             ORDER BY updated_at DESC LIMIT 1`,
+             ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
             [company.id, String(boardId)]
         );
         boardConfig = boardCfgResult.rows[0] || null;
@@ -1147,8 +1147,12 @@ function xmlEscape(value) {
         .replace(/'/g, '&apos;');
 }
 
+// Tolerante a namespace prefix (ej. <ar:Resultado>): si AFIP rota su engine
+// SOAP y empieza a serializar con prefix, el parser sigue funcionando. Los
+// XML que generamos localmente no usan prefix, asi que el grupo opcional no
+// afecta el matching existente.
 function extractXmlTag(xml, tagName) {
-    const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
+    const regex = new RegExp(`<(?:\\w+:)?${tagName}>([\\s\\S]*?)<\\/(?:\\w+:)?${tagName}>`, 'i');
     const match = String(xml || '').match(regex);
     return match?.[1]?.trim() || '';
 }
@@ -1213,9 +1217,10 @@ async function afipConsultarComprobante({ token, sign, cuit, pointOfSale, cbteTy
     }
 
     // Parsear errores. AFIP devuelve en <Errors><Err><Code>X</Code><Msg>...
-    const errBlock = xml.match(/<Errors[^>]*>([\s\S]*?)<\/Errors>/i);
+    // M1: tolerante a prefix (ej. <ar:Errors><ar:Err>) por si AFIP rota engine SOAP.
+    const errBlock = xml.match(/<(?:\w+:)?Errors[^>]*>([\s\S]*?)<\/(?:\w+:)?Errors>/i);
     if (errBlock) {
-        const errs = errBlock[1].match(/<Err>[\s\S]*?<\/Err>/gi) || [];
+        const errs = errBlock[1].match(/<(?:\w+:)?Err[^>]*>[\s\S]*?<\/(?:\w+:)?Err>/gi) || [];
         const codes = errs.map(e => extractXmlTag(e, 'Code')).filter(Boolean);
         const msgs  = errs.map(e => `[${extractXmlTag(e, 'Code')}] ${extractXmlTag(e, 'Msg')}`).filter(Boolean);
         // Codigos conocidos de "comprobante no encontrado": 602, 1502, 15.
@@ -1262,6 +1267,25 @@ const INVOICE_TYPE_CONFIG = {
 const CREDIT_NOTE_CBTE_TYPE = { A: 3, B: 8, C: 13 };
 // Nota de Débito: misma letra que la factura que ajusta. CbteTipo 2/7/12.
 const DEBIT_NOTE_CBTE_TYPE  = { A: 2, B: 7, C: 12 };
+
+// M12: deriva el CbteTipo AFIP a partir de la letra del comprobante y la
+// clase ('Factura' | 'NC' | 'ND'). Usado como fallback para facturas pre-Fase 1
+// que tienen draft_json.tipo_comprobante='A'/'B'/'C' pero attempted_cbte_tipo
+// es null (la columna se agrego despues). Sin esto, una NC/ND sobre una
+// factura vieja explota con "datos completos faltantes" — con esto, se emite.
+function deriveCbteTipoFromLetra(letra, clase = 'Factura') {
+    const L = String(letra || '').toUpperCase();
+    if (!['A', 'B', 'C'].includes(L)) return null;
+    if (clase === 'NC') return CREDIT_NOTE_CBTE_TYPE[L] || null;
+    if (clase === 'ND') return DEBIT_NOTE_CBTE_TYPE[L]  || null;
+    return INVOICE_TYPE_CONFIG[L]?.cbteType || null;
+}
+
+// M5: patron unificado para detectar "ya emitido" (idempotencia AFIP / local).
+// Lo usan: comprobanteHandler (factura), emitNotaHandler (NC/ND), y la entrada
+// de KNOWN_ERRORS de buildErrorComment. Mantener UNA sola fuente de verdad
+// — si AFIP cambia el mensaje, se actualiza acá y aplica en los 3 lugares.
+const AFIP_IDEMPOTENT_ERROR_PATTERN = /idempotencia|ya\s+emitida|ya\s+completa|ya\s+se\s+emiti[oó]/i;
 
 // ─── Cotizacion de monedas (FEParamGetCotizacion) ─────────────────────────
 // Consulta la cotizacion oficial de AFIP para una moneda extranjera.
@@ -1320,9 +1344,10 @@ async function afipGetCotizacion({ token, sign, cuit, monId }) {
     }
 
     // Parsear errores AFIP
-    const errBlock = xml.match(/<Errors[^>]*>([\s\S]*?)<\/Errors>/i);
+    // M1: tolerante a prefix (ej. <ar:Errors><ar:Err>).
+    const errBlock = xml.match(/<(?:\w+:)?Errors[^>]*>([\s\S]*?)<\/(?:\w+:)?Errors>/i);
     if (errBlock) {
-        const errs = errBlock[1].match(/<Err>[\s\S]*?<\/Err>/gi) || [];
+        const errs = errBlock[1].match(/<(?:\w+:)?Err[^>]*>[\s\S]*?<\/(?:\w+:)?Err>/gi) || [];
         const msgs = errs.map(e => `[${extractXmlTag(e, 'Code')}] ${extractXmlTag(e, 'Msg')}`).filter(Boolean);
         if (msgs.length > 0) {
             throw new Error(`AFIP rechazo cotizacion ${monId}: ${msgs.join(' | ')}`);
@@ -1659,7 +1684,7 @@ async function afipIssueFactura({
     // verdad. Si la cabecera dice 'P' (parcial — algunos comprobantes con
     // observaciones) pero el detalle dice 'A' con CAE valido, es exito con warnings,
     // NO rechazo. Parsear desde FECAEDetResponse específicamente.
-    const detResponseMatch = xml.match(/<FECAEDetResponse[^>]*>[\s\S]*?<\/FECAEDetResponse>/i);
+    const detResponseMatch = xml.match(/<(?:\w+:)?FECAEDetResponse[^>]*>[\s\S]*?<\/(?:\w+:)?FECAEDetResponse>/i);
     const detXml = detResponseMatch ? detResponseMatch[0] : xml;
     const detailResult = extractXmlTag(detXml, 'Resultado');
     const cae = extractXmlTag(detXml, 'CAE');
@@ -1671,9 +1696,9 @@ async function afipIssueFactura({
     // <Errors><Err><Code>X</Code><Msg>...</Msg></Err></Errors>
     // <Observaciones><Obs><Code>X</Code><Msg>...</Msg></Obs></Observaciones>
     const extractMsgsFromBlock = (blockTag) => {
-        const block = xml.match(new RegExp(`<${blockTag}[^>]*>([\\s\\S]*?)<\\/${blockTag}>`, 'i'));
+        const block = xml.match(new RegExp(`<(?:\\w+:)?${blockTag}[^>]*>([\\s\\S]*?)<\\/(?:\\w+:)?${blockTag}>`, 'i'));
         if (!block) return [];
-        const items = block[1].match(/<(Err|Obs)[^>]*>[\s\S]*?<\/(Err|Obs)>/gi) || [];
+        const items = block[1].match(/<(?:\w+:)?(Err|Obs)[^>]*>[\s\S]*?<\/(?:\w+:)?(Err|Obs)>/gi) || [];
         return items.map((it) => {
             const code = extractXmlTag(it, 'Code') || '';
             const msg  = extractXmlTag(it, 'Msg')  || '';
@@ -2008,11 +2033,16 @@ async function ensureInvoiceEmissionsTable() {
     // numero e importe coincidan exactamente. Resultado en audit_status:
     // 'ok' | 'mismatch' | 'not_found_in_afip' | 'error'.
     // Una vez auditada, nunca se re-revisa (el campo deja de ser NULL).
+    // M3: last_audit_at trackea CUANDO se auditó por ultima vez una fila — se
+    // actualiza en cada corrida exitosa (no solo la primera). Eso permite que
+    // la auditoria nocturna priorice por last_audit_at ASC NULLS FIRST y rote
+    // por las facturas mas viejas/menos miradas cuando la tabla crece > batch.
     await db.query(`
         ALTER TABLE invoice_emissions
             ADD COLUMN IF NOT EXISTS audit_status TEXT,
             ADD COLUMN IF NOT EXISTS audited_at   TIMESTAMP,
-            ADD COLUMN IF NOT EXISTS audit_findings JSONB
+            ADD COLUMN IF NOT EXISTS audit_findings JSONB,
+            ADD COLUMN IF NOT EXISTS last_audit_at TIMESTAMP
     `);
 
     // Migracion Fase 5 - Soporte de moneda extranjera (USD):
@@ -2031,6 +2061,14 @@ async function ensureInvoiceEmissionsTable() {
         CREATE INDEX IF NOT EXISTS idx_invoice_emissions_audit_pending
         ON invoice_emissions (created_at DESC)
         WHERE status = 'success' AND audit_status IS NULL
+    `);
+    // M3: indice ordenado por last_audit_at ASC NULLS FIRST para el SELECT
+    // nocturno post-fix. NULLS FIRST garantiza que pendientes (nunca auditadas)
+    // se priorizan sobre las que ya tuvieron al menos una revision.
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_invoice_emissions_audit_rotation
+        ON invoice_emissions (last_audit_at ASC NULLS FIRST, created_at ASC)
+        WHERE status = 'success'
     `);
 
     // Migracion Fase 6 - Notas de Credito:
@@ -2560,7 +2598,63 @@ async function ensureAuditLogItemsTable() {
             ADD COLUMN IF NOT EXISTS workspace_id TEXT,
             ADD COLUMN IF NOT EXISTS company_id UUID REFERENCES companies(id) ON DELETE SET NULL
     `);
+    // M10: lock optimista entre live emission + reconcile cron + backfill cron.
+    // Si dos procesos intentan loguear el mismo (account, client_item) al
+    // audit board en simultaneo, sin esto cada uno crea su propio item en
+    // monday → duplicado. claimAuditLock toma el lock con INSERT … ON CONFLICT
+    // DO UPDATE WHERE locked_at IS NULL OR stale → quien gana crea; quien
+    // pierde aborta. audit_item_id se llena despues, en el mismo flujo.
+    await db.query(`
+        ALTER TABLE audit_log_items
+            ADD COLUMN IF NOT EXISTS locked_at TIMESTAMP
+    `);
     _auditLogItemsTableEnsured = true;
+}
+
+// M10: clip atomico del lock para evitar items duplicados en el audit board.
+// Devuelve { audit_item_id, claimed } donde:
+//   - audit_item_id != null  → ya existe item en board; usar ese (path UPDATE).
+//   - claimed=true           → nosotros somos los que tomamos el lock; tenemos
+//                              que crear el item y persistir audit_item_id.
+//   - claimed=false + audit_item_id=null → otro proceso lo esta creando ahora,
+//                              abortamos sin tocar monday.
+// staleSeconds: si el lock quedo colgado mas que esto, lo re-reclamamos (server
+// caido a mitad del flujo). 90s cubre 2 reintentos de fetchWithRetry (20s c/u)
+// + delay (3s) + margen para latencia AFIP-side; antes era 30s y un Monday API
+// lento podia liberar el lock mid-create → duplicado en el board.
+async function claimAuditLock(accountId, clientItemId, staleSeconds = 90) {
+    if (!accountId || !clientItemId) return { audit_item_id: null, claimed: false };
+    try {
+        const res = await db.query(
+            `INSERT INTO audit_log_items
+                (monday_account_id, client_item_id, audit_item_id, locked_at)
+             VALUES ($1, $2, '', CURRENT_TIMESTAMP)
+             ON CONFLICT (monday_account_id, client_item_id)
+             DO UPDATE SET locked_at = CURRENT_TIMESTAMP
+                 WHERE audit_log_items.audit_item_id = ''
+                   AND (audit_log_items.locked_at IS NULL
+                        OR audit_log_items.locked_at < NOW() - (INTERVAL '1 second' * $3))
+             RETURNING audit_item_id, locked_at`,
+            [String(accountId), String(clientItemId), staleSeconds]
+        );
+        if (res.rows.length > 0) {
+            // claim ganado: audit_item_id = '' significa "no creado todavia, te toca".
+            return { audit_item_id: null, claimed: true };
+        }
+        // ON CONFLICT no actualizo (audit_item_id != '' → ya creado) ni claim
+        // vencio. Releemos para saber cual de los dos casos es.
+        const existing = await db.query(
+            `SELECT audit_item_id FROM audit_log_items
+              WHERE monday_account_id=$1 AND client_item_id=$2 LIMIT 1`,
+            [String(accountId), String(clientItemId)]
+        );
+        const auditItemId = existing.rows[0]?.audit_item_id || null;
+        // Si esta vacio, otro proceso esta mid-claim — aborto.
+        if (!auditItemId) return { audit_item_id: null, claimed: false };
+        return { audit_item_id: auditItemId, claimed: false };
+    } catch (_) {
+        return { audit_item_id: null, claimed: false };
+    }
 }
 
 async function findAuditItemId(accountId, clientItemId) {
@@ -2570,7 +2664,10 @@ async function findAuditItemId(accountId, clientItemId) {
             'SELECT audit_item_id FROM audit_log_items WHERE monday_account_id=$1 AND client_item_id=$2',
             [String(accountId), String(clientItemId)]
         );
-        return r.rows[0]?.audit_item_id || null;
+        // M10: '' es sentinel "claim tomado pero create todavia no termino" —
+        // tratar como null para que el caller no asuma que existe ya.
+        const id = r.rows[0]?.audit_item_id;
+        return id ? id : null;
     } catch (_) { return null; }
 }
 
@@ -2908,7 +3005,7 @@ async function getInvoicePdfColumnId({ companyId, boardId }) {
          FROM board_automation_configs
          WHERE company_id = $1
            AND board_id = $2
-         ORDER BY updated_at DESC
+         ORDER BY updated_at DESC NULLS LAST, id DESC
          LIMIT 1`,
         [companyId, String(boardId)]
     );
@@ -3195,6 +3292,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                        AND board_id = $2
                        AND COALESCE(view_id, '') = COALESCE($3, '')
                        AND COALESCE(app_feature_id, '') = COALESCE($4, '')
+                     ORDER BY updated_at DESC NULLS LAST, id DESC
                      LIMIT 1`,
                     [company.id, String(board_id), view_id || null, app_feature_id || null]
                 );
@@ -3321,6 +3419,7 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
                AND board_id = $2
                AND COALESCE(view_id, '') = COALESCE($3, '')
                AND COALESCE(app_feature_id, '') = COALESCE($4, '')
+             ORDER BY updated_at DESC NULLS LAST, id DESC
              LIMIT 1`,
             [company.id, String(board_id), view_id || null, app_feature_id || null]
         );
@@ -4599,6 +4698,19 @@ async function deleteAccountData(accountId) {
             `DELETE FROM account_subscriptions WHERE monday_account_id = $1`,
             [accountId]
         )).rowCount;
+        // account_plan_overrides contiene `reason` con texto libre (puede incluir
+        // nombres / razon social) → es PII y va con el resto de los datos al
+        // uninstall. Tabla puede no existir aun si la cuenta no llego a usar
+        // bonificacion (la creacion es lazy): catch tabla-faltante.
+        try {
+            stats.account_plan_overrides = (await client.query(
+                `DELETE FROM account_plan_overrides WHERE monday_account_id = $1`,
+                [accountId]
+            )).rowCount;
+        } catch (apoErr) {
+            if (!isMissingTableError(apoErr)) throw apoErr;
+            stats.account_plan_overrides = 0;
+        }
         stats.companies = (await client.query(
             `DELETE FROM companies WHERE monday_account_id::text = $1`,
             [accountId]
@@ -4876,6 +4988,11 @@ async function comprobanteHandler(req, res) {
         let mondayUpload = null;
         let resolvedType = requestedType;
         let itemSourceName = null;
+        // M6: si despues detectamos que el item es NC/ND y delegamos, dejamos
+        // este valor seteado para que el catch del handler de factura postee
+        // el mensaje con el copy correcto cuando el delegado tire un error
+        // sincrono antes del setImmediate interno del wrapper.
+        let displayKind = 'Factura';
 
         try {
             markStart('preflight');
@@ -4959,10 +5076,12 @@ async function comprobanteHandler(req, res) {
                 if (/^\s*factura/i.test(tipoComp)) {
                     // tipoComp empieza con "Factura" (incluye FCE) → emitir factura.
                 } else if (/cr[eé]dito/i.test(tipoComp)) {
+                    displayKind = 'Nota de Crédito';
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Crédito`);
                     await emitNotaHandler(req, res, 'NC');
                     return;
                 } else if (/d[eé]bito/i.test(tipoComp)) {
+                    displayKind = 'Nota de Débito';
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Débito`);
                     await emitNotaHandler(req, res, 'ND');
                     return;
@@ -5933,7 +6052,7 @@ async function comprobanteHandler(req, res) {
             // existe y está bien. NO se toca el estado de la fila ni el status
             // del item en monday — hacerlo corrompía una emisión exitosa y
             // derivaba en facturas duplicadas (bug del caso IDVTA-153).
-            const isIdempotencyError = /idempotencia|ya emitida|ya completa/i.test(err?.message || '');
+            const isIdempotencyError = AFIP_IDEMPOTENT_ERROR_PATTERN.test(err?.message || '');
 
             // Comentario en el item — siempre (informa qué pasó, incluso si fue
             // un re-disparo bloqueado por idempotencia).
@@ -5941,7 +6060,7 @@ async function comprobanteHandler(req, res) {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId && boardId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind });
 
                     // Cambiar el status del item a "Error" SOLO si NO es idempotencia
                     // (y si el cliente activó "Cambiar el estado del item").
@@ -6196,7 +6315,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     `SELECT status_column_id, auto_update_status, auto_rename_item,
                             success_label, error_label, processing_label
                      FROM board_automation_configs
-                     WHERE company_id=$1 AND board_id=$2 LIMIT 1`,
+                     WHERE company_id=$1 AND board_id=$2
+                     ORDER BY updated_at DESC NULLS LAST, id DESC
+                     LIMIT 1`,
                     [company.id, boardId]
                 );
                 if (cfgRes.rows[0]) {
@@ -6298,7 +6419,18 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             const facturaDraft = factura.draft_json || {};
             const facturaAfip  = factura.afip_result_json || {};
             const facturaCbteNro  = facturaAfip.numero_comprobante || factura.attempted_cbte_nro;
-            const facturaCbteTipo = factura.attempted_cbte_tipo;
+            // M12: facturas pre-Fase 1 no tienen attempted_cbte_tipo en DB. Derivamos
+            // del campo letra del draft (tipo_comprobante 'A'/'B'/'C') usando el
+            // mapeo de Factura. Si tampoco hay letra valida, el throw mas abajo se
+            // dispara con el mensaje claro.
+            let facturaCbteTipo = factura.attempted_cbte_tipo;
+            if (!facturaCbteTipo) {
+                const derived = deriveCbteTipoFromLetra(facturaDraft.tipo_comprobante, 'Factura');
+                if (derived) {
+                    facturaCbteTipo = derived;
+                    console.log(`[nc] factura sin attempted_cbte_tipo — derivado=${derived} desde letra '${facturaDraft.tipo_comprobante}'`);
+                }
+            }
             const facturaPtoVta   = factura.attempted_pto_vta;
             if (!facturaAfip.cae || !facturaCbteNro || !facturaCbteTipo || !facturaPtoVta) {
                 throw new Error(
@@ -6350,7 +6482,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 `SELECT afip_result_json, invoice_type, status, attempted_cbte_nro
                    FROM invoice_emissions
                   WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                    AND invoice_type <> '${clase}'
+                    AND invoice_type <> $4
                     AND (
                       status='success'
                       OR (status='processing' AND updated_at > NOW() - INTERVAL '5 minutes')
@@ -6358,7 +6490,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     )
                   ORDER BY (status='success') DESC, updated_at DESC
                   LIMIT 1`,
-                [company.id, boardId, itemId]
+                [company.id, boardId, itemId, clase]
             );
             if (facturaEnEsteItem.rows[0]) {
                 const r = facturaEnEsteItem.rows[0];
@@ -6393,8 +6525,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 `SELECT id, status, afip_result_json, attempted_cbte_nro,
                         attempted_cbte_tipo, attempted_pto_vta
                  FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}' LIMIT 1`,
-                [company.id, boardId, itemId]
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4 LIMIT 1`,
+                [company.id, boardId, itemId, clase]
             );
             if (existingNc.rows[0]?.status === 'success') {
                 const prev = existingNc.rows[0].afip_result_json || {};
@@ -6559,7 +6691,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 `INSERT INTO invoice_emissions
                     (company_id, board_id, item_id, invoice_type, status, request_json,
                      draft_json, related_emission_id)
-                 VALUES ($1,$2,$3,'${clase}','processing',$4,$5,$6)
+                 VALUES ($1,$2,$3,$7,'processing',$4,$5,$6)
                  ON CONFLICT (company_id, board_id, item_id, invoice_type)
                  DO UPDATE SET status='processing', error_message=NULL,
                                request_json=$4, draft_json=$5, related_emission_id=$6,
@@ -6568,7 +6700,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     OR invoice_emissions.updated_at < NOW() - INTERVAL '5 minutes'
                  RETURNING id`,
                 [company.id, boardId, itemId, JSON.stringify(inbound),
-                 JSON.stringify(ncDraft), factura.id]
+                 JSON.stringify(ncDraft), factura.id, clase]
             );
             if (ncClaim.rows.length === 0) {
                 console.warn(`[nc] claim falló item ${itemId} — ya hay una ${docAbbr} en curso, abortando sin tocar la fila`);
@@ -6598,10 +6730,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 const acreditadoRes = await db.query(
                     `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
                      FROM invoice_emissions
-                     WHERE company_id=$1 AND board_id=$2 AND invoice_type='${clase}'
+                     WHERE company_id=$1 AND board_id=$2 AND invoice_type=$5
                        AND status IN ('success','processing')
                        AND related_emission_id=$3 AND item_id <> $4`,
-                    [company.id, boardId, factura.id, itemId]
+                    [company.id, boardId, factura.id, itemId, clase]
                 );
                 const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
                 saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
@@ -6611,8 +6743,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                         `UPDATE invoice_emissions SET status='error',
                              error_message='NC supera el saldo de la factura',
                              updated_at=CURRENT_TIMESTAMP
-                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
-                        [company.id, boardId, itemId]
+                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
+                        [company.id, boardId, itemId, clase]
                     ).catch(() => {});
                     throw new Error(
                         `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
@@ -6659,8 +6791,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                             `UPDATE invoice_emissions
                              SET attempted_cbte_tipo=$4, attempted_pto_vta=$5,
                                  attempted_cbte_nro=$6, updated_at=CURRENT_TIMESTAMP
-                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
-                            [company.id, boardId, itemId, cbteType, pv, cbteNro]
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$7`,
+                            [company.id, boardId, itemId, cbteType, pv, cbteNro, clase]
                         );
                     },
                 });
@@ -6698,10 +6830,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 `UPDATE invoice_emissions
                  SET status='success', draft_json=$4, afip_result_json=$5,
                      moneda=$6, cotizacion=$7, updated_at=CURRENT_TIMESTAMP
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$8`,
                 [company.id, boardId, itemId,
                  JSON.stringify(ncDraft), JSON.stringify(afipResult),
-                 ncDraft.moneda || 'PES', ncDraft.cotizacion || 1.0]
+                 ncDraft.moneda || 'PES', ncDraft.cotizacion || 1.0, clase]
             );
             console.log('[nc] CAE de la NC persistido en DB');
 
@@ -6831,7 +6963,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // existe y está bien. NO pisar la fila success ni cambiar el status
             // del item — hacerlo corrompía la emisión exitosa y la dejaba como
             // "Error" en el board (mismo bug que IDVTA-153 en factura).
-            const isIdempotencyError = /idempotencia|ya emitida|ya se emiti[oó]/i.test(err?.message || '');
+            const isIdempotencyError = AFIP_IDEMPOTENT_ERROR_PATTERN.test(err?.message || '');
 
             // Comentario en el item — siempre (informa qué pasó, incluso en
             // re-disparos bloqueados por idempotencia).
@@ -6839,7 +6971,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel });
                     // Status a "Error" SOLO si NO es idempotencia.
                     if (!isIdempotencyError && autoUpdateStatus && statusColumnId && boardId) {
                         await updateMondayItemStatus({
@@ -6860,9 +6992,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     if (company && boardId) {
                         await db.query(
                             `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
-                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$5
                                AND status <> 'success'`,
-                            [company.id, boardId, itemId, err.message]
+                            [company.id, boardId, itemId, err.message, clase]
                         );
                     }
                     logEmissionToAuditBoard({
@@ -6890,8 +7022,13 @@ app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, (req, re
 app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, (req, res) => emitNotaHandler(req, res, 'ND'));
 
 // ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
-function buildErrorComment(err) {
+// M6: displayKind define el texto user-facing del comprobante en el mensaje.
+// Cuando el handler de factura delega a NC/ND y la delegacion falla en el path
+// que vuelve al catch del wrapper, displayKind permite decir "Nota de Credito"
+// en lugar del generico "comprobante".
+function buildErrorComment(err, displayKind = 'comprobante') {
     const msg = err?.message || 'Error desconocido';
+    const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
 
     // Extraer detalle de subitems si viene en el mensaje (líneas con "•")
     const lines = msg.split('\n');
@@ -7043,7 +7180,7 @@ function buildErrorComment(err) {
             solucion: 'La Nota de Crédito se acredita con el mismo IVA que se facturó. Ajustá la columna <b>Alícuota IVA %</b> de los subítems para que coincida con la de la factura original.',
         },
         {
-            match: /idempotencia|ya emitida|ya completa|ya se emiti/i,
+            match: AFIP_IDEMPOTENT_ERROR_PATTERN,
             title: 'Ya se emitió un comprobante para este item',
             detail: mainMsg,
             solucion: 'Cada item del tablero corresponde a <b>un solo comprobante</b>. ' +
@@ -7055,21 +7192,32 @@ function buildErrorComment(err) {
     const known = KNOWN_ERRORS.find(e => e.match.test(msg));
 
     if (known) {
-        return `<b>❌ No se pudo emitir el comprobante</b><br/><br/>` +
+        return `<b>❌ No se pudo emitir ${kindArticle(kind)}</b><br/><br/>` +
             `<b>Causa:</b> ${known.title}<br/>${known.detail}<br/><br/>` +
             `<b>Cómo solucionarlo:</b> ${known.solucion}`;
     }
 
-    return `<b>❌ No se pudo emitir el comprobante</b><br/><br/>` +
+    return `<b>❌ No se pudo emitir ${kindArticle(kind)}</b><br/><br/>` +
         `<b>Causa:</b> ${mainMsg}<br/><br/>` +
         `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.`;
 }
 
+// M6: helper para concordancia gramatical del comprobante en mensajes user-facing.
+//   'Factura' / 'Nota de Crédito' / 'Nota de Débito' → "la Factura" / "la Nota de ..."
+//   'comprobante' (default) → "el comprobante"
+function kindArticle(kind) {
+    const k = String(kind || 'comprobante').trim();
+    if (/^factura/i.test(k) || /^nota de/i.test(k)) return `la ${k}`;
+    return `el ${k}`;
+}
+
 /**
  * Publica un comentario/update en el item de monday explicando el error.
+ * displayKind es el nombre user-facing del comprobante ('Factura' / 'Nota de Crédito' /
+ * 'Nota de Débito'); default 'comprobante' para call sites legacy.
  */
-async function postMondayErrorComment({ apiToken, itemId, error }) {
-    const body = buildErrorComment(error);
+async function postMondayErrorComment({ apiToken, itemId, error, displayKind }) {
+    const body = buildErrorComment(error, displayKind);
     const mutation = `
         mutation {
             create_update(item_id: ${itemId}, body: ${JSON.stringify(body)}) {
@@ -7611,7 +7759,25 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         // La NC usa una clave distinta (sufijo :NC) para NO colisionar con el
         // item de auditoría de su factura → cada comprobante tiene su fila propia.
         const auditKey = esNotaDebito ? `${clientItemId}:ND` : esNotaCredito ? `${clientItemId}:NC` : clientItemId;
-        const existingAuditItemId = await findAuditItemId(accountId, auditKey);
+
+        // M10: race-safe claim. claimed=true → nos toca crear; existingAuditItemId
+        // != null → ya existe item en board, hacemos UPDATE. Si NADIE devolvio
+        // y existingAuditItemId es null, hay otro proceso mid-create → abortamos.
+        const lockRes = await claimAuditLock(accountId, auditKey);
+        const existingAuditItemId = lockRes.audit_item_id;
+        if (!lockRes.claimed && !existingAuditItemId) {
+            console.warn(`[audit-log] otro proceso creando item para ${auditKey} — abortando`);
+            // Si era systemError, igual disparamos Slack (sin link).
+            if (isSystemError) {
+                await notifySlackSystemError({
+                    accountId,
+                    clientItemName: sourceItemName,
+                    errorMessage: error?.message || '',
+                    auditItemId: null,
+                }).catch(() => {});
+            }
+            return;
+        }
 
         // Disparar Slack ya con la info que tenemos (incluye link si ya existía el item).
         if (isSystemError) {
@@ -8014,9 +8180,15 @@ async function pregenerateWsfeTokenForCompanyId(companyId) {
 const NIGHTLY_AUDIT_BATCH_SIZE = 500;
 
 async function markAuditResult(rowId, status, findings) {
+    // M3: last_audit_at se setea SIEMPRE (no solo en el primer audit) — eso
+    // arma la rotacion. audited_at es el legacy "primera vez auditada" y se
+    // mantiene por compat con queries existentes.
     await db.query(
         `UPDATE invoice_emissions
-         SET audit_status=$2, audited_at=CURRENT_TIMESTAMP, audit_findings=$3
+         SET audit_status=$2,
+             audited_at=COALESCE(audited_at, CURRENT_TIMESTAMP),
+             last_audit_at=CURRENT_TIMESTAMP,
+             audit_findings=$3
          WHERE id=$1`,
         [rowId, status, JSON.stringify(findings || {})]
     );
@@ -8247,13 +8419,26 @@ async function runNightlyAfipAudit() {
 
     let rows;
     try {
+        // M3: tres reglas de seleccion:
+        //   1) pendientes (audit_status IS NULL) primero — siempre se priorizan
+        //      sobre las ya auditadas, sin importar la fecha.
+        //   2) ya auditadas hace > 30 dias entran al re-audit (rota la cobertura)
+        //   3) ORDER BY last_audit_at ASC NULLS FIRST + created_at ASC →
+        //      las nunca auditadas (NULL) primero, despues las mas viejas en
+        //      auditar. Asi una factura de hace 6 meses no queda colgada
+        //      cuando hay > 500 emisiones por noche.
         const result = await db.query(`
             SELECT id, company_id, board_id, item_id, invoice_type, status,
                    attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro,
-                   afip_result_json, draft_json, created_at
+                   afip_result_json, draft_json, created_at, last_audit_at
             FROM invoice_emissions
-            WHERE status='success' AND audit_status IS NULL
-            ORDER BY created_at DESC
+            WHERE status='success'
+              AND (audit_status IS NULL
+                   OR last_audit_at IS NULL
+                   OR last_audit_at < NOW() - INTERVAL '30 days')
+            ORDER BY (audit_status IS NULL) DESC,
+                     last_audit_at ASC NULLS FIRST,
+                     created_at ASC
             LIMIT $1
         `, [NIGHTLY_AUDIT_BATCH_SIZE]);
         rows = result.rows;
@@ -8831,7 +9016,7 @@ async function backfillAuditBoard() {
                           WHEN ie.invoice_type = 'ND' THEN ':ND'
                           ELSE '' END)
             WHERE ie.status = 'success'
-              AND ali.audit_item_id IS NULL
+              AND (ali.audit_item_id IS NULL OR ali.audit_item_id = '')
               AND ie.created_at >= NOW() - INTERVAL '${AUDIT_BACKFILL_MAX_AGE_DAYS} days'
             ORDER BY ie.created_at ASC
             LIMIT $1
@@ -8902,13 +9087,31 @@ function scheduleAuditBoardBackfill() {
 // Auth: header `x-admin-token` debe coincidir con DEV_MONDAY_TOKEN del env.
 // Corre el audit sincronicamente y devuelve el resumen en la response.
 // Tambien dispara la notificacion a Slack si hay rows auditadas.
+
+// M4: comparacion de tokens en tiempo constante. Hasheamos ambos lados con
+// SHA-256 antes de comparar; los hashes tienen siempre 32 bytes, asi
+// crypto.timingSafeEqual nunca recibe inputs de distinta longitud (cuyo costo
+// diferencial podria leakear "longitud correcta"). Si provided no es string,
+// hasheamos un buffer vacio para no diferenciar el branch.
+function safeCompareToken(provided, expected) {
+    if (typeof expected !== 'string' || !expected) return false;
+    const provStr = (typeof provided === 'string') ? provided : '';
+    const provHash = crypto.createHash('sha256').update(provStr, 'utf8').digest();
+    const expHash  = crypto.createHash('sha256').update(expected, 'utf8').digest();
+    try {
+        return crypto.timingSafeEqual(provHash, expHash);
+    } catch (_) {
+        return false;
+    }
+}
+
 app.post('/api/admin/run-nightly-audit', async (req, res) => {
     const adminToken = process.env.DEV_MONDAY_TOKEN;
     const provided = req.headers['x-admin-token'];
     if (!adminToken) {
         return res.status(500).json({ error: 'DEV_MONDAY_TOKEN no configurado en el server' });
     }
-    if (!provided || provided !== adminToken) {
+    if (!safeCompareToken(provided, adminToken)) {
         return res.status(403).json({ error: 'forbidden' });
     }
 
@@ -8966,7 +9169,7 @@ app.post('/api/admin/run-audit-backfill', async (req, res) => {
     if (!adminToken) {
         return res.status(500).json({ error: 'DEV_MONDAY_TOKEN no configurado en el server' });
     }
-    if (!provided || provided !== adminToken) {
+    if (!safeCompareToken(provided, adminToken)) {
         return res.status(403).json({ error: 'forbidden' });
     }
 

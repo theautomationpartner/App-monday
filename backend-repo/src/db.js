@@ -29,6 +29,20 @@ pool.on('error', (err) => {
   console.error('[db pool] idle client error:', err.message);
 });
 
+// M8: forzar timezone UTC en cada conexion nueva del pool.
+// Los conteos mensuales (getMonthlyEmissionCount) hacen AT TIME ZONE
+// 'America/Argentina/Buenos_Aires' explicito asumiendo que NOW() devuelve
+// UTC. Si DigitalOcean cambia el default del cluster en algun upgrade,
+// esos calculos se desplazan en silencio. Setear UTC por sesion blinda
+// ante ese caso sin tocar las queries.
+pool.on('connect', async (client) => {
+  try {
+    await client.query("SET TIME ZONE 'UTC'");
+  } catch (err) {
+    console.error('[db pool] failed to SET TIME ZONE:', err.message);
+  }
+});
+
 module.exports = {
   query: (text, params) => pool.query(text, params),
   pool

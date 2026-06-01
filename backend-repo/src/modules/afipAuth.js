@@ -44,9 +44,16 @@ function setDbStorage(storage) {
     _dbStorage = storage;
 }
 
-/** Devuelve la clave de caché para un servicio + CUIT emisor */
-function cacheKey(service, cuit) {
-    return `${service}::${cuit}`;
+/** Devuelve la clave de caché para un servicio + CUIT emisor + companyId.
+ *  M11: si dos companies de cuentas distintas comparten el mismo CUIT
+ *  emisor (caso raro: asesoria que emite por varias razones sociales con
+ *  mismo CUIT) usaban el mismo token en memoria. La DB ya esta aislada por
+ *  company_id, asi que para servicios per-company incluimos el companyId.
+ *  Para servicios globales (Padron, companyId=null) cae a __global__ y
+ *  el comportamiento queda igual que antes (compartido). */
+function cacheKey(service, cuit, companyId = null) {
+    const cidPart = companyId ? String(companyId) : '__global__';
+    return `${service}::${cuit}::${cidPart}`;
 }
 
 /** Genera el XML del Ticket de Requerimiento de Acceso (TRA).
@@ -141,7 +148,7 @@ function parseLoginResponse(xmlText) {
  * @returns {Promise<{token: string, sign: string}>}
  */
 async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false, companyId = null }) {
-    const key = cacheKey(service, cuit);
+    const key = cacheKey(service, cuit, companyId);
     const cached = _cache[key];
 
     // Capa 1: cache in-memory. Reutilizar si queda más que el margen de vida.
@@ -237,7 +244,7 @@ async function getToken({ certPem, keyPem, cuit, service = 'wsfe', force = false
 
 /** Invalida el caché de un servicio (por ej. si AFIP devuelve error de token expirado) */
 function invalidateToken(service, cuit, companyId = null) {
-    delete _cache[cacheKey(service, cuit)];
+    delete _cache[cacheKey(service, cuit, companyId)];
     if (_dbStorage?.invalidate) {
         _dbStorage.invalidate({ service, companyId })
             .catch((err) => console.warn(`[wsaa] db invalidate error (service=${service}): ${err.message}`));
