@@ -521,6 +521,17 @@ const emitLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Demasiadas emisiones en poco tiempo.' },
+    // Las recetas vienen siempre del rango de IPs de monday → si keyeamos por
+    // IP, un cliente que emite mucho bloquea a todos los demás. Keyeamos por
+    // accountId (o itemId como fallback intermedio) para aislar cada tenant.
+    // IP queda como ultimo recurso (ej. requests externas / debug).
+    keyGenerator: (req) => String(
+        req.body?.payload?.inboundFieldValues?.accountId
+        || req.body?.payload?.accountId
+        || req.body?.payload?.inboundFieldValues?.itemId
+        || req.ip
+        || 'anonymous'
+    ),
 });
 const webhookLimiter = rateLimit({
     windowMs: 60 * 1000,
@@ -695,7 +706,8 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
 
         const boardCfgResult = await db.query(
             `SELECT status_column_id, trigger_label, success_label, error_label,
-                    required_columns_json, auto_rename_item, auto_update_status
+                    processing_label, required_columns_json,
+                    auto_rename_item, auto_update_status
              FROM board_automation_configs
              WHERE company_id=$1 AND board_id=$2
              ORDER BY updated_at DESC LIMIT 1`,
@@ -2140,7 +2152,8 @@ async function ensureBoardAutomationConfigsExtras() {
     await db.query(`
         ALTER TABLE board_automation_configs
             ADD COLUMN IF NOT EXISTS auto_rename_item BOOLEAN DEFAULT TRUE,
-            ADD COLUMN IF NOT EXISTS auto_update_status BOOLEAN DEFAULT TRUE
+            ADD COLUMN IF NOT EXISTS auto_update_status BOOLEAN DEFAULT TRUE,
+            ADD COLUMN IF NOT EXISTS processing_label TEXT
     `);
     // Hacer status_column_id nullable. ALTER COLUMN no es idempotente en si
     // (no hay IF NOT NULL), pero si la columna ya es nullable no rompe nada.
@@ -2309,20 +2322,38 @@ async function ensureAccountSubscriptionsTable() {
 let _accountPlanOverridesTableEnsured = false;
 // Tabla de overrides por cuenta: bonificaciones / planes custom que no encajan
 // en PLAN_LIMITS (ej. caso Polifroni). Si una cuenta tiene fila acá, su
-// monthly_limit_override pisa al del plan de monday (NULL = ilimitado). El
-// upsert de subscription NO toca esta tabla — para bonificar a alguien,
-// `INSERT INTO account_plan_overrides ...` y queda fijo.
+// monthly_limit_override pisa al del plan de monday. Semantica:
+//   - is_unlimited=true              → ILIMITADO (independiente del numero).
+//   - is_unlimited=false + NULL      → usar el del PLAN (override solo de label).
+//   - is_unlimited=false + numero    → ese numero es el tope.
+// El upsert de subscription NO toca esta tabla — para bonificar/ajustar, INSERT
+// directo. La sub-resolucion en getAccountPlan respeta el orden: override > plan.
 async function ensureAccountPlanOverridesTable() {
     if (_accountPlanOverridesTableEnsured) return;
     await db.query(`
         CREATE TABLE IF NOT EXISTS account_plan_overrides (
             monday_account_id      TEXT PRIMARY KEY,
             monthly_limit_override INTEGER,
+            is_unlimited           BOOLEAN NOT NULL DEFAULT false,
             plan_label_override    TEXT,
             reason                 TEXT NOT NULL,
             created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
+    `);
+    // Migracion idempotente para bases que ya tenian la tabla sin is_unlimited.
+    await db.query(`
+        ALTER TABLE account_plan_overrides
+        ADD COLUMN IF NOT EXISTS is_unlimited BOOLEAN NOT NULL DEFAULT false
+    `);
+    // Backfill semantica vieja: filas con monthly_limit_override IS NULL eran
+    // "ilimitado" (footgun documentado). Las pasamos a is_unlimited=true para
+    // preservar el comportamiento de cuentas como Polifroni (que ya estaba con
+    // tope=NULL). Despues de este backfill, NULL pasa a significar "usar plan".
+    await db.query(`
+        UPDATE account_plan_overrides
+           SET is_unlimited=true
+         WHERE monthly_limit_override IS NULL AND is_unlimited=false
     `);
     _accountPlanOverridesTableEnsured = true;
 }
@@ -2399,20 +2430,28 @@ async function getAccountPlan(accountId) {
             billing_period: null,
         }
         : r.rows[0];
-    // Override por cuenta (bonificacion). Su monthly_limit_override pisa al del
-    // plan: NULL EN LA COLUMNA = ILIMITADO (footgun: si querés "usar el del
-    // plan", NO crees la fila — no la insertes con NULL). Numero = ese tope.
-    // plan_label_override sustituye al label en el banner. reason es anotacion.
+    // Override por cuenta (bonificacion). Resolucion en orden:
+    //   - is_unlimited=true              → ILIMITADO (monthly_limit=null).
+    //   - monthly_limit_override numero  → ese tope pisa al del plan.
+    //   - monthly_limit_override NULL    → usar el del plan (no pisar).
+    // Antes "NULL = ilimitado" era footgun (un INSERT por error daba ilimitado);
+    // ahora hay que ser explicito con is_unlimited=true. La columna se backfill-ea
+    // automatica en ensureAccountPlanOverridesTable (rows viejas con NULL pasan a
+    // is_unlimited=true para preservar la semantica anterior).
     // NOTA: el override NO toca `status`. Si la suscripcion esta cancelada,
-    // checkEmissionAllowed sigue bloqueando aunque el cupo sea ilimitado. La
-    // bonificacion AMPLIA el cupo; no inmuniza contra cancelacion comercial.
+    // checkEmissionAllowed sigue bloqueando aunque el cupo sea ilimitado.
     const ov = await db.query(
-        `SELECT monthly_limit_override, plan_label_override, reason
+        `SELECT monthly_limit_override, is_unlimited, plan_label_override, reason
            FROM account_plan_overrides WHERE monday_account_id = $1`,
         [String(accountId)]
     );
     if (ov.rows.length > 0) {
-        base.monthly_limit = ov.rows[0].monthly_limit_override;
+        if (ov.rows[0].is_unlimited) {
+            base.monthly_limit = null;
+        } else if (ov.rows[0].monthly_limit_override != null) {
+            base.monthly_limit = ov.rows[0].monthly_limit_override;
+        }
+        // else: NULL + !is_unlimited → no pisar, usar base.monthly_limit del plan.
         if (ov.rows[0].plan_label_override) base.plan_id = ov.rows[0].plan_label_override;
         base.override_reason = ov.rows[0].reason;
     }
@@ -2469,12 +2508,15 @@ async function checkEmissionAllowed(accountId) {
             reason: `subscription_${plan.status}`,
         };
     }
-    // Plan ilimitado (Enterprise) → siempre permitido
+    // Plan ilimitado (Enterprise) o cuenta bonificada (override sin tope) →
+    // siempre permitido. Igual reportamos `used` real para que el banner /
+    // panel admin muestre el conteo del mes en vez de "0 facturas usadas"
+    // (sino las cuentas bonificadas tipo Polifroni veían siempre 0).
     if (plan.monthly_limit == null) {
         return {
             allowed: true,
             plan,
-            used: 0,
+            used: await getMonthlyEmissionCount(accountId),
             limit: null,
             remaining: null,
             reason: null,
@@ -4617,6 +4659,15 @@ async function handleLifecycleEvent(type, data) {
             // Cancelacion programada: el cliente sigue activo hasta el fin del
             // periodo facturado. NO marcamos cancelled aun.
             await markAccountSubscriptionStatus(accountId, 'pending_cancellation');
+        } else if (type === 'app_subscription_renewal_attempt_failed') {
+            // Cobro recurrente fallido (tarjeta vencida, fondos, etc.). monday
+            // reintenta el cobro automaticamente; si eventualmente sale OK manda
+            // app_subscription_renewed -> volvemos a active. Si falla definitivo
+            // manda app_subscription_renewal_failed -> arriba lo marcamos cancelled.
+            // Mientras tanto, bloqueamos emisiones (payment_failed esta en
+            // BLOCKED_STATUSES de checkEmissionAllowed) — sin esto el cliente
+            // emitia gratis durante los 7-14 dias de grace period de monday.
+            await markAccountSubscriptionStatus(accountId, 'payment_failed');
         }
     } catch (err) {
         console.error(`[lifecycle] Error actualizando subscription account=${accountId}:`, err);
@@ -5110,7 +5161,11 @@ async function comprobanteHandler(req, res) {
                 if (uploadComplete) {
                     const cae  = prev.cae || '—';
                     const nro  = prev.numero_comprobante || '—';
-                    const tipo = prev.tipo_comprobante || existing.rows[0]?.invoice_type || '—';
+                    // user-facing: nunca mostrar 'AUTO' como letra (placeholder
+                    // interno cuando la fila quedo grabada con invoice_type='AUTO').
+                    const prevType = existing.rows[0]?.invoice_type;
+                    const tipo = prev.tipo_comprobante
+                        || (prevType && prevType !== 'AUTO' ? prevType : '—');
                     console.log('[emit] Idempotencia: factura ya completa (CAE + upload OK), abortando con error');
                     throw new Error(
                         `Factura ya emitida para este item (Factura ${tipo}, Comp. Nº ${nro}, CAE ${cae}). ` +
@@ -5940,6 +5995,13 @@ async function comprobanteHandler(req, res) {
             // Se saltea si el error es de idempotencia ("factura ya emitida"): la
             // factura original ya está registrada del intento exitoso anterior.
             if (!isIdempotencyError) {
+                // Si todavia no se resolvio el tipo real (falla antes del paso 8 →
+                // resolvedType == 'AUTO'), mandamos null para que el audit board
+                // muestre la columna vacia en vez de "AUTO" como letra del
+                // comprobante.
+                const tipoForAudit = (typeof resolvedType !== 'undefined' && resolvedType && resolvedType !== 'AUTO')
+                    ? resolvedType
+                    : null;
                 logEmissionToAuditBoard({
                     accountId,
                     success: false,
@@ -5947,7 +6009,7 @@ async function comprobanteHandler(req, res) {
                     sourceItemName: itemSourceName,
                     draft: null,
                     afipResult: null,
-                    tipo: typeof resolvedType !== 'undefined' ? resolvedType : null,
+                    tipo: tipoForAudit,
                     error: err,
                     durationMs: Date.now() - tIncoming,
                     company: typeof company !== 'undefined' ? company : null,
@@ -6132,7 +6194,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             try {
                 const cfgRes = await db.query(
                     `SELECT status_column_id, auto_update_status, auto_rename_item,
-                            success_label, error_label
+                            success_label, error_label, processing_label
                      FROM board_automation_configs
                      WHERE company_id=$1 AND board_id=$2 LIMIT 1`,
                     [company.id, boardId]
@@ -6144,8 +6206,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     // Labels custom (si el cliente los cambió en mapeo visual);
                     // fallback al flow estándar. Consistente con factura y con
                     // el reconcile cron, que ya honra estos campos.
-                    successLabel    = cfgRes.rows[0].success_label || COMPROBANTE_STATUS_FLOW.success;
-                    errorLabel      = cfgRes.rows[0].error_label   || COMPROBANTE_STATUS_FLOW.error;
+                    successLabel    = cfgRes.rows[0].success_label    || COMPROBANTE_STATUS_FLOW.success;
+                    errorLabel      = cfgRes.rows[0].error_label      || COMPROBANTE_STATUS_FLOW.error;
+                    processingLabel = cfgRes.rows[0].processing_label || COMPROBANTE_STATUS_FLOW.processing;
                 }
             } catch (cfgErr) {
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
@@ -7486,6 +7549,16 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         const fechaEmision = toMondayDate(draft?.fecha_emision) || new Date().toISOString().slice(0, 10);
         const vtoCae       = toMondayDate(afipResult?.cae_vencimiento);
 
+        // Defensa user-facing: 'AUTO' es un placeholder interno de invoice_type
+        // (la letra real se resuelve mas tarde). Si nos llega como `tipo`, lo
+        // reemplazamos por la letra real resolvable desde afipResult o draft, o
+        // null si todavia no se resolvio. Asi el audit board no muestra "AUTO"
+        // en la columna de letra.
+        let tipoLetra = tipo;
+        if (!tipoLetra || tipoLetra === 'AUTO') {
+            tipoLetra = afipResult?.tipo_comprobante || draft?.tipo_comprobante || null;
+        }
+
         const cv = {};
         cv[AUDIT_COLS.fecha_emision] = { date: fechaEmision };
         cv[AUDIT_COLS.estado]        = { label: success ? AUDIT_ESTADO.ok : classifyAuditError(error) };
@@ -7493,7 +7566,7 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         // Tipo de comprobante (Factura / Nota de Crédito) — siempre, incluso en error.
         cv[AUDIT_COLS.tipo_comprobante] = { labels: [esNotaDebito ? 'Nota de Débito' : esNotaCredito ? 'Nota de Crédito' : 'Factura'] };
         // Letra del comprobante (A / B / C).
-        if (tipo)                                    cv[AUDIT_COLS.tipo] = { labels: [String(tipo)] };
+        if (tipoLetra)                               cv[AUDIT_COLS.tipo] = { labels: [String(tipoLetra)] };
         // Moneda — si hay draft. Sin moneda explícita se asume Pesos.
         if (draft)                                   cv[AUDIT_COLS.moneda] = { labels: [draft.moneda === 'DOL' ? 'Dólares' : 'Pesos'] };
         if (afipResult?.numero_comprobante != null)  cv[AUDIT_COLS.nro_comprobante] = String(afipResult.numero_comprobante);
@@ -7528,9 +7601,9 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
         // - error  → nombre original del item del cliente, para que sepas qué factura falló
         const docLabel = esNotaDebito ? 'Nota de Débito' : esNotaCredito ? 'Nota de Crédito' : 'Factura';
         const successName = success && afipResult?.numero_comprobante
-            ? `${docLabel} ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim()
+            ? `${docLabel} ${tipoLetra || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim()
             : null;
-        const fallbackErrorName = `Error emisión ${docLabel} ${tipo || ''} - ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`.trim();
+        const fallbackErrorName = `Error emisión ${docLabel} ${tipoLetra || ''} - ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC`.trim();
         const itemName = successName
             || (sourceItemName ? String(sourceItemName).slice(0, 255) : fallbackErrorName);
 
@@ -8432,6 +8505,24 @@ async function reconcileSingleEmission(row) {
 
     console.log(`${tag} AFIP confirma factura emitida (CAE=${recovered.cae}). Iniciando recovery…`);
 
+    // Map invertido cbteTipo→letra para resolver la letra real de la fila.
+    // Cubre los 9 tipos que emitimos: Factura A/B/C (1/6/11), ND A/B/C (2/7/12),
+    // NC A/B/C (3/8/13). Si attempted_cbte_tipo no está en el map, caemos a
+    // row.invoice_type (saltando el placeholder 'AUTO') y al final a null —
+    // mejor que mostrar "AUTO" en el audit board / PDF.
+    const CBTE_TIPO_TO_LETRA = {
+        1: 'A',  6: 'B',  11: 'C',
+        2: 'A',  7: 'B',  12: 'C',
+        3: 'A',  8: 'B',  13: 'C',
+    };
+    const letraFromCbteTipo = CBTE_TIPO_TO_LETRA[row.attempted_cbte_tipo] || null;
+    // Solo aceptar como "letra" si row.invoice_type es A/B/C — NC y ND son
+    // CLASES de comprobante, no letras (la letra real vive en draft o
+    // attempted_cbte_tipo). Sin este gate, podia leak 'NC'/'ND' como letra
+    // al PDF y al audit board en el camino patologico de sin draft + sin
+    // attempted_cbte_tipo.
+    const letraFromInvoiceType = ['A', 'B', 'C'].includes(row.invoice_type)
+        ? row.invoice_type : null;
     // 5. Construir afipResult equivalente al que devuelve afipIssueFactura
     const afipResult = {
         resultado: recovered.resultado || 'A',
@@ -8441,7 +8532,10 @@ async function reconcileSingleEmission(row) {
         // Letra (A/B/C) y tipo AFIP (1/6/11 factura, 3/8/13 NC). cbte_tipo_afip
         // es lo que usa el PDF para titular "FACTURA" vs "NOTA DE CRÉDITO" — sin
         // esto una NC recuperada por el cron saldría titulada "FACTURA".
-        tipo_comprobante: row.draft_json?.tipo_comprobante || row.invoice_type,
+        tipo_comprobante: row.draft_json?.tipo_comprobante
+            || letraFromCbteTipo
+            || letraFromInvoiceType
+            || null,
         cbte_tipo_afip: row.attempted_cbte_tipo || null,
         imp_neto: recovered.imp_neto,
         imp_iva: recovered.imp_iva,
@@ -8477,7 +8571,8 @@ async function reconcileSingleEmission(row) {
         const draftForAudit = row.draft_json || {};
         const tipoLetra = afipResult.tipo_comprobante
             || draftForAudit.tipo_comprobante
-            || (row.invoice_type === 'AUTO' ? null : row.invoice_type);
+            || letraFromCbteTipo
+            || letraFromInvoiceType;
         // NOTA: pasamos success=true, así que logEmissionToAuditBoard arma el
         // nombre del audit item desde el comprobante ("Factura C N° …"), no
         // desde sourceItemName. Por eso null acá es seguro. Si en el futuro se
@@ -8512,7 +8607,13 @@ async function reconcileSingleEmission(row) {
     const esNC      = row.invoice_type === 'NC';
     const esND      = row.invoice_type === 'ND';
     const docNombre = esND ? 'Nota de Débito' : esNC ? 'Nota de Crédito' : 'Factura';
-    const letraDoc  = draft.tipo_comprobante || row.invoice_type;
+    // Letra del comprobante user-facing — nunca mostramos 'AUTO' (placeholder
+    // interno). Usamos la letra del draft, sino la derivada del cbteTipo, sino
+    // invoice_type (saltando 'AUTO'), sino vacio.
+    const letraDoc  = draft.tipo_comprobante
+        || letraFromCbteTipo
+        || letraFromInvoiceType
+        || '';
 
     // 8. Generar PDF
     let pdfBuffer = null;
@@ -8643,9 +8744,15 @@ async function reconcileStuckEmissions() {
         // Si otro ya la claim-eo en los ultimos RECONCILE_STALE_MIN min, skip.
         let claimed = false;
         try {
+            // H1 race fix: bumpear updated_at junto al claim. El live emit
+            // mira `updated_at < NOW() - 5 min` para decidir si una row processing
+            // es "stuck" y re-claim-able. Si NO actualizamos updated_at acá,
+            // ambos crons (este y un live emit) pueden trabajar la misma fila
+            // simultaneamente (doble FECompConsultar, doble UPDATE).
             const claim = await db.query(`
                 UPDATE invoice_emissions
                 SET last_reconciliation_at=CURRENT_TIMESTAMP,
+                    updated_at=CURRENT_TIMESTAMP,
                     reconciliation_attempts=COALESCE(reconciliation_attempts, 0) + 1
                 WHERE id=$1
                   AND (last_reconciliation_at IS NULL
