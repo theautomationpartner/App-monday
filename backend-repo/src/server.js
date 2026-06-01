@@ -1339,6 +1339,13 @@ async function afipIssueFactura({
     // invoca cuando reservamos un cbteNro nuevo, para persistirlo en DB ANTES
     // del SOAP — asi sabemos que numero "intentamos" en caso de timeout.
     previousCbteNro = null,
+    // Si el attempt anterior cambió de PV (multi-PV: el usuario corrigió la
+    // columna entre el timeout y el retry) o de cbteType (padrón del receptor
+    // cambió A↔B), HAY QUE consultar la secuencia AFIP DEL INTENTO PREVIO, no
+    // la nueva — sino FECompConsultar busca en otra secuencia, devuelve "no
+    // existe", y emitimos una SEGUNDA factura quedando la primera fantasma en AFIP.
+    previousPtoVta = null,
+    previousCbteType = null,
     onCbteNroAssigned = null,
     // PASO 2 USD — moneda y cotizacion ya RESUELTAS por el caller.
     // Defaults preservan el comportamiento PES historico cuando el caller
@@ -1378,8 +1385,15 @@ async function afipIssueFactura({
     // reutilizamos esos datos en vez de reemitir.
     if (previousCbteNro) {
         try {
+            // Usar PV y cbteType del intento previo si están persistidos; sino
+            // los actuales (caso normal de retry sin cambios).
+            const recoveryPtoVta   = previousPtoVta   != null ? previousPtoVta   : pointOfSale;
+            const recoveryCbteType = previousCbteType != null ? previousCbteType : cbteType;
             const recovered = await afipConsultarComprobante({
-                token, sign, cuit, pointOfSale, cbteType, cbteNro: previousCbteNro,
+                token, sign, cuit,
+                pointOfSale: recoveryPtoVta,
+                cbteType:    recoveryCbteType,
+                cbteNro:     previousCbteNro,
             });
             if (recovered && recovered.cae) {
                 console.log(`[wsfe] recovery: cbteNro=${previousCbteNro} ya existe en AFIP con CAE=${recovered.cae} — reutilizando emision previa`);
@@ -4800,20 +4814,49 @@ async function comprobanteHandler(req, res) {
             // Crédito o de Débito, no se puede emitir una factura encima — va en un
             // item nuevo. (El control simétrico — NC/ND sobre item con factura —
             // está en emitNotaHandler.) Cortamos antes de tocar el status.
+            // Cubre 3 casos:
+            //   (a) NC/ND exitosa previa  → throw idempotencia (cada item un comprobante).
+            //   (b) NC/ND processing<5min → otra emisión en curso, esperar.
+            //   (c) NC/ND con attempted_cbte_nro reservado pendiente recovery →
+            //       AFIP podría confirmarla retroactivamente; emitir factura ahora
+            //       crearía 2 comprobantes en el mismo item.
             const ncEnEsteItem = await db.query(
-                `SELECT afip_result_json, invoice_type FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                   AND invoice_type IN ('NC','ND') AND status='success' LIMIT 1`,
+                `SELECT afip_result_json, invoice_type, status, attempted_cbte_nro
+                   FROM invoice_emissions
+                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                    AND invoice_type IN ('NC','ND')
+                    AND (
+                      status='success'
+                      OR (status='processing' AND updated_at > NOW() - INTERVAL '5 minutes')
+                      OR (status<>'success' AND attempted_cbte_nro IS NOT NULL)
+                    )
+                  ORDER BY (status='success') DESC, updated_at DESC
+                  LIMIT 1`,
                 [company.id, boardId, itemId]
             );
             if (ncEnEsteItem.rows[0]) {
-                const n = ncEnEsteItem.rows[0].afip_result_json || {};
-                const docPrevio = ncEnEsteItem.rows[0].invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito';
-                throw new Error(
-                    `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
-                    `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
-                    `cada item corresponde a un solo comprobante. Creá un item nuevo.`
-                );
+                const r = ncEnEsteItem.rows[0];
+                const docPrevio = r.invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito';
+                if (r.status === 'success') {
+                    const n = r.afip_result_json || {};
+                    throw new Error(
+                        `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
+                        `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
+                        `cada item corresponde a un solo comprobante. Creá un item nuevo.`
+                    );
+                } else if (r.status === 'processing') {
+                    throw new Error(
+                        `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
+                        `segundos a que termine — NO vuelvas a disparar la receta.`
+                    );
+                } else {
+                    throw new Error(
+                        `Este item tiene una ${docPrevio} con número reservado en AFIP pero sin ` +
+                        `confirmar (probable timeout del intento anterior). El cron de recuperación ` +
+                        `consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y ` +
+                        `volvé a intentar — emitir una factura ahora puede crear dos comprobantes.`
+                    );
+                }
             }
 
             // ── 2b-bis. Pre-flight 2: bloquear si faltan valores en celdas ─────
@@ -4904,8 +4947,16 @@ async function comprobanteHandler(req, res) {
                 && existing.rows[0].attempted_cbte_nro)
                 ? Number(existing.rows[0].attempted_cbte_nro)
                 : null;
+            // A3: pasar también el PV y cbteType del intento previo. Sino, un
+            // cambio de PV (multi-PV) o de letra entre el timeout y el retry
+            // hace que FECompConsultar busque en la secuencia nueva, no encuentre
+            // el cbteNro y emita una segunda factura quedando la primera fantasma.
+            const previousPtoVta = previousCbteNro && existing.rows[0]?.attempted_pto_vta != null
+                ? Number(existing.rows[0].attempted_pto_vta) : null;
+            const previousCbteType = previousCbteNro && existing.rows[0]?.attempted_cbte_tipo != null
+                ? Number(existing.rows[0].attempted_cbte_tipo) : null;
             if (previousCbteNro) {
-                console.log(`[emit] Idempotency: detectado attempt previo (status=${existing.rows[0].status}) con cbteNro=${previousCbteNro} — intentaremos recovery via FECompConsultar`);
+                console.log(`[emit] Idempotency: detectado attempt previo (status=${existing.rows[0].status}) con cbteNro=${previousCbteNro} ptoVta=${previousPtoVta} cbteType=${previousCbteType} — intentaremos recovery via FECompConsultar`);
             }
 
             if (existing.rows[0]?.status === 'success') {
@@ -5346,6 +5397,8 @@ async function comprobanteHandler(req, res) {
                     draft,
                     invoiceType: tipo,
                     previousCbteNro,
+                    previousPtoVta,
+                    previousCbteType,
                     // PASO 2 USD — moneda y cotizacion ya RESUELTAS arriba en 9.5
                     monId:    draft.moneda || 'PES',
                     monCotiz: draft.cotizacion || 1.0,
@@ -6038,25 +6091,57 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // factura, está mal usado: la NC va en un item NUEVO, separado de la
             // factura. Cortamos acá — antes de tocar el status — así no queda el
             // item colgado en "Creando Comprobante".
+            // Cubre 3 casos (cross-type race + stuck recovery):
+            //   (a) otro comprobante exitoso previo en este item → throw idempotencia.
+            //   (b) otro comprobante processing<5min → otra emisión en curso, esperar.
+            //   (c) otro comprobante con attempted_cbte_nro reservado pendiente recovery →
+            //       AFIP podría confirmarlo retroactivamente; emitir ahora crearía 2.
             const facturaEnEsteItem = await db.query(
-                `SELECT afip_result_json FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                   AND invoice_type <> '${clase}' AND status='success' LIMIT 1`,
+                `SELECT afip_result_json, invoice_type, status, attempted_cbte_nro
+                   FROM invoice_emissions
+                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                    AND invoice_type <> '${clase}'
+                    AND (
+                      status='success'
+                      OR (status='processing' AND updated_at > NOW() - INTERVAL '5 minutes')
+                      OR (status<>'success' AND attempted_cbte_nro IS NOT NULL)
+                    )
+                  ORDER BY (status='success') DESC, updated_at DESC
+                  LIMIT 1`,
                 [company.id, boardId, itemId]
             );
             if (facturaEnEsteItem.rows[0]) {
-                const f = facturaEnEsteItem.rows[0].afip_result_json || {};
-                throw new Error(
-                    `Este item ya emitió un comprobante (N° ${f.numero_comprobante || '—'}, ` +
-                    `CAE ${f.cae || '—'}). La ${docLabel} tiene que ir en un item NUEVO ` +
-                    `— con el CAE de la factura a anular en la columna de referencia. ` +
-                    `Cada item corresponde a un solo comprobante.`
-                );
+                const r = facturaEnEsteItem.rows[0];
+                const docPrev = r.invoice_type === 'NC' ? 'Nota de Crédito'
+                    : r.invoice_type === 'ND' ? 'Nota de Débito'
+                    : 'factura';
+                if (r.status === 'success') {
+                    const f = r.afip_result_json || {};
+                    throw new Error(
+                        `Este item ya emitió un comprobante (${docPrev} N° ${f.numero_comprobante || '—'}, ` +
+                        `CAE ${f.cae || '—'}). La ${docLabel} tiene que ir en un item NUEVO ` +
+                        `— con el CAE de la factura a anular en la columna de referencia. ` +
+                        `Cada item corresponde a un solo comprobante.`
+                    );
+                } else if (r.status === 'processing') {
+                    throw new Error(
+                        `Este item está emitiendo una ${docPrev} en este momento. Esperá unos ` +
+                        `segundos a que termine — NO vuelvas a disparar la receta.`
+                    );
+                } else {
+                    throw new Error(
+                        `Este item tiene una ${docPrev} con número reservado en AFIP pero sin ` +
+                        `confirmar (probable timeout). El cron de recuperación consulta AFIP en los ` +
+                        `próximos 5 minutos. Esperá y volvé a intentar — emitir una ${docLabel} ahora ` +
+                        `puede crear dos comprobantes vivos para el mismo item.`
+                    );
+                }
             }
 
             // ── 4. Idempotencia: no permitir doble NC sobre el mismo item ──────
             const existingNc = await db.query(
-                `SELECT id, status, afip_result_json, attempted_cbte_nro
+                `SELECT id, status, afip_result_json, attempted_cbte_nro,
+                        attempted_cbte_tipo, attempted_pto_vta
                  FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}' LIMIT 1`,
                 [company.id, boardId, itemId]
@@ -6076,6 +6161,12 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 && existingNc.rows[0].attempted_cbte_nro)
                 ? Number(existingNc.rows[0].attempted_cbte_nro)
                 : null;
+            // A3: PV y cbteType del intento previo para que el recovery consulte
+            // la secuencia AFIP correcta (sino: doble emisión cuando hubo cambios).
+            const previousPtoVta = previousCbteNro && existingNc.rows[0]?.attempted_pto_vta != null
+                ? Number(existingNc.rows[0].attempted_pto_vta) : null;
+            const previousCbteType = previousCbteNro && existingNc.rows[0]?.attempted_cbte_tipo != null
+                ? Number(existingNc.rows[0].attempted_cbte_tipo) : null;
 
             // ── 5. Certificados AFIP del emisor ────────────────────────────────
             const certResult = await db.query(
@@ -6308,6 +6399,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     invoiceType: letra,
                     comprobanteClass: clase,
                     previousCbteNro,
+                    previousPtoVta,
+                    previousCbteType,
                     monId:    ncDraft.moneda || 'PES',
                     monCotiz: ncDraft.cotizacion || 1.0,
                     cbtesAsoc,
