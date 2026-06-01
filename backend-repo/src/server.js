@@ -2350,13 +2350,23 @@ async function getAccountPlan(accountId) {
 // fallidos no consumen quota.
 async function getMonthlyEmissionCount(accountId) {
     if (!accountId) return 0;
+    // A9: cuenta el mes calendario ARGENTINO (timezone explicito), no el UTC.
+    //     Antes las ultimas 3hs de cada mes AR caian al mes siguiente UTC.
+    // A10: usa updated_at (= cuando la fila quedo success al final del UPDATE),
+    //      no created_at (= cuando se hizo el claim al principio). Asi una
+    //      emision que arranca el 30 a las 23:55 y termina success el 01 a las
+    //      00:03 cuenta al mes nuevo. Tambien evita que el cron de reconciliacion
+    //      impute retroactivamente al mes viejo cuando recupera una row stuck.
     const r = await db.query(`
         SELECT COUNT(*)::int AS n
           FROM invoice_emissions ie
           JOIN companies c ON c.id = ie.company_id
          WHERE c.monday_account_id::text = $1
            AND ie.status = 'success'
-           AND ie.created_at >= date_trunc('month', CURRENT_TIMESTAMP)
+           AND ie.updated_at >= (
+                 date_trunc('month', NOW() AT TIME ZONE 'America/Argentina/Buenos_Aires')
+                 AT TIME ZONE 'America/Argentina/Buenos_Aires'
+               )
     `, [String(accountId)]);
     return r.rows[0]?.n || 0;
 }
