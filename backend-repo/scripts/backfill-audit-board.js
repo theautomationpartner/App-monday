@@ -100,10 +100,11 @@ function buildColumnValues(row) {
     const d = row.draft_json || {};
     const a = row.afip_result_json || {};
     const esNC = row.invoice_type === 'NC';
+    const esND = row.invoice_type === 'ND';
     const cv = {};
     const fe = ymd(d.fecha_emision);                 if (fe) cv[COL.fecha_emision] = { date: fe };
     cv[COL.estado] = { label: 'Emitida OK' };
-    cv[COL.tipo_comprobante] = { labels: [esNC ? 'Nota de Crédito' : 'Factura'] };
+    cv[COL.tipo_comprobante] = { labels: [esND ? 'Nota de Débito' : esNC ? 'Nota de Crédito' : 'Factura'] };
     const letra = a.tipo_comprobante || d.tipo_comprobante;
     if (letra)                                        cv[COL.tipo] = { labels: [String(letra)] };
     cv[COL.moneda] = { labels: [d.moneda === 'DOL' ? 'Dólares' : 'Pesos'] };
@@ -133,8 +134,9 @@ function buildName(row, esDup) {
     const d = row.draft_json || {};
     const a = row.afip_result_json || {};
     const esNC = row.invoice_type === 'NC';
+    const esND = row.invoice_type === 'ND';
     const letra = a.tipo_comprobante || d.tipo_comprobante || '';
-    const base = `${esNC ? 'Nota de Crédito' : 'Factura'} ${letra} N° ${pad(d.punto_venta, 4)}-${pad(a.numero_comprobante, 8)}`
+    const base = `${esND ? 'Nota de Débito' : esNC ? 'Nota de Crédito' : 'Factura'} ${letra} N° ${pad(d.punto_venta, 4)}-${pad(a.numero_comprobante, 8)}`
         .replace(/\s+/g, ' ').trim();
     return esDup ? `${base} (duplicada)` : base;
 }
@@ -196,6 +198,20 @@ async function main() {
                         board_id: $b, item_id: $i, column_values: $cv, create_labels_if_missing: true
                       ) { id }
                     }`, { b: String(BOARD_ID), i: String(boardByCae.get(cae)), cv: JSON.stringify(cv) });
+
+                // También registramos el mapeo client_item → audit_item para que
+                // el cron `backfillAuditBoard` no lo trate como "sin loguear" y
+                // cree un duplicado. Idempotente: ON CONFLICT DO NOTHING.
+                const clientItemId = row.invoice_type === 'ND' ? `${row.item_id}:ND`
+                    : row.invoice_type === 'NC' ? `${row.item_id}:NC`
+                    : String(row.item_id);
+                await db.query(`
+                    INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id, workspace_id, company_id)
+                    VALUES ($1,$2,$3,$4,$5)
+                    ON CONFLICT (monday_account_id, client_item_id) DO NOTHING
+                `, [String(row.monday_account_id), clientItemId, String(boardByCae.get(cae)),
+                    row.workspace_id ? String(row.workspace_id) : null, row.company_id]);
+
                 actualizadas++;
                 console.log(`[backfill] ↻ ${buildName(row, false)}  (CAE ${cae})`);
             } else {
@@ -209,7 +225,9 @@ async function main() {
                 const auditItemId = data?.create_item?.id;
                 if (!auditItemId) throw new Error('create_item no devolvió id');
 
-                const clientItemId = row.invoice_type === 'NC' ? `${row.item_id}:NC` : String(row.item_id);
+                const clientItemId = row.invoice_type === 'ND' ? `${row.item_id}:ND`
+                    : row.invoice_type === 'NC' ? `${row.item_id}:NC`
+                    : String(row.item_id);
                 await db.query(`
                     INSERT INTO audit_log_items (monday_account_id, client_item_id, audit_item_id, workspace_id, company_id)
                     VALUES ($1,$2,$3,$4,$5)

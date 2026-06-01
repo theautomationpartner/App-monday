@@ -7749,10 +7749,17 @@ async function auditSingleEmission({ row, company, token, sign }) {
         return { status: 'error', findings: { error: 'sin afip_result_json o sin CAE' } };
     }
 
-    const cbteTypeMap = { A: 1, B: 6, C: 11 };
-    const cbteType = row.attempted_cbte_tipo
-        || cbteTypeMap[afipResult.tipo_comprobante]
-        || cbteTypeMap[row.invoice_type];
+    // Map por clase: factura usa 1/6/11; NC 3/8/13; ND 2/7/12.
+    const FACT_MAP = { A: 1, B: 6, C: 11 };
+    const NC_MAP   = { A: 3, B: 8, C: 13 };
+    const ND_MAP   = { A: 2, B: 7, C: 12 };
+    const letraDoc = row.afip_result_json?.tipo_comprobante
+        || row.draft_json?.tipo_comprobante
+        || (row.invoice_type === 'AUTO' ? null : row.invoice_type);
+    const claseMap = row.invoice_type === 'ND' ? ND_MAP
+        : row.invoice_type === 'NC' ? NC_MAP
+        : FACT_MAP;
+    const cbteType = row.attempted_cbte_tipo || claseMap[letraDoc] || FACT_MAP.C;
     if (!cbteType) {
         return { status: 'error', findings: { error: `cbteType no resuelto (invoice_type=${row.invoice_type})` } };
     }
@@ -7826,10 +7833,11 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
     const total = ok + mismatch + notFound + errors;
     if (total === 0) return; // nada nuevo que reportar tonight
 
-    // Desglose facturas vs notas de crédito de lo auditado esta noche.
+    // Desglose facturas vs notas de crédito vs notas de débito de lo auditado esta noche.
     const ncCount  = results.filter(r => r.row?.invoice_type === 'NC').length;
-    const facCount = total - ncCount;
-    const desgloseLine = `   · Facturas: ${facCount}  ·  Notas de crédito: ${ncCount}`;
+    const ndCount  = results.filter(r => r.row?.invoice_type === 'ND').length;
+    const facCount = total - ncCount - ndCount;
+    const desgloseLine = `   · Facturas: ${facCount}  ·  Notas de crédito: ${ncCount}  ·  Notas de Débito: ${ndCount}`;
 
     // Acumulado historico de toda la tabla — incluye lo que se acaba de auditar.
     // Asi el mensaje muestra "auditadas anoche: X" + "estado del sistema: Y/Z OK".
@@ -7878,7 +7886,7 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             desgloseLine,
             cumLine,
             ``,
-            `_Las facturas y notas de crédito emitidas por la app coinciden 100% con AFIP (CAE, numero e importe)._`,
+            `_Las facturas, notas de crédito y notas de débito emitidas por la app coinciden 100% con AFIP (CAE, numero e importe)._`,
             `_Duracion: ${durationStr}_`,
         ].join('\n');
     } else if (!hasIssues && errors > 0) {
@@ -7902,7 +7910,8 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             const ptoStr = String(r.row.attempted_pto_vta || r.row.draft_json?.punto_venta || '').padStart(2, '0');
             const nroStr = String(afipR.numero_comprobante || r.row.attempted_cbte_nro || '').padStart(8, '0');
             const esNc = r.row.invoice_type === 'NC';
-            const tipoStr = `${esNc ? 'Nota de Crédito' : 'Factura'} ${afipR.tipo_comprobante || '?'} N° ${ptoStr}-${nroStr}`;
+            const esND = r.row.invoice_type === 'ND';
+            const tipoStr = `${esND ? 'Nota de Débito' : esNc ? 'Nota de Crédito' : 'Factura'} ${afipR.tipo_comprobante || '?'} N° ${ptoStr}-${nroStr}`;
             const itemRef = `account=${r.company?.monday_account_id || '?'} board=${r.row.board_id} item=${r.row.item_id}`;
 
             if (r.status === 'not_found_in_afip') {
@@ -8189,6 +8198,32 @@ async function reconcileSingleEmission(row) {
     } catch (dbErr) {
         console.error(`${tag} error persistiendo CAE en DB:`, dbErr.message);
         return; // sin DB no tiene sentido seguir
+    }
+
+    // 6b. Loggear al audit board "Comp Emitidos". logEmissionToAuditBoard es
+    //     idempotente (findAuditItemId): si ya existe el audit item del intento
+    //     original (típicamente como "Error AFIP"), hace UPDATE — pasándolo a
+    //     "Emitida OK" con los datos reales. Si no existe, lo CREA. Fire-and-
+    //     forget: cualquier error en monday no debe romper el recovery.
+    if (company.monday_account_id) {
+        const draftForAudit = row.draft_json || {};
+        const tipoLetra = afipResult.tipo_comprobante
+            || draftForAudit.tipo_comprobante
+            || (row.invoice_type === 'AUTO' ? null : row.invoice_type);
+        logEmissionToAuditBoard({
+            accountId: String(company.monday_account_id),
+            success: true,
+            clientItemId: row.item_id,
+            sourceItemName: null,
+            draft: draftForAudit,
+            afipResult,
+            tipo: tipoLetra,
+            receptorRazonSocial: draftForAudit.receptor_nombre || null,
+            company,
+            esNotaCredito: row.invoice_type === 'NC',
+            esNotaDebito: row.invoice_type === 'ND',
+            durationMs: null,
+        }).catch((e) => console.warn('[reconcile] audit-log fire-and-forget falló:', e.message));
     }
 
     // 7. Si no tenemos draft_json (rows viejas pre-Fase 3), no podemos
