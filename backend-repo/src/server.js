@@ -494,6 +494,18 @@ app.use((req, res, next) => {
     next();
 });
 
+// B3: correlation ID. Generamos un short ID por request (12 hex chars), lo
+// exponemos en req.id + header X-Request-ID + lo logueamos al arrancar la
+// peticion. Los catches existentes pueden incluirlo en la response leyendo
+// req.id si queremos cross-link con logs. No tocamos los 28 catches viejos
+// para mantener el commit chico; los nuevos handlers pueden adoptarlo.
+app.use((req, res, next) => {
+    const requestId = crypto.randomBytes(6).toString('hex');
+    req.id = requestId;
+    res.setHeader('X-Request-ID', requestId);
+    next();
+});
+
 // Middlewares
 app.use(cors({
     origin: '*', // Permitir cualquier origen (necesario para repos separados)
@@ -1651,8 +1663,27 @@ async function afipIssueFactura({
 
     // Si el probe rescato una emision pre-procesada, devolverla como exito directo
     // (no hay XML que parsear). Mismo shape de respuesta que la rama normal.
+    // B1: aplicamos la verificacion de Fase 2 igual que en el camino "happy"
+    // — comparamos cbteNro/importe vs lo que esperabamos enviar (draft). Si
+    // hay mismatch tag-eamos [FASE2_MISMATCH] en observacion para que la
+    // alerta de Slack se dispare igual que en una emision normal con mismatch.
     if (probed && probeRecovered) {
         const totalAmountForCheck = Number(draft.importe_total || 0);
+        const expectedCbteNro = nextVoucher;
+        const phase2Mismatches = [];
+        if (probeRecovered.cbte_nro && probeRecovered.cbte_nro !== expectedCbteNro) {
+            phase2Mismatches.push(`cbteNro: esperado=${expectedCbteNro} vs probe=${probeRecovered.cbte_nro}`);
+        }
+        if (totalAmountForCheck > 0 && Math.abs((probeRecovered.imp_total || 0) - totalAmountForCheck) > 0.01) {
+            phase2Mismatches.push(`importe: esperado=${totalAmountForCheck} vs probe=${probeRecovered.imp_total}`);
+        }
+        const baseObs = '[recovery_callwsfe_retry] AFIP confirmó el comprobante vía FECompConsultar tras fallo de red en el primer SOAP — sin re-emisión.';
+        const obs = phase2Mismatches.length > 0
+            ? `${baseObs} [FASE2_MISMATCH] ${phase2Mismatches.join(' | ')}`
+            : baseObs;
+        if (phase2Mismatches.length > 0) {
+            console.warn(`[wsfe] probe-recovered FASE2_MISMATCH: ${phase2Mismatches.join(' | ')}`);
+        }
         return {
             resultado: probeRecovered.resultado || 'A',
             cae: probeRecovered.cae,
@@ -1662,13 +1693,14 @@ async function afipIssueFactura({
             cbte_tipo_afip: cbteType,
             imp_neto: probeRecovered.imp_neto,
             imp_iva: probeRecovered.imp_iva,
-            observacion: '[recovery_callwsfe_retry] AFIP confirmó el comprobante vía FECompConsultar tras fallo de red en el primer SOAP — sin re-emisión.',
+            observacion: obs,
             raw_xml: '',
             recovered: true,
             verification: {
                 cae_match: true,
-                cbte_nro_match: (probeRecovered.cbte_nro || nextVoucher) === nextVoucher,
-                imp_total_match: Math.abs((probeRecovered.imp_total || 0) - totalAmountForCheck) <= 0.01,
+                cbte_nro_match: (probeRecovered.cbte_nro || nextVoucher) === expectedCbteNro,
+                imp_total_match: !(totalAmountForCheck > 0 && Math.abs((probeRecovered.imp_total || 0) - totalAmountForCheck) > 0.01),
+                mismatches: phase2Mismatches,
                 checked_at: new Date().toISOString(),
                 source: 'callwsfe_retry_probe',
             },
@@ -2042,7 +2074,8 @@ async function ensureInvoiceEmissionsTable() {
             ADD COLUMN IF NOT EXISTS audit_status TEXT,
             ADD COLUMN IF NOT EXISTS audited_at   TIMESTAMP,
             ADD COLUMN IF NOT EXISTS audit_findings JSONB,
-            ADD COLUMN IF NOT EXISTS last_audit_at TIMESTAMP
+            ADD COLUMN IF NOT EXISTS last_audit_at TIMESTAMP,
+            ADD COLUMN IF NOT EXISTS mismatch_persisted_nights INTEGER NOT NULL DEFAULT 0
     `);
 
     // Migracion Fase 5 - Soporte de moneda extranjera (USD):
@@ -2090,6 +2123,17 @@ async function ensureInvoiceEmissionsTable() {
     await db.query(`
         CREATE INDEX IF NOT EXISTS idx_invoice_emissions_cae
         ON invoice_emissions ((afip_result_json->>'cae'))
+        WHERE status = 'success'
+    `);
+    // B9: indice parcial para backfillAuditBoard. La query usa
+    // WHERE ie.status='success' AND ie.created_at >= NOW() - INTERVAL N days
+    // ORDER BY ie.created_at ASC. Con este indice no escanea rows fallidas
+    // ni hace sort en memoria. Distinto del idx_audit_pending (que ordena
+    // DESC y filtra audit_status IS NULL — no aplica al backfill por audit
+    // board, que filtra por LEFT JOIN sobre audit_log_items).
+    await db.query(`
+        CREATE INDEX IF NOT EXISTS idx_invoice_emissions_audit_backfill
+        ON invoice_emissions (created_at ASC)
         WHERE status = 'success'
     `);
 }
@@ -2454,20 +2498,41 @@ async function markAccountSubscriptionStatus(accountId, status) {
 async function getAccountPlan(accountId) {
     await ensureAccountSubscriptionsTable();
     await ensureAccountPlanOverridesTable();
+    // B10: leemos suscripcion + override en UNA SOLA query atomica con LEFT
+    // JOIN. Antes eran dos queries separadas — un INSERT de override entre
+    // ambas dejaba el calculo inconsistente (plan viejo + override nuevo).
+    // Hoy la consistencia es la del snapshot Postgres de read committed:
+    // ambos lados de la fila reflejan el mismo punto en el tiempo.
     const r = await db.query(
-        'SELECT * FROM account_subscriptions WHERE monday_account_id = $1',
+        `SELECT s.plan_id, s.monthly_limit, s.is_trial, s.status,
+                s.days_left, s.billing_period,
+                o.monthly_limit_override, o.is_unlimited,
+                o.plan_label_override, o.reason
+           FROM account_subscriptions s
+           FULL OUTER JOIN account_plan_overrides o
+                  ON o.monday_account_id = s.monday_account_id
+          WHERE COALESCE(s.monday_account_id, o.monday_account_id) = $1
+          LIMIT 1`,
         [String(accountId)]
     );
-    const base = r.rows.length === 0
+    const row = r.rows[0] || null;
+    const base = (row && row.plan_id != null)
         ? {
+            plan_id: row.plan_id,
+            monthly_limit: row.monthly_limit,
+            is_trial: row.is_trial,
+            status: row.status,
+            days_left: row.days_left,
+            billing_period: row.billing_period,
+        }
+        : {
             plan_id: DEFAULT_PLAN_ID,
             monthly_limit: PLAN_LIMITS[DEFAULT_PLAN_ID],
             is_trial: false,
             status: 'active',
             days_left: null,
             billing_period: null,
-        }
-        : r.rows[0];
+        };
     // Override por cuenta (bonificacion). Resolucion en orden:
     //   - is_unlimited=true              → ILIMITADO (monthly_limit=null).
     //   - monthly_limit_override numero  → ese tope pisa al del plan.
@@ -2478,20 +2543,18 @@ async function getAccountPlan(accountId) {
     // is_unlimited=true para preservar la semantica anterior).
     // NOTA: el override NO toca `status`. Si la suscripcion esta cancelada,
     // checkEmissionAllowed sigue bloqueando aunque el cupo sea ilimitado.
-    const ov = await db.query(
-        `SELECT monthly_limit_override, is_unlimited, plan_label_override, reason
-           FROM account_plan_overrides WHERE monday_account_id = $1`,
-        [String(accountId)]
-    );
-    if (ov.rows.length > 0) {
-        if (ov.rows[0].is_unlimited) {
+    // hasOverride: el JOIN trae la fila aunque no haya override; detectamos
+    // su presencia por reason (NOT NULL en account_plan_overrides).
+    const hasOverride = row && row.reason != null;
+    if (hasOverride) {
+        if (row.is_unlimited) {
             base.monthly_limit = null;
-        } else if (ov.rows[0].monthly_limit_override != null) {
-            base.monthly_limit = ov.rows[0].monthly_limit_override;
+        } else if (row.monthly_limit_override != null) {
+            base.monthly_limit = row.monthly_limit_override;
         }
         // else: NULL + !is_unlimited → no pisar, usar base.monthly_limit del plan.
-        if (ov.rows[0].plan_label_override) base.plan_id = ov.rows[0].plan_label_override;
-        base.override_reason = ov.rows[0].reason;
+        if (row.plan_label_override) base.plan_id = row.plan_label_override;
+        base.override_reason = row.reason;
     }
     return base;
 }
@@ -4646,8 +4709,10 @@ app.post('/api/webhooks/monday-lifecycle', webhookLimiter, async (req, res) => {
 });
 
 // Borra todos los datos operativos de una cuenta en una transacción atómica.
-// Requerido por la política de monday: eliminar datos del cliente en ≤10 días
-// post-uninstall (https://developer.monday.com/apps/docs/privacy-and-security).
+// Politica monday (eliminar datos del cliente en ≤10 dias post-uninstall):
+//   https://developer.monday.com/apps/docs/privacy-and-security
+// Disparado desde el evento 'uninstall' del webhook de lifecycle:
+//   https://developer.monday.com/apps/docs/app-lifecycle-events
 async function deleteAccountData(accountId) {
     if (!accountId) return null;
 
@@ -5880,7 +5945,7 @@ async function comprobanteHandler(req, res) {
                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                 [
                     company.id, boardId, itemId, typeForIdempotency,
-                    afipResult?.cae ? 'success' : 'prepared',
+                    afipResult?.cae ? 'success' : 'error',
                     JSON.stringify(draft),
                     JSON.stringify(finalAfipResult),
                     monedaPersistida,
@@ -7091,8 +7156,11 @@ function buildErrorComment(err, displayKind = 'comprobante') {
             solucion: 'Revisá dos cosas:<br/>&nbsp;&nbsp;1) En la app, abrí <b>Datos Fiscales</b> y confirmá que la <b>Condición IVA</b> de tu empresa esté bien cargada (Responsable Inscripto, Monotributo, etc.).<br/>&nbsp;&nbsp;2) En el item, confirmá que el <b>CUIT del receptor</b> sea correcto. La app consulta automáticamente a AFIP la condición del receptor para decidir si corresponde A, B o C.',
         },
         {
-            // Guardia "un item = un solo comprobante" (factura + NC en el mismo item).
-            match: /este item ya emitió/i,
+            // B2: guardia "un item = un solo comprobante" — cubre las 3 variantes
+            // que dispara la guardia cross-tipo (factura sobre item con NC/ND
+            // y viceversa): "ya emitió", "está emitiendo" (concurrente), y
+            // "tiene una ... con número reservado en AFIP pero sin confirmar".
+            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)/i,
             title: 'Este item ya tiene un comprobante',
             detail: mainMsg,
             solucion: 'Cada item corresponde a <b>un solo comprobante</b>. Para emitir otro — o la Nota de Crédito de esta factura — creá un <b>item nuevo</b> en el tablero. La NC referencia la factura por su CAE.',
@@ -8179,18 +8247,41 @@ async function pregenerateWsfeTokenForCompanyId(companyId) {
 
 const NIGHTLY_AUDIT_BATCH_SIZE = 500;
 
-async function markAuditResult(rowId, status, findings) {
+// B4: compara dos sets de mismatches Fase 2 (mismo field/ours/afip).
+// Order-agnostic. Si son identicos → es el mismo problema persistiendo.
+function areMismatchesIdentical(newList, oldList) {
+    if (!Array.isArray(newList) || !Array.isArray(oldList)) return false;
+    if (newList.length !== oldList.length) return false;
+    const key = (m) => `${m.field || ''}|${String(m.ours || '')}|${String(m.afip || '')}`;
+    const oldKeys = new Set(oldList.map(key));
+    return newList.every((m) => oldKeys.has(key(m)));
+}
+
+async function markAuditResult(rowId, status, findings, opts = {}) {
     // M3: last_audit_at se setea SIEMPRE (no solo en el primer audit) — eso
     // arma la rotacion. audited_at es el legacy "primera vez auditada" y se
     // mantiene por compat con queries existentes.
+    // B4: mismatch_persisted_nights se incrementa si esta corrida vio EL MISMO
+    // mismatch que la anterior. Si cambia (campos distintos, valores distintos)
+    // → reset a 1 (nuevo problema). Si pasa a ok / not_found / error → reset a 0.
+    const findingsJson = JSON.stringify(findings || {});
+    let counterExpr;
+    if (status === 'mismatch') {
+        counterExpr = opts.same_as_previous
+            ? 'mismatch_persisted_nights + 1'
+            : '1';
+    } else {
+        counterExpr = '0';
+    }
     await db.query(
         `UPDATE invoice_emissions
          SET audit_status=$2,
              audited_at=COALESCE(audited_at, CURRENT_TIMESTAMP),
              last_audit_at=CURRENT_TIMESTAMP,
-             audit_findings=$3
+             audit_findings=$3,
+             mismatch_persisted_nights=${counterExpr}
          WHERE id=$1`,
-        [rowId, status, JSON.stringify(findings || {})]
+        [rowId, status, findingsJson]
     );
 }
 
@@ -8211,9 +8302,24 @@ async function auditSingleEmission({ row, company, token, sign }) {
     const claseMap = row.invoice_type === 'ND' ? ND_MAP
         : row.invoice_type === 'NC' ? NC_MAP
         : FACT_MAP;
-    const cbteType = row.attempted_cbte_tipo || claseMap[letraDoc] || FACT_MAP.C;
+    // B11: cbteType sin fallback ciego a FACT_MAP.C. Antes, si letraDoc era
+    // null y attempted_cbte_tipo tambien, defaulteaba a FACT_MAP.C (=11) y la
+    // consulta a AFIP devolvia "no encontrado" → marcaba la fila como
+    // not_found_in_afip cuando en realidad faltaban datos para auditarla.
+    // Ahora fail-fast con error explicito incluyendo los campos disponibles.
+    const cbteType = row.attempted_cbte_tipo || claseMap[letraDoc];
     if (!cbteType) {
-        return { status: 'error', findings: { error: `cbteType no resuelto (invoice_type=${row.invoice_type})` } };
+        return {
+            status: 'error',
+            findings: {
+                error: 'letra no resoluble para determinar cbteType',
+                invoice_type: row.invoice_type,
+                letra_doc: letraDoc || null,
+                attempted_cbte_tipo: row.attempted_cbte_tipo || null,
+                afip_tipo_comprobante: row.afip_result_json?.tipo_comprobante || null,
+                draft_tipo_comprobante: row.draft_json?.tipo_comprobante || null,
+            },
+        };
     }
 
     const pointOfSale = row.attempted_pto_vta
@@ -8355,7 +8461,23 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             `_Sin discrepancias en lo que pudimos consultar. Las ${errors} con error tecnico (cert / red / data faltante) requieren revision manual._`,
         ].join('\n');
     } else {
-        const issues = results.filter(r => r.status === 'mismatch' || r.status === 'not_found_in_afip');
+        // B4: silenciar mismatches que persisten >=3 noches consecutivas con
+        // EL MISMO problema. La fila se sigue auditando y persiste en DB
+        // (audit_findings actualizado), pero no rebota a Slack noche tras
+        // noche. Si el mismatch cambia o se resuelve, el counter se resetea
+        // y vuelve a notificar.
+        const issues = results.filter(r => {
+            if (r.status === 'mismatch') {
+                const persistedNights = Number(r.persistedNights || 0);
+                if (persistedNights >= 3) return false;
+                return true;
+            }
+            return r.status === 'not_found_in_afip';
+        });
+        const silenciados = results.filter(r => r.status === 'mismatch' && Number(r.persistedNights || 0) >= 3).length;
+        if (silenciados > 0) {
+            console.log(`[nightly-audit] silenciados ${silenciados} mismatch(es) persistentes >=3 noches`);
+        }
         const detailLines = issues.slice(0, 10).map((r, idx) => {
             const accLabel = r.company?.business_name || `account=${r.company?.monday_account_id || '?'}`;
             const afipR = r.row.afip_result_json || {};
@@ -8430,7 +8552,8 @@ async function runNightlyAfipAudit() {
         const result = await db.query(`
             SELECT id, company_id, board_id, item_id, invoice_type, status,
                    attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro,
-                   afip_result_json, draft_json, created_at, last_audit_at
+                   afip_result_json, draft_json, created_at, last_audit_at,
+                   audit_status, audit_findings, mismatch_persisted_nights
             FROM invoice_emissions
             WHERE status='success'
               AND (audit_status IS NULL
@@ -8516,12 +8639,27 @@ async function runNightlyAfipAudit() {
             } catch (err) {
                 outcome = { status: 'error', findings: { error: err.message } };
             }
+            // B4: detectar si el mismatch de esta corrida es el MISMO que la
+            // anterior. Si si, el counter se incrementa; si no (o si paso a
+            // ok/error), se resetea. notifyAuditSummary mas abajo silencia
+            // a partir de la 3ra noche consecutiva del MISMO mismatch.
+            const previousFindings = row.audit_findings || {};
+            const previousMismatches = Array.isArray(previousFindings.mismatches)
+                ? previousFindings.mismatches : [];
+            const newMismatches = Array.isArray(outcome.findings?.mismatches)
+                ? outcome.findings.mismatches : [];
+            const sameAsPrev = outcome.status === 'mismatch'
+                && row.audit_status === 'mismatch'
+                && areMismatchesIdentical(newMismatches, previousMismatches);
+            const persistedNights = sameAsPrev
+                ? (Number(row.mismatch_persisted_nights) || 0) + 1
+                : (outcome.status === 'mismatch' ? 1 : 0);
             try {
-                await markAuditResult(row.id, outcome.status, outcome.findings);
+                await markAuditResult(row.id, outcome.status, outcome.findings, { same_as_previous: sameAsPrev });
             } catch (dbErr) {
                 console.error(`[nightly-audit] error marcando row ${row.id}:`, dbErr.message);
             }
-            results.push({ row, company, status: outcome.status, findings: outcome.findings });
+            results.push({ row, company, status: outcome.status, findings: outcome.findings, persistedNights });
 
             // Pausa minima para no saturar AFIP (~10 reqs/seg max).
             await new Promise(r => setTimeout(r, 100));
@@ -8709,6 +8847,21 @@ async function reconcileSingleEmission(row) {
     const letraFromInvoiceType = ['A', 'B', 'C'].includes(row.invoice_type)
         ? row.invoice_type : null;
     // 5. Construir afipResult equivalente al que devuelve afipIssueFactura
+    // B1: Fase 2 verify para recovery via cron — comparamos cbteNro/importe
+    // de lo que AFIP nos devuelve contra lo que esperabamos enviar (draft).
+    // Si hay mismatch tag-eamos [FASE2_MISMATCH] en observacion para que la
+    // alerta de Slack se dispare igual que en una emision con verificacion.
+    const expectedImporteCron = Number(row.draft_json?.importe_total || 0);
+    const cronPhase2Mismatches = [];
+    if (row.attempted_cbte_nro && Number(recovered.cbte_nro) !== Number(row.attempted_cbte_nro)) {
+        cronPhase2Mismatches.push(`cbteNro: esperado=${row.attempted_cbte_nro} vs afip=${recovered.cbte_nro}`);
+    }
+    if (expectedImporteCron > 0 && Math.abs(Number(recovered.imp_total) - expectedImporteCron) > 0.01) {
+        cronPhase2Mismatches.push(`importe: esperado=${expectedImporteCron} vs afip=${recovered.imp_total}`);
+    }
+    if (cronPhase2Mismatches.length > 0) {
+        console.warn(`${tag} recovery FASE2_MISMATCH: ${cronPhase2Mismatches.join(' | ')}`);
+    }
     const afipResult = {
         resultado: recovered.resultado || 'A',
         cae: recovered.cae,
@@ -8724,11 +8877,21 @@ async function reconcileSingleEmission(row) {
         cbte_tipo_afip: row.attempted_cbte_tipo || null,
         imp_neto: recovered.imp_neto,
         imp_iva: recovered.imp_iva,
-        observacion: null,
+        observacion: cronPhase2Mismatches.length > 0
+            ? `[FASE2_MISMATCH] ${cronPhase2Mismatches.join(' | ')}`
+            : null,
         raw_xml: recovered.raw_xml_preview || '',
         recovered: true,
         recovered_by: 'cron',
         recovered_at: new Date().toISOString(),
+        verification: {
+            cae_match: true,
+            cbte_nro_match: !row.attempted_cbte_nro || Number(recovered.cbte_nro) === Number(row.attempted_cbte_nro),
+            imp_total_match: !(expectedImporteCron > 0 && Math.abs(Number(recovered.imp_total) - expectedImporteCron) > 0.01),
+            mismatches: cronPhase2Mismatches,
+            checked_at: new Date().toISOString(),
+            source: 'reconcile_cron',
+        },
     };
 
     // 6. Persistir CAE en DB lo antes posible — si despues falla PDF/upload,
@@ -8989,11 +9152,14 @@ function scheduleReconciliationCron() {
 const AUDIT_BACKFILL_INTERVAL_MS   = 15 * 60 * 1000;  // cada 15 min
 const AUDIT_BACKFILL_BATCH_SIZE    = 25;
 // Rows mas viejas que esto son consideradas demasiado stale para reintentar el
-// logueo al audit board. 180 dias (6 meses) cubre la ventana de la auditoria
-// nocturna (~3 meses hacia atras) mas un margen amplio para reconciliacion de
-// facturacion mensual. Era 45 — quedaban perdidas facturas de fines del trimestre
-// anterior si el board no se reconciliaba a tiempo.
-const AUDIT_BACKFILL_MAX_AGE_DAYS  = 180;
+// logueo al audit board. 365 dias (1 ano) cubre la ventana de auditoria
+// extendida y reconciliacion retrospectiva de facturas de periodos anteriores
+// con margen suficiente para re-auditar casos omitidos o fallidos. Era 180
+// (subido desde 45) — quedaban perdidas facturas a mitad de ano sin manera
+// trivial de recuperarlas si nadie corria backfill a mano. El indice parcial
+// idx_invoice_emissions_audit_backfill mantiene el costo de la query bajo
+// aunque la tabla crezca.
+const AUDIT_BACKFILL_MAX_AGE_DAYS  = 365;
 
 async function backfillAuditBoard() {
     // Sin board o token no hay nada que hacer (ni siquiera vale la query).

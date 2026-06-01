@@ -133,7 +133,16 @@ function parseCondicionFiscal(xml) {
             const errorMsg = xmlTag(xml, 'errorMsgConstancia')
                 || xmlTag(ecContent, 'error')
                 || ecContent;
-            throw new Error(`Padrón AFIP error: ${errorMsg}`);
+            // B12: classify para que el caller pueda distinguir entre CUIT
+            // inactivo (mensaje "no figura inscripto", "sin actividad") vs CUIT
+            // malformado / inexistente. Sin chips el mensaje generico llega al
+            // usuario como "padron error" sin diferenciacion.
+            const lower = String(errorMsg || '').toLowerCase();
+            const looksInactive = /sin\s+actividad|no\s+figura\s+inscript|inactiv|cancelad/i.test(lower);
+            const err = new Error(`Padrón AFIP error: ${errorMsg}`);
+            err.errorType = looksInactive ? 'CUIT_INACTIVO' : 'CONSTANCIA_ERROR';
+            err.padronRaw = errorMsg;
+            throw err;
         }
     }
 
@@ -160,7 +169,12 @@ function parseCondicionFiscal(xml) {
     // Estado de la clave fiscal (ACTIVO / INACTIVO)
     const estadoClave = (xmlTag(xml, 'estadoClave') || '').toUpperCase();
     if (estadoClave && estadoClave !== 'ACTIVO' && !isObservado) {
-        throw new Error(`CUIT con estado ${estadoClave} en padrón AFIP`);
+        // B12: tag explicito de "CUIT existe pero no esta activo" para que el
+        // caller no lo trate igual que un CUIT mal formado.
+        const err = new Error(`CUIT con estado ${estadoClave} en padrón AFIP`);
+        err.errorType = 'CUIT_INACTIVO';
+        err.estadoClave = estadoClave;
+        throw err;
     }
 
     // ── Chequeo impuestos activos ─────────────────────────────────────────

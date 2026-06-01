@@ -50,7 +50,13 @@ function setDbStorage(storage) {
  *  mismo CUIT) usaban el mismo token en memoria. La DB ya esta aislada por
  *  company_id, asi que para servicios per-company incluimos el companyId.
  *  Para servicios globales (Padron, companyId=null) cae a __global__ y
- *  el comportamiento queda igual que antes (compartido). */
+ *  el comportamiento queda igual que antes (compartido).
+ *
+ *  B13: la cache global ('__global__') solo se usa para el servicio
+ *  `ws_sr_constancia_inscripcion` con el CUIT del cert "Martín" (TAP-owned,
+ *  hardcoded en config.padronCuit). NO se pasa cuit user-controlled —
+ *  no hay riesgo de envenenamiento del cache global. Si en el futuro
+ *  se expone un endpoint publico de consulta de padron, blindar antes. */
 function cacheKey(service, cuit, companyId = null) {
     const cidPart = companyId ? String(companyId) : '__global__';
     return `${service}::${cuit}::${cidPart}`;
