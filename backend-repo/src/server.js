@@ -2216,13 +2216,37 @@ async function ensureAccountSubscriptionsTable() {
     _accountSubscriptionsTableEnsured = true;
 }
 
+let _accountPlanOverridesTableEnsured = false;
+// Tabla de overrides por cuenta: bonificaciones / planes custom que no encajan
+// en PLAN_LIMITS (ej. caso Polifroni). Si una cuenta tiene fila acá, su
+// monthly_limit_override pisa al del plan de monday (NULL = ilimitado). El
+// upsert de subscription NO toca esta tabla — para bonificar a alguien,
+// `INSERT INTO account_plan_overrides ...` y queda fijo.
+async function ensureAccountPlanOverridesTable() {
+    if (_accountPlanOverridesTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS account_plan_overrides (
+            monday_account_id      TEXT PRIMARY KEY,
+            monthly_limit_override INTEGER,
+            plan_label_override    TEXT,
+            reason                 TEXT NOT NULL,
+            created_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at             TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    _accountPlanOverridesTableEnsured = true;
+}
+
 // Resuelve el limite mensual a partir del plan_id de monday.
 // Si el plan no esta en nuestra config, devuelve el default (free).
 function resolveMonthlyLimit(planId) {
     if (!planId) return PLAN_LIMITS[DEFAULT_PLAN_ID];
     const normalized = String(planId).toLowerCase();
     if (normalized in PLAN_LIMITS) return PLAN_LIMITS[normalized];
-    // Plan ID custom de monday — fallback al default conservador.
+    // Plan ID custom de monday — fallback al default conservador. Si es un
+    // cliente bonificado, agregar override en account_plan_overrides para que
+    // no quede limitado a Free=10.
+    console.warn(`[plan] plan_id no reconocido '${planId}' — fallback a Free. Para bonificar, INSERT en account_plan_overrides.`);
     return PLAN_LIMITS[DEFAULT_PLAN_ID];
 }
 
@@ -2266,29 +2290,50 @@ async function markAccountSubscriptionStatus(accountId, status) {
 }
 
 // Devuelve el plan actual de una cuenta. Si no hay registro, devuelve Free
-// (default conservador).
+// (default conservador). Si hay un override en account_plan_overrides
+// (bonificacion / plan custom), el monthly_limit del override pisa al del plan.
 async function getAccountPlan(accountId) {
     await ensureAccountSubscriptionsTable();
+    await ensureAccountPlanOverridesTable();
     const r = await db.query(
         'SELECT * FROM account_subscriptions WHERE monday_account_id = $1',
         [String(accountId)]
     );
-    if (r.rows.length === 0) {
-        return {
+    const base = r.rows.length === 0
+        ? {
             plan_id: DEFAULT_PLAN_ID,
             monthly_limit: PLAN_LIMITS[DEFAULT_PLAN_ID],
             is_trial: false,
             status: 'active',
             days_left: null,
             billing_period: null,
-        };
+        }
+        : r.rows[0];
+    // Override por cuenta (bonificacion). Su monthly_limit_override pisa al del
+    // plan: NULL EN LA COLUMNA = ILIMITADO (footgun: si querés "usar el del
+    // plan", NO crees la fila — no la insertes con NULL). Numero = ese tope.
+    // plan_label_override sustituye al label en el banner. reason es anotacion.
+    // NOTA: el override NO toca `status`. Si la suscripcion esta cancelada,
+    // checkEmissionAllowed sigue bloqueando aunque el cupo sea ilimitado. La
+    // bonificacion AMPLIA el cupo; no inmuniza contra cancelacion comercial.
+    const ov = await db.query(
+        `SELECT monthly_limit_override, plan_label_override, reason
+           FROM account_plan_overrides WHERE monday_account_id = $1`,
+        [String(accountId)]
+    );
+    if (ov.rows.length > 0) {
+        base.monthly_limit = ov.rows[0].monthly_limit_override;
+        if (ov.rows[0].plan_label_override) base.plan_id = ov.rows[0].plan_label_override;
+        base.override_reason = ov.rows[0].reason;
     }
-    return r.rows[0];
+    return base;
 }
 
-// Cuenta facturas EMITIDAS EXITOSAMENTE en el mes calendario actual (UTC).
-// Solo cuentan las que tienen status='success' — los intentos fallidos no
-// consumen quota.
+// Cuenta TODOS los comprobantes (factura + Nota de Crédito + Nota de Débito)
+// emitidos exitosamente en el mes calendario actual. Cada comprobante suma 1
+// hacia el tope del plan — incluidas las NC (correcciones) y NDs (cargos
+// adicionales). Solo cuentan los que tienen status='success'; los intentos
+// fallidos no consumen quota.
 async function getMonthlyEmissionCount(accountId) {
     if (!accountId) return 0;
     const r = await db.query(`
@@ -4592,8 +4637,8 @@ async function comprobanteHandler(req, res) {
                     used: limitCheck.used,
                     limit: limitCheck.limit,
                     message: limitCheck.reason === 'subscription_inactive'
-                        ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo facturas.'
-                        : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} facturas). Upgradeá tu plan para seguir emitiendo.`,
+                        ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo comprobantes.'
+                        : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} comprobantes). Upgradeá tu plan para seguir emitiendo.`,
                 });
             }
         } catch (err) {
@@ -5772,6 +5817,33 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         return;
     }
 
+    // Plan limit enforcement (requerido por monday). Solo aplica cuando se invoca
+    // directo desde /api/credit-notes/emit o /api/debit-notes/emit; si fuimos
+    // delegados desde comprobanteHandler (res.headersSent ya true), el caller ya
+    // chequeó el límite. Cualquier comprobante (factura/NC/ND) suma al tope.
+    if (!res.headersSent && accountId) {
+        try {
+            const limitCheck = await checkEmissionAllowed(accountId);
+            if (!limitCheck.allowed) {
+                console.warn(`[nc] bloqueado account=${accountId} clase=${clase} reason=${limitCheck.reason} used=${limitCheck.used}/${limitCheck.limit}`);
+                return res.status(402).json({
+                    error: 'plan_limit_reached',
+                    reason: limitCheck.reason,
+                    plan: limitCheck.plan.plan_id,
+                    used: limitCheck.used,
+                    limit: limitCheck.limit,
+                    message: limitCheck.reason === 'subscription_inactive'
+                        ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo comprobantes.'
+                        : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} comprobantes). Upgradeá tu plan para seguir emitiendo.`,
+                });
+            }
+        } catch (err) {
+            // Si falla el check (ej: tabla no existe), permitimos emitir para
+            // no bloquear al cliente por un bug nuestro. Logueamos para auditoría.
+            console.warn('[nc] checkEmissionAllowed falló — permitiendo emisión:', err.message);
+        }
+    }
+
     // Responder inmediatamente (acción asíncrona de monday). Si headersSent ya
     // es true, fue invocado por comprobanteHandler (la respuesta ya se mandó) →
     // seguimos directo al trabajo en background.
@@ -6401,13 +6473,21 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         } catch (err) {
             console.error('❌ [nc] Error emitiendo Nota de Crédito:', err.message);
 
-            // Comentario de error + status "Error - Mirar Comentarios" en el item.
+            // "Comprobante ya emitido" (idempotencia) NO es una falla: la NC/ND
+            // existe y está bien. NO pisar la fila success ni cambiar el status
+            // del item — hacerlo corrompía la emisión exitosa y la dejaba como
+            // "Error" en el board (mismo bug que IDVTA-153 en factura).
+            const isIdempotencyError = /idempotencia|ya emitida|ya se emiti[oó]/i.test(err?.message || '');
+
+            // Comentario en el item — siempre (informa qué pasó, incluso en
+            // re-disparos bloqueados por idempotencia).
             try {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId) {
                     await postMondayErrorComment({ apiToken: errToken, itemId, error: err });
-                    if (autoUpdateStatus && statusColumnId && boardId) {
+                    // Status a "Error" SOLO si NO es idempotencia.
+                    if (!isIdempotencyError && autoUpdateStatus && statusColumnId && boardId) {
                         await updateMondayItemStatus({
                             apiToken: errToken, boardId, itemId,
                             statusColumnId, label: COMPROBANTE_STATUS_FLOW.error,
@@ -6416,31 +6496,37 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 }
             } catch (_) {}
 
-            // Persistir el error en la fila de NC + registrarlo en el audit board.
-            try {
-                const company = await getCompanyForBoard(accountId, boardId).catch(() => null);
-                if (company && boardId) {
-                    await db.query(
-                        `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
-                         WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'`,
-                        [company.id, boardId, itemId, err.message]
-                    );
-                }
-                logEmissionToAuditBoard({
-                    accountId,
-                    success: false,
-                    clientItemId: itemId,
-                    sourceItemName: null,
-                    draft: null,
-                    afipResult: null,
-                    tipo: null,
-                    error: err,
-                    durationMs: Date.now() - tStart,
-                    company: company || null,
-                    esNotaCredito: !esND,
-                    esNotaDebito: esND,
-                }).catch((e) => console.warn('[nc] audit-log error fire-and-forget falló:', e.message));
-            } catch (_) {}
+            // Persistir el error en la DB + audit board — NUNCA si es idempotencia:
+            // la fila es success y pisarla corrompe la emisión (el cron Fase 3 la
+            // marca como stuck y la "recupera" innecesariamente). El AND status<>
+            // 'success' del UPDATE es cinturón extra.
+            if (!isIdempotencyError) {
+                try {
+                    const company = await getCompanyForBoard(accountId, boardId).catch(() => null);
+                    if (company && boardId) {
+                        await db.query(
+                            `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='${clase}'
+                               AND status <> 'success'`,
+                            [company.id, boardId, itemId, err.message]
+                        );
+                    }
+                    logEmissionToAuditBoard({
+                        accountId,
+                        success: false,
+                        clientItemId: itemId,
+                        sourceItemName: null,
+                        draft: null,
+                        afipResult: null,
+                        tipo: null,
+                        error: err,
+                        durationMs: Date.now() - tStart,
+                        company: company || null,
+                        esNotaCredito: !esND,
+                        esNotaDebito: esND,
+                    }).catch((e) => console.warn('[nc] audit-log error fire-and-forget falló:', e.message));
+                } catch (_) {}
+            }
 
             if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message).catch(() => {});
         }

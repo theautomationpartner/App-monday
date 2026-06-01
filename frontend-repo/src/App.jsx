@@ -501,7 +501,8 @@ const App = () => {
 
   // Cargar consumo / plan del mes actual. Se hace al cargar la app y cuando
   // cambia el sessionToken (ej: re-auth). El banner del header lo usa para
-  // mostrar "X/limite facturas este mes" + estados visuales.
+  // mostrar "X/limite comprobantes este mes" + estados visuales. Cuenta todos
+  // los comprobantes (factura + Nota de Crédito + Nota de Débito) hacia el tope.
   useEffect(() => {
     if (!sessionToken) return;
     let cancelled = false;
@@ -1718,8 +1719,8 @@ const App = () => {
           let counterText;
           if (status === 'cancelled') counterText = 'Suscripción cancelada';
           else if (status === 'trial_expired') counterText = 'Trial finalizado';
-          else if (limit == null) counterText = 'Facturas ilimitadas este mes';
-          else counterText = `${used}/${limit} facturas este mes`;
+          else if (limit == null) counterText = 'Comprobantes ilimitados este mes';
+          else counterText = `${used}/${limit} comprobantes este mes`;
           let cta = null;
           if (!allowed) cta = (status === 'cancelled' || status === 'trial_expired') ? 'Renová tu plan' : 'Upgradeá tu plan';
           return (
