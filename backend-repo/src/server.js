@@ -1565,6 +1565,13 @@ async function afipIssueFactura({
   </soapenv:Body>
 </soapenv:Envelope>`;
 
+    // Fiscal B: si el primer attempt del SOAP falla por red (timeout / corte),
+    // ANTES de reintentar consultamos AFIP con el cbteNro reservado: si AFIP ya
+    // proceso el primer attempt (CAE generado pero la respuesta no llego a
+    // nosotros), reusamos esa emision en vez de mandar SOAP de nuevo. Sin esto,
+    // el retry envia el mismo cbteNro: AFIP rechaza por duplicado y le decimos
+    // al usuario "fallo" cuando en realidad la factura existe (fantasma).
+    let probeRecovered = null;
     async function callWsfe(attempt) {
         try {
             const resp = await fetch(endpoints.wsfe, {
@@ -1583,6 +1590,19 @@ async function afipIssueFactura({
             const causeInfo = [cause.code, cause.errno, cause.message].filter(Boolean).join(' | ');
             console.warn(`[wsfe] FECAESolicitar attempt ${attempt} failed: ${err.message} | cause: ${causeInfo || 'n/a'}`);
             if (attempt < 2) {
+                // Probe ANTES del retry: ¿AFIP ya procesó este cbteNro en el attempt 1?
+                try {
+                    const probe = await afipConsultarComprobante({
+                        token, sign, cuit, pointOfSale, cbteType, cbteNro: nextVoucher,
+                    });
+                    if (probe && probe.cae) {
+                        console.log(`[wsfe] retry-probe: AFIP ya tiene cbteNro=${nextVoucher} con CAE=${probe.cae} (procesado en attempt 1, red corto antes de devolver respuesta) — usando esa emisión, no reintentando SOAP`);
+                        probeRecovered = probe;
+                        return { resp: null, txt: null, probed: true };
+                    }
+                } catch (probeErr) {
+                    console.warn(`[wsfe] retry-probe falló (${probeErr.message}) — continuando con retry SOAP normal`);
+                }
                 await new Promise(r => setTimeout(r, 2000));
                 return callWsfe(attempt + 1);
             }
@@ -1590,14 +1610,50 @@ async function afipIssueFactura({
         }
     }
 
-    const { resp: response, txt: xml } = await callWsfe(1);
+    const { resp: response, txt: xml, probed } = await callWsfe(1);
+
+    // Si el probe rescato una emision pre-procesada, devolverla como exito directo
+    // (no hay XML que parsear). Mismo shape de respuesta que la rama normal.
+    if (probed && probeRecovered) {
+        const totalAmountForCheck = Number(draft.importe_total || 0);
+        return {
+            resultado: probeRecovered.resultado || 'A',
+            cae: probeRecovered.cae,
+            cae_vencimiento: probeRecovered.cae_vencimiento,
+            numero_comprobante: probeRecovered.cbte_nro || nextVoucher,
+            tipo_comprobante: invoiceType,
+            cbte_tipo_afip: cbteType,
+            imp_neto: probeRecovered.imp_neto,
+            imp_iva: probeRecovered.imp_iva,
+            observacion: '[recovery_callwsfe_retry] AFIP confirmó el comprobante vía FECompConsultar tras fallo de red en el primer SOAP — sin re-emisión.',
+            raw_xml: '',
+            recovered: true,
+            verification: {
+                cae_match: true,
+                cbte_nro_match: (probeRecovered.cbte_nro || nextVoucher) === nextVoucher,
+                imp_total_match: Math.abs((probeRecovered.imp_total || 0) - totalAmountForCheck) <= 0.01,
+                checked_at: new Date().toISOString(),
+                source: 'callwsfe_retry_probe',
+            },
+        };
+    }
+
     if (!response.ok) {
         throw new Error(`FECAESolicitar HTTP ${response.status}: ${xml.slice(0, 500)}`);
     }
 
-    const result = extractXmlTag(xml, 'Resultado');
-    const cae = extractXmlTag(xml, 'CAE');
-    const caeExpiration = extractXmlTag(xml, 'CAEFchVto');
+    // AFIP devuelve Resultado en DOS niveles: cabecera (resumen del lote, A/R/P)
+    // y detalle (por comprobante, A/R). Como mandamos CantReg=1, EL DETALLE es la
+    // verdad. Si la cabecera dice 'P' (parcial — algunos comprobantes con
+    // observaciones) pero el detalle dice 'A' con CAE valido, es exito con warnings,
+    // NO rechazo. Parsear desde FECAEDetResponse específicamente.
+    const detResponseMatch = xml.match(/<FECAEDetResponse[^>]*>[\s\S]*?<\/FECAEDetResponse>/i);
+    const detXml = detResponseMatch ? detResponseMatch[0] : xml;
+    const detailResult = extractXmlTag(detXml, 'Resultado');
+    const cae = extractXmlTag(detXml, 'CAE');
+    const caeExpiration = extractXmlTag(detXml, 'CAEFchVto');
+    const headerResult = extractXmlTag(xml, 'Resultado');  // para logs/auditoría
+    const result = detailResult;  // alias hacia abajo (compat con el resto del código)
 
     // Extraer mensajes de error y observaciones de AFIP.
     // <Errors><Err><Code>X</Code><Msg>...</Msg></Err></Errors>
@@ -1617,13 +1673,20 @@ async function afipIssueFactura({
     const observations = extractMsgsFromBlock('Observaciones');
     const observation = [...errors, ...observations].join(' | ') || null;
 
-    // Si AFIP rechazó (sin CAE o Resultado != 'A'), tirar error para que el handler
-    // lo marque como "Error - Mirar Comentarios" en Monday en vez de quedar colgado.
-    if (!cae || (result && result.toUpperCase() !== 'A')) {
-        console.error(`[wsfe] AFIP rechazó — Resultado: ${result || 'N/D'} | Errors: ${errors.join(' | ') || 'ninguno'} | Obs: ${observations.join(' | ') || 'ninguna'}`);
+    // Regla correcta: el CAE es la verdad. Aceptamos si DETALLE='A' Y hay CAE
+    // valido (14 digitos), aunque la cabecera diga 'P' (parcial por observaciones).
+    // Rechazamos solo si DETALLE='R' o no hay CAE. Las Observaciones con detalle='A'
+    // son warnings — guardar el CAE, loggear para auditoria. (Antes este check
+    // usaba la cabecera y rechazaba 'P' aunque hubiera CAE valido — factura fantasma.)
+    const caeValido = cae && /^\d{14}$/.test(cae);
+    if (!caeValido || (detailResult && detailResult.toUpperCase() !== 'A')) {
+        console.error(`[wsfe] AFIP rechazó — Detalle: ${detailResult || 'N/D'} | Cabecera: ${headerResult || 'N/D'} | CAE: ${cae || 'N/D'} | Errors: ${errors.join(' | ') || 'ninguno'} | Obs: ${observations.join(' | ') || 'ninguna'}`);
         console.error(`[wsfe] XML raw (primeros 2000 chars): ${xml.slice(0, 2000)}`);
-        const detalle = observation || `Resultado=${result || 'N/D'}, sin CAE`;
+        const detalle = observation || `Resultado=${detailResult || 'N/D'}, sin CAE`;
         throw new Error(`AFIP rechazó la factura: ${detalle}`);
+    }
+    if (headerResult && headerResult.toUpperCase() === 'P') {
+        console.warn(`[wsfe] AFIP cabecera='P' (parcial) pero DETALLE='A' con CAE ${cae} — emitido con observaciones (no es rechazo). Obs: ${observations.join(' | ') || 'ninguna'}`);
     }
 
     // ── Fase 2: verificación post-emisión ────────────────────────────────
@@ -2375,15 +2438,22 @@ async function getMonthlyEmissionCount(accountId) {
 // Devuelve { allowed, plan, used, limit, remaining, reason }.
 async function checkEmissionAllowed(accountId) {
     const plan = await getAccountPlan(accountId);
-    // Cancelada o trial expirado → sin permiso
-    if (plan.status === 'cancelled' || plan.status === 'trial_expired') {
+    // Estados que bloquean emision (sin permiso):
+    //   - cancelled / trial_expired: la suscripcion no esta activa.
+    //   - pending_cancellation: el cliente solicito baja, no debe seguir
+    //     consumiendo cupo hasta que se renueve.
+    //   - pago_fallido / payment_failed / past_due: variantes que monday u otros
+    //     billing systems usan cuando el ultimo cobro fallo. Bloquear evita que
+    //     el cliente acumule cupo sin pagar.
+    const BLOCKED_STATUSES = ['cancelled', 'trial_expired', 'pending_cancellation', 'pago_fallido', 'payment_failed', 'past_due'];
+    if (BLOCKED_STATUSES.includes(plan.status)) {
         return {
             allowed: false,
             plan,
             used: 0,
             limit: plan.monthly_limit,
             remaining: 0,
-            reason: 'subscription_inactive',
+            reason: `subscription_${plan.status}`,
         };
     }
     // Plan ilimitado (Enterprise) → siempre permitido
@@ -4660,7 +4730,7 @@ async function comprobanteHandler(req, res) {
                     plan: limitCheck.plan.plan_id,
                     used: limitCheck.used,
                     limit: limitCheck.limit,
-                    message: limitCheck.reason === 'subscription_inactive'
+                    message: (limitCheck.reason && limitCheck.reason.startsWith('subscription_'))
                         ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo comprobantes.'
                         : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} comprobantes). Upgradeá tu plan para seguir emitiendo.`,
                 });
@@ -5665,7 +5735,24 @@ async function comprobanteHandler(req, res) {
                     apiToken: mondayToken, boardId, itemId,
                     columnId: mapping.factura_referencia,
                     value:    afipResult.cae,
-                }).catch((e) => console.warn('[write-back] CAE fire-and-forget falló:', e.message));
+                }).catch(async (e) => {
+                    // Si el write-back falla, el usuario no tiene el CAE en la
+                    // columna y NO va a poder emitir una NC/ND apuntando a esta
+                    // factura (la NC busca la factura por el CAE escrito acá).
+                    // Posteamos un comentario en el item avisando para que pueda
+                    // copiarlo manualmente. No fallamos la emision — la factura
+                    // ya tiene CAE valido en AFIP/DB.
+                    console.warn('[write-back] CAE fire-and-forget falló:', e.message);
+                    try {
+                        const warnBody =
+                            `⚠️ El CAE se emitió correctamente pero no pudimos escribirlo en la ` +
+                            `columna del item. Copialo del PDF si vas a emitir una Nota de Crédito ` +
+                            `o Débito sobre esta factura.<br/><br/><b>CAE:</b> ${afipResult.cae}`;
+                        await postMondayUpdate({ apiToken: mondayToken, itemId, body: warnBody });
+                    } catch (warnErr) {
+                        console.warn('[write-back] no se pudo postear aviso de CAE:', warnErr.message);
+                    }
+                });
             }
 
             // Write-back de N° de comprobante / letra a columnas opcionales del
@@ -5896,7 +5983,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     plan: limitCheck.plan.plan_id,
                     used: limitCheck.used,
                     limit: limitCheck.limit,
-                    message: limitCheck.reason === 'subscription_inactive'
+                    message: (limitCheck.reason && limitCheck.reason.startsWith('subscription_'))
                         ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo comprobantes.'
                         : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} comprobantes). Upgradeá tu plan para seguir emitiendo.`,
                 });
@@ -8125,6 +8212,12 @@ function scheduleNightlyAfipAudit() {
 const RECONCILE_BATCH_SIZE   = 20;          // max rows por corrida
 const RECONCILE_STALE_MIN    = 5;           // min de antiguedad para considerar stuck
 const RECONCILE_INTERVAL_MS  = 5 * 60 * 1000;
+// Tope de reintentos por row. Despues de N consultas a AFIP en las que el
+// cbteNro reservado sigue confirmando "no existe", asumimos que la solicitud
+// original fue rechazada/perdida y no llegara nunca. Marcamos la row como
+// abandonada (error_message descriptivo + filtro en el SELECT del cron) para
+// no poll-earla indefinidamente. 20 intentos * 5min ≈ ~100 minutos de ventana.
+const RECONCILE_MAX_ATTEMPTS = 20;
 
 async function reconcileSingleEmission(row) {
     const tag = `[reconcile-cron item=${row.item_id} cbteNro=${row.attempted_cbte_nro}]`;
@@ -8178,6 +8271,28 @@ async function reconcileSingleEmission(row) {
 
     if (!recovered || !recovered.cae) {
         console.log(`${tag} AFIP confirma que NO se emitio — la solicitud nunca llego a procesarse. Dejando row en estado actual.`);
+        // Después de N reintentos sin éxito (AFIP confirmó "no existe" repetidas
+        // veces) marcamos la row como abandonada para que el cron no la siga
+        // poll-eando para siempre. El claim ya incremento reconciliation_attempts.
+        try {
+            const attemptsRow = await db.query(
+                `SELECT reconciliation_attempts FROM invoice_emissions WHERE id=$1`,
+                [row.id]
+            );
+            const attempts = Number(attemptsRow.rows[0]?.reconciliation_attempts || 0);
+            if (attempts >= RECONCILE_MAX_ATTEMPTS) {
+                await db.query(
+                    `UPDATE invoice_emissions
+                     SET error_message=$2,
+                         updated_at=CURRENT_TIMESTAMP
+                     WHERE id=$1`,
+                    [row.id, `Reconciliation abandoned after ${RECONCILE_MAX_ATTEMPTS} attempts — AFIP confirmed not exists`]
+                );
+                console.warn(`${tag} ABANDONADA tras ${attempts} intentos — AFIP confirma que no existe.`);
+            }
+        } catch (markErr) {
+            console.warn(`${tag} error marcando abandono:`, markErr.message);
+        }
         return;
     }
 
@@ -8365,6 +8480,7 @@ async function reconcileStuckEmissions() {
               AND updated_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes'
               AND (last_reconciliation_at IS NULL
                    OR last_reconciliation_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes')
+              AND COALESCE(reconciliation_attempts, 0) < ${RECONCILE_MAX_ATTEMPTS}
             ORDER BY updated_at ASC
             LIMIT $1
         `, [RECONCILE_BATCH_SIZE]);
@@ -8435,7 +8551,12 @@ function scheduleReconciliationCron() {
 // entorno tiene su propia audit_log_items, así que no colisionan items distintos.
 const AUDIT_BACKFILL_INTERVAL_MS   = 15 * 60 * 1000;  // cada 15 min
 const AUDIT_BACKFILL_BATCH_SIZE    = 25;
-const AUDIT_BACKFILL_MAX_AGE_DAYS  = 45;
+// Rows mas viejas que esto son consideradas demasiado stale para reintentar el
+// logueo al audit board. 180 dias (6 meses) cubre la ventana de la auditoria
+// nocturna (~3 meses hacia atras) mas un margen amplio para reconciliacion de
+// facturacion mensual. Era 45 — quedaban perdidas facturas de fines del trimestre
+// anterior si el board no se reconciliaba a tiempo.
+const AUDIT_BACKFILL_MAX_AGE_DAYS  = 180;
 
 async function backfillAuditBoard() {
     // Sin board o token no hay nada que hacer (ni siquiera vale la query).
