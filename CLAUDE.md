@@ -36,8 +36,8 @@ CLOUDFLARE (DNS + TLS + CDN)
 
 | Entorno | URL | Backend en droplet | DB | Quién la ve |
 |---|---|---|---|---|
-| **Producción** | `https://arca.theautomationpartner.com` | pm2 `tap-monday` (3000) | `defaultdb` | TODOS los clientes (V13 Live en monday) |
-| **Staging** | `https://staging.theautomationpartner.com` | pm2 `tap-monday-staging` (3001) | `stagingdb` | Solo TAP (V14 Draft en monday) |
+| **Producción** | `https://arca.theautomationpartner.com` | pm2 `tap-monday` (3000) | `defaultdb` | TODOS los clientes (versión Live actual: **v18**) |
+| **Staging** | `https://staging.theautomationpartner.com` | pm2 `tap-monday-staging` (3001) | `stagingdb` | Solo TAP (versión Draft, v19+ según feature) |
 
 ---
 
@@ -72,10 +72,12 @@ la siguiente Draft — v19, v20, etc. Los números suben, el flujo es el mismo.)
 3. Cambiar las URLs de la Draft a staging:
    - **Crea → Funciones → Vista del tablero → URL externa**:
      `https://staging.theautomationpartner.com`
-   - **Crea → Funciones → Generar Factura AFIP → URL de ejecución**:
+   - **Crea → Funciones → Crear Comprobante (receta unificada) → URL de ejecución**:
      `https://staging.theautomationpartner.com/api/invoices/emit`
-   - **Crea → Funciones → Crear Nota de Crédito AFIP → URL de ejecución**:
-     `https://staging.theautomationpartner.com/api/credit-notes/emit`
+     (la receta unificada rutea por la columna `tipo_comprobante` a factura / NC / ND;
+      no hace falta receta separada — las URL `/api/credit-notes/emit` y
+      `/api/debit-notes/emit` existen como endpoints alternativos pero no son
+      necesarias si usás la receta unificada)
 4. Guardar (NO promover a Live)
 
 ### Paso 3 — Probar el cambio en la versión Draft
@@ -187,10 +189,10 @@ README.md                        # info pública
 | `ENCRYPTION_KEY` | AES key para cifrar private key del cert AFIP en DB |
 | `MONDAY_CLIENT_SECRET` | valida tokens de sesión que monday firma |
 | `MONDAY_CLIENT_ID` | client ID del app en monday (sincronizado por GitHub Actions desde Secrets) |
-| `MONDAY_AUDIT_BOARD_ID` | board "Comp Emitidos" donde se loggean emisiones (PROD only) |
+| `MONDAY_AUDIT_BOARD_ID` | board "Comp Emitidos" donde se loggean emisiones (staging y prod comparten el mismo board) |
 | `DEV_MONDAY_TOKEN` | API token del developer (para escribir al audit board) |
 | `SLACK_WEBHOOK_URL` | alertas de errores sistema y auditoría nocturna |
-| `APP_ENV` | `staging` o no seteado (prod). Skipea audit board cuando `staging`. |
+| `APP_ENV` | `staging` o no seteado (prod). Cuando `staging` skipea SOLO las alertas de Slack (errores sistema + resumen nocturno). El audit board SÍ se escribe en staging. |
 | `PORT` | 3000 prod, 3001 staging |
 
 ---
@@ -233,15 +235,28 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 
 ---
 
-## Notas de Crédito — cómo se emiten
+## Notas de Crédito y Notas de Débito — cómo se emiten
 
-- Endpoint propio: `POST /api/credit-notes/emit` (paralelo a `/api/invoices/emit`). Receta en monday: **"Crear Nota de Crédito AFIP"**.
+- Receta en monday: **"Crear Comprobante"** (unificada) — la columna `tipo_comprobante` rutea a NC / ND / Factura. Endpoints directos opcionales: `POST /api/credit-notes/emit` y `POST /api/debit-notes/emit` (no se usan si se dispara desde la receta unificada).
 - La NC vive en su **propio item** de monday y referencia la factura a anular por el **CAE** escrito en la columna mapeada `factura_referencia` (obligatoria — sin ella no se emite). La app busca la factura por `afip_result_json->>'cae'` (índice `idx_invoice_emissions_cae`).
 - El importe sale de los **subítems del propio item de NC** (mismo mapeo que la factura). La app los lee, calcula neto/IVA/total y emite la NC parcial por ese monto. El encabezado (receptor, moneda, condición, letra) lo hereda de la factura.
 - Controles: la alícuota IVA de la NC debe coincidir con la de la factura; el total acreditado (NCs previas + esta) no puede superar el de la factura (control de saldo). Se permiten **varias NC parciales** sobre una factura mientras no se pasen del total.
 - Al emitir una **factura**, la app escribe su CAE en la columna `factura_referencia` del item (write-back) — así se copia fácil al item de la NC.
-- Mapeo: `tipo_comprobante` y `factura_referencia` son campos del Mapeo Visual. En la plantilla son `dropdown_mm3hbhc0` y `numeric_mm3h6y35`, auto-mapeados en instalaciones nuevas (`TEMPLATE_NC_MAPPING` en `App.jsx`).
+- Mapeo: `tipo_comprobante` y `factura_referencia` son campos del Mapeo Visual. En la plantilla son `dropdown_mm3hbhc0` y `numeric_mm3h6y35`, auto-mapeados en instalaciones nuevas (`TEMPLATE_NC_MAPPING` en `App.jsx` — el mismo mapeo se reusa para NC y ND).
 - La lógica fiscal de subítems→líneas vive en `buildLinesFromSubitems` (server.js); la emisión de factura tiene su propia copia inline — si se tocan, mantenerlas sincronizadas.
+
+### Notas de Débito (espejo de NC)
+
+- **Notas de Débito** están soportadas: son el espejo fiscal de la NC pero con **CbteTipo 2 / 7 / 12** (A/B/C) en lugar de 3/8/13. Endpoint propio: `POST /api/debit-notes/emit`. Misma forma de operar que la NC: item nuevo, columna `factura_referencia` con el CAE de la factura, subítems con las líneas a debitar.
+- Diferencias con la NC: la ND **NO tiene tope de saldo** (suma deuda, AFIP no la limita contra el total facturado) y la **alícuota IVA es libre** (AFIP no exige que coincida con la de la factura).
+- **Receta unificada:** la receta en monday es una sola, **"Crear Comprobante"**, que recibe el item y rutea por la columna `tipo_comprobante` ("Factura" / "Nota de Crédito" / "Nota de Débito") al handler correspondiente.
+- **Handler:** el handler unificado de NC y ND se llama `emitNotaHandler(req, res, clase)` (con `clase = 'NC' | 'ND'`), registrado en ambos endpoints. NO existe `creditNoteHandler` separado.
+
+### Multi-PV (Punto de Venta por ítem)
+
+- Hay una columna **Punto de Venta** mapeable en el board. Si está mapeada, el usuario tiene que seleccionar el PV en CADA ítem (pre-flight, antes de pasar el item al status "Creando").
+- Si NO está mapeada, la emisión usa el `default_point_of_sale` de Datos Fiscales (clientes históricos no se ven afectados — el comportamiento por defecto es el de siempre).
+- Para NC/ND el PV se hereda de la factura referenciada. Si el usuario eligió en la columna un PV distinto al de la factura → error (la NC/ND se emite desde el mismo PV que la factura para mantener coherencia de numeración). Si la dejó vacía → se completa con write-back después de emitir.
 
 ---
 

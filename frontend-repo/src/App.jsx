@@ -109,12 +109,15 @@ const TEMPLATE_MAPPING = {
   unidad_medida:        "dropdown_mm2gk2mv",
   alicuota_iva:         "dropdown_mm2g198w",
 };
-// IDs fijos de las columnas OPCIONALES de la plantilla (Notas de Crédito + datos
-// del comprobante emitido). Van aparte de TEMPLATE_MAPPING porque son opcionales:
-// se pre-cargan solo si la columna existe en el board (ver buildAutoMappingFromColumns).
-// Las instalaciones anteriores a que la plantilla incluyera estas columnas NO las
-// tienen — no hay que apuntar a una columna fantasma (rompería el flujo de NC: el
-// endpoint creería que el board está en "modo CAE" y leería una columna inexistente).
+// IDs fijos de las columnas OPCIONALES de la plantilla (Notas de Crédito y Notas
+// de Débito + datos del comprobante emitido). El nombre NC es histórico: el mismo
+// mapeo de `tipo_comprobante` y `factura_referencia` se reusa para ambos tipos
+// (NC y ND comparten flujo — ver server.js `emitNotaHandler`). Van aparte de
+// TEMPLATE_MAPPING porque son opcionales: se pre-cargan solo si la columna existe
+// en el board (ver buildAutoMappingFromColumns). Las instalaciones anteriores a
+// que la plantilla incluyera estas columnas NO las tienen — no hay que apuntar a
+// una columna fantasma (rompería el flujo de NC/ND: el endpoint creería que el
+// board está en "modo CAE" y leería una columna inexistente).
 const TEMPLATE_NC_MAPPING = {
   tipo_comprobante:   "dropdown_mm3hbhc0",
   factura_referencia: "numeric_mm3h6y35",
@@ -3352,6 +3355,9 @@ const App = () => {
                 <div>
                   <div className="rf-invoice-client-label">Tipo de Comprobante</div>
                   {mapSel("tipo_comprobante", "Opcional")}
+                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
+                    El dropdown del item debe tener las opciones: <b>Factura</b>, <b>Nota de Crédito</b>, <b>Nota de Débito</b>.
+                  </div>
                 </div>
                 <div>
                   <div className="rf-invoice-client-label">CAE de la factura a anular</div>

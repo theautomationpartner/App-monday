@@ -4625,8 +4625,8 @@ function requireAutomationBlock(req, res, next) {
 // Monday llama a este endpoint cuando se dispara la receta. Es UN solo punto de
 // entrada: lee la columna mapeada `tipo_comprobante` del item y rutea —
 //   - "Factura" (o columna sin mapear)  → emite la factura (lógica de abajo).
-//   - "Nota de Crédito"                 → delega en creditNoteHandler.
-//   - "Nota de Débito"                  → todavía no implementado (error claro).
+//   - "Nota de Crédito"                 → delega en emitNotaHandler(req, res, 'NC').
+//   - "Nota de Débito"                  → delega en emitNotaHandler(req, res, 'ND').
 // Se registra en /api/invoices/emit (compat) y /api/comprobantes/emit (nuevo).
 // Flujo:
 //   1. Responde 200 inmediatamente (monday requiere respuesta rápida)
@@ -4785,7 +4785,8 @@ async function comprobanteHandler(req, res) {
             // ── 2b-ter. Ruteo por Tipo de Comprobante ──────────────────────────
             // Receta unificada "Crear Comprobante": la columna mapeada
             // `tipo_comprobante` decide qué se emite. Si el item es una Nota de
-            // Crédito, delegamos en creditNoteHandler y cortamos acá. Si la
+            // Crédito o Nota de Débito, delegamos en emitNotaHandler (con clase
+            // NC o ND según corresponda) y cortamos acá. Si la
             // columna no está mapeada (clientes que solo facturan), se ignora y
             // se emite factura como siempre. Va ANTES del cambio de status y de
             // la validación de datos de factura (un item de NC no tiene por qué
@@ -5953,7 +5954,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             const company = await getCompanyForBoard(accountId, boardId);
             if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
 
-            console.log(`[nc] Emitiendo Nota de Crédito para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+            console.log(`[nc] Emitiendo ${docLabel} para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
 
             // Config del board: misma columna de status que la factura. Si el
             // cliente desactivó "Cambiar el estado del item", autoUpdateStatus
@@ -6014,8 +6015,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (!ncMapping.factura_referencia) {
                 throw new Error(
                     'El tablero no tiene mapeada la columna del CAE de referencia. ' +
-                    'Configurala en el Mapeo Visual de la app (sección "Notas de Crédito") ' +
-                    'para poder emitir Notas de Crédito.'
+                    'Configurala en el Mapeo Visual de la app (sección "Columnas opcionales") ' +
+                    `para poder emitir ${docLabel === 'Nota de Débito' ? 'Notas de Débito' : 'Notas de Crédito'}.`
                 );
             }
             // Lectura robusta del CAE: la columna puede ser numérica o de texto.
@@ -6026,7 +6027,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 if (!rawShown) {
                     throw new Error(
                         'La columna del CAE de referencia está vacía. Pegá ahí el CAE ' +
-                        '(14 dígitos) de la factura que esta Nota de Crédito debe anular — lo ' +
+                        `(14 dígitos) de la factura que esta ${docLabel} debe anular — lo ` +
                         'encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.'
                     );
                 }
@@ -6063,7 +6064,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (!facturaAfip.cae || !facturaCbteNro || !facturaCbteTipo || !facturaPtoVta) {
                 throw new Error(
                     'La factura de este item no tiene los datos completos (CAE / número / tipo / ' +
-                    'punto de venta) para poder referenciarla en una Nota de Crédito.'
+                    `punto de venta) para poder referenciarla en una ${docLabel}.`
                 );
             }
             const letra = facturaDraft.tipo_comprobante;  // 'A' | 'B' | 'C'
@@ -6088,9 +6089,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     const pvSel = parseInt(pvSelRaw.replace(/\D/g, ''), 10);
                     if (pvSel && pvSel !== Number(facturaPtoVta)) {
                         throw new Error(
-                            `Seleccionaste el Punto de Venta ${pvSel}, pero esta Nota de Crédito anula la ` +
+                            `Seleccionaste el Punto de Venta ${pvSel}, pero esta ${docLabel} anula la ` +
                             `Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
-                            `que es del Punto de Venta ${facturaPtoVta}. La NC se emite desde el MISMO punto de venta que ` +
+                            `que es del Punto de Venta ${facturaPtoVta}. La ${docAbbr} se emite desde el MISMO punto de venta que ` +
                             `la factura — cambiá el Punto de Venta a ${facturaPtoVta} o dejá esa columna vacía.`
                         );
                     }
@@ -6197,8 +6198,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // hereda de la factura.
             if (!ncSubitems || ncSubitems.length === 0) {
                 throw new Error(
-                    'El item de Nota de Crédito no tiene subítems. Cargá como subítems ' +
-                    'las líneas de lo que querés acreditar (concepto, cantidad y precio).'
+                    `El item de ${docLabel} no tiene subítems. Cargá como subítems ` +
+                    `las líneas de lo que querés ${esND ? 'debitar' : 'acreditar'} (concepto, cantidad y precio).`
                 );
             }
             // Columna de precio: si la factura era en moneda extranjera, la NC
@@ -6331,10 +6332,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                  JSON.stringify(ncDraft), factura.id]
             );
             if (ncClaim.rows.length === 0) {
-                console.warn(`[nc] claim falló item ${itemId} — ya hay una NC en curso, abortando sin tocar la fila`);
+                console.warn(`[nc] claim falló item ${itemId} — ya hay una ${docAbbr} en curso, abortando sin tocar la fila`);
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
-                    body: '⏳ Ya hay una Nota de Crédito en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
+                    body: `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`,
                 }).catch(() => {});
                 return;
             }
@@ -6440,7 +6441,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             }
 
             console.log(`[nc] AFIP respuesta — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
-            if (!afipResult?.cae) throw new Error('AFIP no devolvió CAE para la Nota de Crédito');
+            if (!afipResult?.cae) throw new Error(`AFIP no devolvió CAE para la ${docLabel}`);
 
             // ── 9. Persistir resultado final ───────────────────────────────────
             await db.query(
@@ -6571,10 +6572,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 }).catch((e) => console.warn('[nc] callback fire-and-forget falló:', e.message));
             }
 
-            console.log(`[nc] ── OK item ${itemId} ── NC ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
+            console.log(`[nc] ── OK item ${itemId} ── ${docAbbr} ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
 
         } catch (err) {
-            console.error('❌ [nc] Error emitiendo Nota de Crédito:', err.message);
+            console.error(`❌ [nc] Error emitiendo ${docLabel}:`, err.message);
 
             // "Comprobante ya emitido" (idempotencia) NO es una falla: la NC/ND
             // existe y está bien. NO pisar la fila success ni cambiar el status
@@ -6774,7 +6775,7 @@ function buildErrorComment(err) {
             solucion: 'En el item de la Nota de Crédito, pegá en la columna del <b>CAE</b> el código de 14 dígitos de la factura que querés anular. Lo sacás del PDF de esa factura o del comentario que dejó la app cuando se emitió.',
         },
         {
-            match: /item de nota de crédito no tiene subítems/i,
+            match: /item de nota de (cr[eé]dito|d[eé]bito) no tiene sub[ií]tems/i,
             title: 'La Nota de Crédito no tiene líneas para acreditar',
             detail: mainMsg,
             solucion: 'Agregá como <b>subítems</b> del item lo que querés acreditar — cada línea con Concepto, Cantidad y Precio. La Nota de Crédito se emite por la suma de esos subítems.',
@@ -7168,8 +7169,16 @@ function classifyAuditError(err) {
     //    disparan alerta a Slack. Se detectan por firmas técnicas (en inglés) — NO
     //    por los throw deliberados de la app, que llevan mensaje en español al
     //    usuario. El item de test "make-errores-" entra acá a propósito.
+    // Firmas técnicas en inglés — runtime/JS, red, monday API, Postgres.
+    const reRuntime  = /cannot read|reading '|of undefined|of null|is not a function|is not defined|is not iterable|TypeError|ReferenceError|SyntaxError|RangeError|unexpected token|in JSON|JSON\.parse|prototype|fetch failed|Maximum call stack/i;
+    const reNetwork  = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EPIPE|ENETUNREACH|EHOSTUNREACH|socket hang up/i;
+    const reMonday   = /monday\.com|graphql.*error|Internal server error/i;
+    const rePostgres = /relation.*does not exist|column.*does not exist|duplicate key|deadlock|connection terminated|database.*unavailable/i;
     if (!msg
-        || /cannot read|reading '|of undefined|of null|is not a function|is not defined|is not iterable|TypeError|ReferenceError|SyntaxError|RangeError|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EPIPE|socket hang up|unexpected token|in JSON|JSON\.parse|prototype|fetch failed|Maximum call stack/i.test(msg)
+        || reRuntime.test(msg)
+        || reNetwork.test(msg)
+        || reMonday.test(msg)
+        || rePostgres.test(msg)
         || /error sistema|sistema simulado|TEST forzado/i.test(msg)) {
         return AUDIT_ESTADO.error_sistema;
     }
