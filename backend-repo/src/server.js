@@ -4899,23 +4899,28 @@ async function comprobanteHandler(req, res) {
                         `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura, Nota de Crédito o Nota de Débito`
                     );
                 }
-                if (/cr[eé]dito/i.test(tipoComp)) {
+                // OJO con el orden: "Factura" se chequea PRIMERO. AFIP tiene
+                // "Factura de Crédito Electrónica MiPyME" (FCE A=201/B=206/C=211),
+                // y si chequeáramos /cr[eé]dito/i antes, ese valor matchearía y la
+                // factura se emitiría como Nota de Crédito → comprobante fiscal
+                // incorrecto. Anclando al inicio con /^\s*factura/i nos aseguramos
+                // que cualquier "Factura ..." cae acá, no en NC.
+                if (/^\s*factura/i.test(tipoComp)) {
+                    // tipoComp empieza con "Factura" (incluye FCE) → emitir factura.
+                } else if (/cr[eé]dito/i.test(tipoComp)) {
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Crédito`);
                     await emitNotaHandler(req, res, 'NC');
                     return;
-                }
-                if (/d[eé]bito/i.test(tipoComp)) {
+                } else if (/d[eé]bito/i.test(tipoComp)) {
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Débito`);
                     await emitNotaHandler(req, res, 'ND');
                     return;
-                }
-                if (!/factura/i.test(tipoComp)) {
+                } else {
                     throw new Error(
                         `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
                         `Tiene que ser "Factura", "Nota de Crédito" o "Nota de Débito".`
                     );
                 }
-                // tipoComp dice "factura" → seguimos con la emisión de factura.
             }
 
             // Un item = un solo comprobante. Si este item ya emitió una Nota de
@@ -5043,7 +5048,25 @@ async function comprobanteHandler(req, res) {
             }
 
             // ── 3. Idempotencia ────────────────────────────────────────────────
-            const typeForIdempotency = resolvedType || 'AUTO';
+            // F3: si hay una fila previa (AUTO o letra distinta) con attempted_
+            // cbte_nro reservado y status != success, USAR ESA fila (sobre todas
+            // las invoice_type no-NC/ND). Sino, un cambio de invoiceType entre
+            // intentos (AUTO → B por edicion de la recipe) crearia una segunda
+            // fila y el cron recuperaria la primera retroactivamente → 2 facturas.
+            let typeForIdempotency = resolvedType || 'AUTO';
+            const preempt = await db.query(
+                `SELECT invoice_type FROM invoice_emissions
+                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                    AND invoice_type NOT IN ('NC','ND')
+                    AND status <> 'success'
+                    AND attempted_cbte_nro IS NOT NULL
+                  ORDER BY updated_at DESC LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            if (preempt.rows[0] && preempt.rows[0].invoice_type !== typeForIdempotency) {
+                console.log(`[emit] idempotency preempt: hay fila ${preempt.rows[0].invoice_type} con cbteNro pendiente para este item — usandola en vez de ${typeForIdempotency} para evitar duplicar`);
+                typeForIdempotency = preempt.rows[0].invoice_type;
+            }
             const existing = await db.query(
                 `SELECT id, status, afip_result_json, draft_json,
                         attempted_cbte_nro, attempted_cbte_tipo, attempted_pto_vta
@@ -5116,12 +5139,16 @@ async function comprobanteHandler(req, res) {
                     } else {
                         uploadPrev = { uploaded: false, reason: pdfColPrev ? 'pdf_gen_failed' : 'no_column_configured' };
                     }
+                    // OJO: NO tocar updated_at acá. getMonthlyEmissionCount cuenta
+                    // por updated_at, y este UPDATE corre sobre filas success ya
+                    // emitidas en meses anteriores — bumpear updated_at las re-imputa
+                    // al mes actual (regresión del fix A10 si no excluimos este path).
                     await db.query(
-                        `UPDATE invoice_emissions SET afip_result_json=$5, updated_at=CURRENT_TIMESTAMP
+                        `UPDATE invoice_emissions SET afip_result_json=$5
                          WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                         [company.id, boardId, itemId, typeForIdempotency, JSON.stringify({ ...prev, monday_upload: uploadPrev })]
                     );
-                    console.log('[emit] PDF re-subido — idempotencia preservada, sin re-emisión');
+                    console.log('[emit] PDF re-subido — idempotencia preservada, sin re-emisión (updated_at preservado)');
                 } catch (reuploadErr) {
                     console.error('[emit] error re-subiendo PDF (la factura sigue válida en AFIP):', reuploadErr.message);
                 }
@@ -5564,6 +5591,21 @@ async function comprobanteHandler(req, res) {
             }
 
             console.log(`[emit] AFIP respuesta (${(process.env.AFIP_ENV || 'homologation').toUpperCase()}) — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
+
+            // ── 10a. Fase 2 mismatch → alerta a Slack ──────────────────────────
+            // Si afipIssueFactura prefijó el observacion con [FASE2_MISMATCH], la
+            // verificación post-emisión detectó discrepancia (CAE/cbteNro/importe
+            // distintos de lo enviado). La emisión es success (hay CAE), pero TAP
+            // tiene que enterarse para investigar. Sin esto, el tag queda decorativo.
+            if (afipResult?.observacion && /\[FASE2_MISMATCH\]/.test(afipResult.observacion)) {
+                console.warn(`[emit] FASE2_MISMATCH detectado — alertando a Slack: ${afipResult.observacion}`);
+                notifySlackSystemError({
+                    accountId,
+                    clientItemName: itemSourceName,
+                    errorMessage: `[FASE2_MISMATCH] Verificación post-emisión difiere de lo enviado. CAE: ${afipResult.cae}, item: ${itemId}. Detalle: ${afipResult.observacion}`,
+                    auditItemId: null,
+                }).catch((e) => console.warn('[slack] FASE2_MISMATCH alert falló:', e.message));
+            }
 
             // ── 10b. Persistir CAE inmediatamente ──────────────────────────────
             // Guardamos el CAE ni bien AFIP lo aprueba, para que si algo crashea
@@ -6577,6 +6619,17 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             console.log(`[nc] AFIP respuesta — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
             if (!afipResult?.cae) throw new Error(`AFIP no devolvió CAE para la ${docLabel}`);
 
+            // Fase 2 mismatch → alerta a Slack (mismo patrón que factura).
+            if (afipResult?.observacion && /\[FASE2_MISMATCH\]/.test(afipResult.observacion)) {
+                console.warn(`[nc] FASE2_MISMATCH detectado en ${docAbbr} — alertando a Slack: ${afipResult.observacion}`);
+                notifySlackSystemError({
+                    accountId,
+                    clientItemName: null,
+                    errorMessage: `[FASE2_MISMATCH] Verificación post-emisión de ${docLabel} difiere de lo enviado. CAE: ${afipResult.cae}, item: ${itemId}. Detalle: ${afipResult.observacion}`,
+                    auditItemId: null,
+                }).catch((e) => console.warn('[slack] FASE2_MISMATCH alert (NC/ND) falló:', e.message));
+            }
+
             // ── 9. Persistir resultado final ───────────────────────────────────
             await db.query(
                 `UPDATE invoice_emissions
@@ -7313,7 +7366,8 @@ function classifyAuditError(err) {
         || reNetwork.test(msg)
         || reMonday.test(msg)
         || rePostgres.test(msg)
-        || /error sistema|sistema simulado|TEST forzado/i.test(msg)) {
+        || /error sistema|sistema simulado|TEST forzado/i.test(msg)
+        || /\[ABANDONED\]|Reconciliation abandoned|\[FASE2_MISMATCH\]/i.test(msg)) {
         return AUDIT_ESTADO.error_sistema;
     }
     // 3) Por defecto: error de VALIDACIÓN / negocio — dato del usuario corregible
@@ -8263,8 +8317,9 @@ const RECONCILE_INTERVAL_MS  = 5 * 60 * 1000;
 // cbteNro reservado sigue confirmando "no existe", asumimos que la solicitud
 // original fue rechazada/perdida y no llegara nunca. Marcamos la row como
 // abandonada (error_message descriptivo + filtro en el SELECT del cron) para
-// no poll-earla indefinidamente. 20 intentos * 5min ≈ ~100 minutos de ventana.
-const RECONCILE_MAX_ATTEMPTS = 20;
+// no poll-earla indefinidamente. 100 intentos * 5min ≈ ~8 horas de ventana
+// — cubre caidas largas de AFIP (historicamente algunas duran 3-4 hs).
+const RECONCILE_MAX_ATTEMPTS = 100;
 
 async function reconcileSingleEmission(row) {
     const tag = `[reconcile-cron item=${row.item_id} cbteNro=${row.attempted_cbte_nro}]`;
@@ -8328,14 +8383,46 @@ async function reconcileSingleEmission(row) {
             );
             const attempts = Number(attemptsRow.rows[0]?.reconciliation_attempts || 0);
             if (attempts >= RECONCILE_MAX_ATTEMPTS) {
+                const abandonMsg = `[ABANDONED] Reconciliation abandoned after ${RECONCILE_MAX_ATTEMPTS} attempts — AFIP confirmed not exists`;
                 await db.query(
                     `UPDATE invoice_emissions
-                     SET error_message=$2,
+                     SET error_message=$2, status='error',
                          updated_at=CURRENT_TIMESTAMP
                      WHERE id=$1`,
-                    [row.id, `Reconciliation abandoned after ${RECONCILE_MAX_ATTEMPTS} attempts — AFIP confirmed not exists`]
+                    [row.id, abandonMsg]
                 );
                 console.warn(`${tag} ABANDONADA tras ${attempts} intentos — AFIP confirma que no existe.`);
+
+                // Alerta a Slack: TAP tiene que enterarse para investigar
+                // manualmente (puede ser comprobante legitimo perdido o un bug).
+                // Usar la `company` local (cargada arriba) — el `row` del SELECT
+                // del cron NO trae company anidada.
+                notifySlackSystemError({
+                    accountId: company?.monday_account_id || null,
+                    clientItemName: row.draft_json?.receptor_nombre || `item ${row.item_id}`,
+                    errorMessage: `${abandonMsg}. Item ${row.item_id}, cbteNro ${row.attempted_cbte_nro}, tipo ${row.attempted_cbte_tipo}, ptoVta ${row.attempted_pto_vta}. invoice_emissions.id=${row.id}`,
+                    auditItemId: null,
+                }).catch((e) => console.warn(`${tag} Slack alert falló:`, e.message));
+
+                // Y refrescar el audit board: pasar la fila a "Error AFIP" en vez
+                // de mostrar el error del primer intento. logEmissionToAuditBoard
+                // dedupea via findAuditItemId.
+                if (company?.monday_account_id) {
+                    logEmissionToAuditBoard({
+                        accountId: String(company.monday_account_id),
+                        success: false,
+                        clientItemId: row.item_id,
+                        sourceItemName: null,
+                        draft: row.draft_json || null,
+                        afipResult: null,
+                        tipo: null,
+                        error: new Error(abandonMsg),
+                        durationMs: null,
+                        company,
+                        esNotaCredito: row.invoice_type === 'NC',
+                        esNotaDebito: row.invoice_type === 'ND',
+                    }).catch((e) => console.warn(`${tag} audit-log abandono falló:`, e.message));
+                }
             }
         } catch (markErr) {
             console.warn(`${tag} error marcando abandono:`, markErr.message);
