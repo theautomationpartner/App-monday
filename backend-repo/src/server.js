@@ -6127,21 +6127,25 @@ async function comprobanteHandler(req, res) {
                 if (errToken && itemId && boardId) {
                     await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind });
 
-                    // Cambiar el status del item a "Error" SOLO si NO es idempotencia
-                    // (y si el cliente activó "Cambiar el estado del item").
-                    if (!isIdempotencyError) {
-                        const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
-                        const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
-                        const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
-                        const errLabel = readinessForErr?.boardConfig?.error_label
-                            || COMPROBANTE_STATUS_FLOW.error;
-                        if (errAutoUpdateStatus && errStatusColId) {
-                            await updateMondayItemStatus({
-                                apiToken: errToken, boardId, itemId,
-                                statusColumnId: errStatusColId,
-                                label: errLabel,
-                            });
-                        }
+                    // Si NO es idempotencia → marcar el item como "Error".
+                    // Si SI es idempotencia → la fila DB ya esta en success, pero
+                    // el status del item habia cambiado antes a "Creando" en el
+                    // preflight; lo restauramos a "Comprobante Creado" para que
+                    // no quede colgado en amarillo. (Antes solo evitabamos pisar
+                    // a "Error" — defensa IDVTA-153 — pero olvidabamos revertir
+                    // el "Creando" intermedio.)
+                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
+                    const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
+                    const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
+                    if (errAutoUpdateStatus && errStatusColId) {
+                        const targetLabel = isIdempotencyError
+                            ? (readinessForErr?.boardConfig?.success_label || COMPROBANTE_STATUS_FLOW.success)
+                            : (readinessForErr?.boardConfig?.error_label   || COMPROBANTE_STATUS_FLOW.error);
+                        await updateMondayItemStatus({
+                            apiToken: errToken, boardId, itemId,
+                            statusColumnId: errStatusColId,
+                            label: targetLabel,
+                        });
                     }
                 }
             } catch (_) {}
@@ -7037,11 +7041,15 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId) {
                     await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel });
-                    // Status a "Error" SOLO si NO es idempotencia.
-                    if (!isIdempotencyError && autoUpdateStatus && statusColumnId && boardId) {
+                    // Si NO es idempotencia → "Error". Si SI es idempotencia → restaurar a
+                    // "Comprobante Creado" (la NC/ND ya existe en success; el status habia
+                    // pasado a "Creando" antes del claim y quedaria colgado en amarillo si
+                    // no lo revertimos).
+                    if (autoUpdateStatus && statusColumnId && boardId) {
+                        const targetLabel = isIdempotencyError ? successLabel : errorLabel;
                         await updateMondayItemStatus({
                             apiToken: errToken, boardId, itemId,
-                            statusColumnId, label: errorLabel,
+                            statusColumnId, label: targetLabel,
                         });
                     }
                 }
