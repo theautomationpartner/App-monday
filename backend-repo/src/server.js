@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const CryptoJS = require('crypto-js');
 const jwt = require('jsonwebtoken');
 const forge = require('node-forge');
@@ -480,6 +480,12 @@ try {
 
 const app = express();
 
+// Estamos detras de nginx (que termina TLS y agrega X-Forwarded-For/Proto).
+// Sin esto, req.ip devuelve siempre 127.0.0.1 — express-rate-limit no puede
+// distinguir clientes y warna en cada hit del fallback IP del emitLimiter.
+// trust=1 confia un solo hop (nginx), no toda la cadena (defensa anti-spoofing).
+app.set('trust proxy', 1);
+
 // ─── Security headers ───────────────────────────────────────────────────────
 // Requeridos por el privacy & security review de monday:
 // - HSTS: forzar HTTPS por 1 año (la app ya es HTTPS-only, refuerza a nivel browser)
@@ -536,14 +542,17 @@ const emitLimiter = rateLimit({
     // Las recetas vienen siempre del rango de IPs de monday → si keyeamos por
     // IP, un cliente que emite mucho bloquea a todos los demás. Keyeamos por
     // accountId (o itemId como fallback intermedio) para aislar cada tenant.
-    // IP queda como ultimo recurso (ej. requests externas / debug).
-    keyGenerator: (req) => String(
+    // IP queda como ultimo recurso (ej. requests externas / debug); usamos el
+    // helper ipKeyGenerator de express-rate-limit que maneja IPv6 correctamente
+    // (sin el helper, dos IPv6 distintas del mismo /64 podrian compartir cuota).
+    keyGenerator: (req) =>
         req.body?.payload?.inboundFieldValues?.accountId
-        || req.body?.payload?.accountId
-        || req.body?.payload?.inboundFieldValues?.itemId
-        || req.ip
-        || 'anonymous'
-    ),
+        ? String(req.body.payload.inboundFieldValues.accountId)
+        : req.body?.payload?.accountId
+            ? String(req.body.payload.accountId)
+            : req.body?.payload?.inboundFieldValues?.itemId
+                ? String(req.body.payload.inboundFieldValues.itemId)
+                : ipKeyGenerator(req) || 'anonymous',
 });
 const webhookLimiter = rateLimit({
     windowMs: 60 * 1000,
