@@ -660,6 +660,37 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
     return r.rows[0] || null;
 }
 
+// Orden canónico para elegir UNA sola fila de visual_mappings por
+// (company_id, board_id) cuando hay más de una. Históricamente el UNIQUE de la
+// tabla permitía varias filas por board (difería por view_id/app_feature_id), y
+// el frontend a veces guardaba con view_id=null → quedaban filas "fantasma"
+// incompletas (sin tipo_comprobante) con updated_at más nuevo. La lectura de
+// emisión hacía `ORDER BY updated_at DESC` y agarraba la incompleta → el ruteo a
+// NC/ND se salteaba y se emitía Factura. Este orden elige la MÁS COMPLETA en vez
+// de la más nueva: 1) la que tiene tipo_comprobante, 2) la de más columnas,
+// 3) desempate por más reciente, 4) por id (estable). Filtra SOLO por
+// company+board, así dos tableros distintos (board_id distinto) nunca colisionan.
+const VISUAL_MAPPING_PICK_ORDER = `
+    ORDER BY (mapping_json ? 'tipo_comprobante') DESC,
+             (SELECT count(*) FROM jsonb_object_keys(mapping_json)) DESC,
+             updated_at DESC NULLS LAST,
+             id DESC`;
+
+// Carga el mapeo visual del board para EMISIÓN. Devuelve el mapping_json de la
+// fila más completa (ver VISUAL_MAPPING_PICK_ORDER) o null si no hay ninguna.
+// Reemplaza el viejo `ORDER BY updated_at DESC LIMIT 1` que era la causa raíz del
+// bug de "NC emitida como Factura".
+async function loadBoardMappingForEmit(companyId, boardId) {
+    const r = await db.query(
+        `SELECT mapping_json FROM visual_mappings
+          WHERE company_id = $1 AND board_id = $2
+          ${VISUAL_MAPPING_PICK_ORDER}
+          LIMIT 1`,
+        [companyId, String(boardId)]
+    );
+    return r.rows[0]?.mapping_json || null;
+}
+
 /**
  * Chequea que toda la configuración necesaria para emitir una factura esté presente.
  * Devuelve { ready: boolean, missing: string[], company, certificate, mapping, boardConfig }.
@@ -703,13 +734,7 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
     let boardConfig = null;
 
     if (boardId) {
-        const mappingResult = await db.query(
-            `SELECT mapping_json FROM visual_mappings
-             WHERE company_id=$1 AND board_id=$2
-             ORDER BY updated_at DESC LIMIT 1`,
-            [company.id, String(boardId)]
-        );
-        mapping = mappingResult.rows[0]?.mapping_json || null;
+        mapping = await loadBoardMappingForEmit(company.id, boardId);
         if (!mapping) {
             missing.push('mapeo_columnas');
         } else {
@@ -2254,6 +2279,62 @@ async function ensureBoardAutomationConfigsExtras() {
     `).catch(() => {/* ya era nullable */});
 }
 
+// Colapsa filas duplicadas de visual_mappings a UNA por (company_id, board_id),
+// conservando la MÁS COMPLETA, y reemplaza el UNIQUE de 4-tupla
+// (ux_visual_mappings_scope, que permitía duplicados por view_id/app_feature_id)
+// por uno a nivel (company_id, board_id). Es la causa raíz del bug "NC emitida
+// como Factura": filas fantasma sin tipo_comprobante ganaban el `ORDER BY
+// updated_at DESC`. 100% idempotente (DO block transaccional). board_id distinto
+// NUNCA se mezcla — la PARTITION y el nuevo UNIQUE incluyen board_id, así que dos
+// tableros del mismo cliente quedan independientes.
+async function ensureVisualMappingsDedup() {
+    await db.query(`
+DO $mig$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_name = 'visual_mappings'
+  ) THEN
+    RAISE NOTICE 'visual_mappings no existe, skip dedup';
+    RETURN;
+  END IF;
+
+  -- 1) Borrar duplicados dentro de cada (company_id, board_id), conservando la
+  --    fila ganadora: 1) tiene tipo_comprobante, 2) más columnas, 3) más
+  --    reciente, 4) id (desempate estable). Mismo orden que loadBoardMappingForEmit.
+  WITH ranked AS (
+    SELECT id,
+           row_number() OVER (
+             PARTITION BY company_id, board_id
+             ORDER BY
+               (mapping_json ? 'tipo_comprobante') DESC,
+               (SELECT count(*) FROM jsonb_object_keys(mapping_json)) DESC,
+               updated_at DESC NULLS LAST,
+               id DESC
+           ) AS rn
+    FROM visual_mappings
+  )
+  DELETE FROM visual_mappings vm
+  USING ranked r
+  WHERE vm.id = r.id AND r.rn > 1;
+
+  -- 2) Quitar el UNIQUE viejo de 4-tupla (como constraint o como índice suelto).
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ux_visual_mappings_scope') THEN
+    ALTER TABLE visual_mappings DROP CONSTRAINT ux_visual_mappings_scope;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE relkind = 'i' AND relname = 'ux_visual_mappings_scope') THEN
+    DROP INDEX IF EXISTS ux_visual_mappings_scope;
+  END IF;
+
+  -- 3) Crear el UNIQUE a nivel (company_id, board_id) si no existe.
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ux_visual_mappings_company_board') THEN
+    ALTER TABLE visual_mappings
+      ADD CONSTRAINT ux_visual_mappings_company_board UNIQUE (company_id, board_id);
+  END IF;
+END
+$mig$;
+    `);
+}
+
 async function ensureCompaniesExtraColumns() {
     await db.query(`
         ALTER TABLE companies
@@ -3332,15 +3413,17 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
 
         let visualMapping = null;
         if (board_id) {
+            // Match por company+board (no por view_id/app_feature_id): la emisión
+            // usa la fila más completa del board, y la UI debe mostrar ESA misma
+            // fila para no caer en un falso "mapeo no configurado".
             const mappingResult = await db.query(
                 `SELECT mapping_json, is_locked, updated_at
                  FROM visual_mappings
                  WHERE company_id = $1
                    AND board_id = $2
-                   AND COALESCE(view_id, '') = COALESCE($3, '')
-                   AND COALESCE(app_feature_id, '') = COALESCE($4, '')
+                 ${VISUAL_MAPPING_PICK_ORDER}
                  LIMIT 1`,
-                [company.id, String(board_id), view_id || null, app_feature_id || null]
+                [company.id, String(board_id)]
             );
 
             if (mappingResult.rows.length > 0) {
@@ -3784,15 +3867,16 @@ app.get('/api/mappings/:mondayAccountId', requireMondaySession, async (req, res)
             return res.json({ hasMapping: false, mapping: null });
         }
 
+        // Match por company+board (no por view_id/app_feature_id) para devolver
+        // la MISMA fila que usa la emisión (la más completa del board).
         const mappingResult = await db.query(
             `SELECT id, mapping_json, is_locked, created_at, updated_at
              FROM visual_mappings
              WHERE company_id = $1
                AND board_id = $2
-               AND COALESCE(view_id, '') = COALESCE($3, '')
-               AND COALESCE(app_feature_id, '') = COALESCE($4, '')
+             ${VISUAL_MAPPING_PICK_ORDER}
              LIMIT 1`,
-            [company.id, String(board_id), view_id || null, app_feature_id || null]
+            [company.id, String(board_id)]
         );
 
         if (mappingResult.rows.length === 0) {
@@ -3855,12 +3939,18 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
         //   - Si una key NO viene en el body → PRESERVAR del DB (forwards-compat)
         // Asi el frontend nuevo puede des-mapear (mandando '') y el viejo no
         // pisa lo que no conoce.
+        // Leemos la fila MÁS COMPLETA del board (no scopeada por view_id/
+        // app_feature_id) para mergear sobre ella. Antes el read/UPDATE filtraba
+        // por la 4-tupla y, cuando el frontend mandaba view_id=null, no matcheaba
+        // la fila existente y caía al INSERT → nacía una fila duplicada e
+        // incompleta. Ahora todo el upsert es por (company_id, board_id), igual
+        // que /api/board-config, así nunca más se duplica.
         const currentRow = await db.query(
             `SELECT mapping_json FROM visual_mappings
              WHERE company_id=$1 AND board_id=$2
-               AND COALESCE(view_id, '')=COALESCE($3, '')
-               AND COALESCE(app_feature_id, '')=COALESCE($4, '')`,
-            [company.id, String(board_id), view_id || null, app_feature_id || null]
+             ${VISUAL_MAPPING_PICK_ORDER}
+             LIMIT 1`,
+            [company.id, String(board_id)]
         );
         const currentMapping = currentRow.rows[0]?.mapping_json || {};
         const merged = { ...currentMapping };
@@ -3872,56 +3962,59 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
             }
         }
 
-        const updateResult = await db.query(
+        const lockVal = typeof is_locked === 'boolean' ? is_locked : null;
+        const doUpdate = () => db.query(
             `UPDATE visual_mappings
-             SET mapping_json = $5,
-                 is_locked = COALESCE($6, is_locked),
-                 workspace_id = $7,
-                 updated_at = CURRENT_TIMESTAMP,
-                 version = version + 1
-             WHERE company_id = $1
-               AND board_id = $2
-               AND COALESCE(view_id, '') = COALESCE($3, '')
-               AND COALESCE(app_feature_id, '') = COALESCE($4, '')
-             RETURNING *`,
-            [
-                company.id,
-                String(board_id),
-                view_id || null,
-                app_feature_id || null,
-                JSON.stringify(merged),
-                typeof is_locked === 'boolean' ? is_locked : null,
-                workspaceId
-            ]
+                SET mapping_json = $3,
+                    is_locked = COALESCE($4, is_locked),
+                    workspace_id = $5,
+                    updated_at = CURRENT_TIMESTAMP,
+                    version = version + 1
+              WHERE company_id = $1 AND board_id = $2
+              RETURNING *`,
+            [company.id, String(board_id), JSON.stringify(merged), lockVal, workspaceId]
         );
 
+        const updateResult = await doUpdate();
         if (updateResult.rows.length > 0) {
             return res.json({ message: 'Mapeo visual actualizado', mapping: updateResult.rows[0] });
         }
 
-        const insertResult = await db.query(
-            `INSERT INTO visual_mappings (
-                company_id,
-                workspace_id,
-                board_id,
-                view_id,
-                app_feature_id,
-                mapping_json,
-                is_locked
-            ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
-            RETURNING *`,
-            [
-                company.id,
-                workspaceId,
-                String(board_id),
-                view_id || null,
-                app_feature_id || null,
-                JSON.stringify(merged),
-                typeof is_locked === 'boolean' ? is_locked : null
-            ]
-        );
-
-        return res.status(201).json({ message: 'Mapeo visual creado', mapping: insertResult.rows[0] });
+        // No existía fila para el board → INSERT. Si una request concurrente la
+        // creó primero, el UNIQUE (company_id, board_id) dispara 23505:
+        // reintentamos como UPDATE para no duplicar ni devolver 500.
+        try {
+            const insertResult = await db.query(
+                `INSERT INTO visual_mappings (
+                    company_id,
+                    workspace_id,
+                    board_id,
+                    view_id,
+                    app_feature_id,
+                    mapping_json,
+                    is_locked
+                ) VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, TRUE))
+                RETURNING *`,
+                [
+                    company.id,
+                    workspaceId,
+                    String(board_id),
+                    view_id || null,
+                    app_feature_id || null,
+                    JSON.stringify(merged),
+                    lockVal
+                ]
+            );
+            return res.status(201).json({ message: 'Mapeo visual creado', mapping: insertResult.rows[0] });
+        } catch (insErr) {
+            if (insErr.code === '23505') {
+                const retry = await doUpdate();
+                if (retry.rows.length > 0) {
+                    return res.json({ message: 'Mapeo visual actualizado', mapping: retry.rows[0] });
+                }
+            }
+            throw insErr;
+        }
     } catch (err) {
         console.error('❌ Error al guardar mapeo visual:', err);
         return res.status(500).json({
@@ -5442,14 +5535,8 @@ async function comprobanteHandler(req, res) {
             const emisorKeyPem  = normalizePem(decryptedKey, 'PRIVATE KEY');
 
             // ── 5. Mapeo visual de columnas ────────────────────────────────────
-            const mappingResult = await db.query(
-                `SELECT mapping_json FROM visual_mappings WHERE company_id=$1 AND board_id=$2
-                 ORDER BY updated_at DESC LIMIT 1`,
-                [company.id, boardId]
-            );
-            if (!mappingResult.rows[0]?.mapping_json) throw new Error('Falta configurar el mapeo de columnas para este tablero');
-
-            const mapping = mappingResult.rows[0].mapping_json;
+            const mapping = await loadBoardMappingForEmit(company.id, boardId);
+            if (!mapping) throw new Error('Falta configurar el mapeo de columnas para este tablero');
             const fechaEmisionRaw = getColumnTextById(mainColumns, mapping.fecha_emision);
             const receptorCuitRaw = getColumnTextById(mainColumns, mapping.receptor_cuit) || null;
             const receptorNombre  = getColumnTextById(mainColumns, mapping.receptor_nombre) || null;
@@ -6419,13 +6506,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // tiene mapeo, ncMapping queda {} y caemos al modo legacy.
             let ncMapping = {};
             try {
-                const mapRes = await db.query(
-                    `SELECT mapping_json FROM visual_mappings
-                     WHERE company_id=$1 AND board_id=$2
-                     ORDER BY updated_at DESC LIMIT 1`,
-                    [company.id, boardId]
-                );
-                ncMapping = mapRes.rows[0]?.mapping_json || {};
+                ncMapping = (await loadBoardMappingForEmit(company.id, boardId)) || {};
             } catch (mapErr) {
                 console.warn('[nc] no se pudo leer el mapeo del board:', mapErr.message);
             }
@@ -8034,6 +8115,12 @@ async function runStartupMigrations() {
         console.log('[migrations] board_automation_configs (auto_rename_item, auto_update_status) aseguradas');
     } catch (err) {
         console.error('[migrations] board_automation_configs extras error:', err.message);
+    }
+    try {
+        await ensureVisualMappingsDedup();
+        console.log('[migrations] visual_mappings dedup + UNIQUE (company_id, board_id) aseguradas');
+    } catch (err) {
+        console.error('[migrations] visual_mappings dedup error:', err.message);
     }
 }
 
