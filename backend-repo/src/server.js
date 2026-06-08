@@ -6239,20 +6239,20 @@ async function comprobanteHandler(req, res) {
                 }
             }
 
-            // Write-back del CAE a la columna del item (FIRE-AND-FORGET).
-            // Solo cuando:
+            // Write-back del CAE del comprobante a la columna "CAE del comprobante"
+            // (FIRE-AND-FORGET). Solo cuando:
             //   - Emision exitosa (hay CAE)
-            //   - El cliente mapeo la columna factura_referencia (la misma que
-            //     una Nota de Credito usa para apuntar a la factura a anular).
-            // Asi la factura emitida queda "completa" mostrando su propio CAE en
-            // el board: para emitir una NC se copia ese CAE al item de la NC.
-            // Escribe siempre — una factura emitida no se re-emite con otro CAE.
-            // writeMondayNumericColumn usa change_simple_column_value, que sirve
-            // tanto para columnas numericas como de texto (el CAE son 14 digitos).
-            if (afipResult?.cae && mapping.factura_referencia) {
+            //   - El cliente mapeo la columna cae_comprobante.
+            // Asi la factura emitida queda con su propio CAE en el board: para
+            // emitir una NC se copia ese CAE a la columna "CAE de la factura a
+            // anular" (factura_referencia) del item de la NC. La factura ya NO
+            // escribe en factura_referencia — esa columna es solo el input manual
+            // de NC/ND. writeMondayNumericColumn usa change_simple_column_value,
+            // que sirve para columnas numericas o de texto (el CAE son 14 digitos).
+            if (afipResult?.cae && mapping.cae_comprobante) {
                 writeMondayNumericColumn({
                     apiToken: mondayToken, boardId, itemId,
-                    columnId: mapping.factura_referencia,
+                    columnId: mapping.cae_comprobante,
                     value:    afipResult.cae,
                 }).catch(async (e) => {
                     // Si el write-back falla, el usuario no tiene el CAE en la
@@ -7117,6 +7117,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 letra,
                 puntoVenta: ncDraft.punto_venta,
                 numero:     afipResult.numero_comprobante,
+                cae:        afipResult.cae,
             }).catch((e) => console.warn('[nc] write-back columnas comprobante falló:', e.message));
 
             // Si el board mapea "Punto de Venta" y el usuario la dejó VACÍA, la
@@ -7673,10 +7674,24 @@ async function writeMondayDropdownColumn({ apiToken, boardId, itemId, columnId, 
 //   - nro_factura       (texto)    → "PPPP-NNNNNNNN"  (ej: "0005-00000070")
 //   - nro_comprobante   (numérica) → solo el número   (ej: 70)
 //   - letra_comprobante (dropdown) → la letra A / B / C
-async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero }) {
+async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae }) {
     if (!apiToken || !boardId || !itemId || !mapping) return;
     const pv  = String(puntoVenta ?? '').replace(/\D/g, '');
     const nro = String(numero ?? '').replace(/\D/g, '');
+
+    // CAE del comprobante emitido → columna "CAE del comprobante"
+    // (numeric_mm44gwxc en la plantilla). Registro consistente del CAE real de
+    // CADA comprobante, distinto de factura_referencia (el CAE que la persona
+    // ingresa a mano para apuntar a la factura que una NC/ND anula). El handler
+    // de factura escribe este CAE en su propio bloque (con aviso al usuario si
+    // falla), así que NO le pasa `cae` acá para no duplicar; NC y ND sí lo pasan.
+    if (mapping.cae_comprobante && cae) {
+        await writeMondayNumericColumn({
+            apiToken, boardId, itemId,
+            columnId: mapping.cae_comprobante,
+            value: cae,
+        });
+    }
 
     if (mapping.nro_factura && pv && nro) {
         await writeMondayNumericColumn({

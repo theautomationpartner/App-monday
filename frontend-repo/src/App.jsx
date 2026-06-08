@@ -121,6 +121,11 @@ const TEMPLATE_MAPPING = {
 const TEMPLATE_NC_MAPPING = {
   tipo_comprobante:   "dropdown_mm3hbhc0",
   factura_referencia: "numeric_mm3h6y35",
+  // cae_comprobante: la app escribe acá el CAE de CADA comprobante emitido
+  // (factura / NC / ND). Es OBLIGATORIA (está en requiredMappingFields), pero
+  // igual se pre-carga condicional como las demás: solo si el board tiene la
+  // columna. Boards sin ella → el cliente la mapea a mano (queda incompleto).
+  cae_comprobante:    "numeric_mm44gwxc",
   nro_factura:        "text_mm3k5zh4",
   nro_comprobante:    "numeric_mm3kg6ph",
   letra_comprobante:  "dropdown_mm3kzmy5",
@@ -406,6 +411,9 @@ const App = () => {
     "prod_serv",
     "unidad_medida",
     "alicuota_iva",
+    // CAE del comprobante: columna donde la app escribe el CAE de cada
+    // comprobante emitido (factura / NC / ND). Obligatoria — mapeala sí o sí.
+    "cae_comprobante",
   ];
   // Campos opcionales — el cliente puede mapearlos pero no son obligatorios
   // para guardar el mapeo ni para emitir.
@@ -1480,6 +1488,7 @@ const App = () => {
         prod_serv:            "Prod/Serv",
         unidad_medida:        "Unidad de Medida",
         alicuota_iva:         "Alícuota IVA %",
+        cae_comprobante:      "CAE del Comprobante",
       };
       missingFields.forEach((f) => blockers.push(`Mapear "${labelMap[f] || f}"`));
     } else {
@@ -3354,6 +3363,24 @@ const App = () => {
                   <div><span>Subtotal</span><span className="mono">$ 180.000,00</span></div>
                   <div><span>IVA 21%</span><span className="mono">$ 37.800,00</span></div>
                   <div className="rf-total"><span>Total</span><span className="mono">$ 217.800,00</span></div>
+                </div>
+              </div>
+            </div>
+
+            {/* ─── Columna obligatoria: CAE del comprobante ─── */}
+            <div className="rf-mapping-frame">
+              <div className="rf-mapping-frame-head">
+                <div>
+                  <div className="rf-mapping-frame-eyebrow">Columna obligatoria</div>
+                  <div className="rf-mapping-frame-title">
+                    Acá la app escribe el CAE de CADA comprobante emitido (factura, Nota de Crédito o Nota de Débito). Es tu registro consistente de todos los CAE reales. Distinta de "CAE de la factura a anular", que la cargás vos a mano para una NC/ND.
+                  </div>
+                </div>
+              </div>
+              <div className="rf-invoice-client cols-3">
+                <div>
+                  <div className="rf-invoice-client-label">CAE del Comprobante</div>
+                  {mapSel("cae_comprobante", "Columna CAE del comprobante")}
                 </div>
               </div>
             </div>

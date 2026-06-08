@@ -95,6 +95,15 @@ const REQUIRED_MAPPING_FIELDS = [
     'alicuota_iva',
 ];
 
+// cae_comprobante (columna "CAE del comprobante", numeric_mm44gwxc en la
+// plantilla): la app escribe ahí el CAE de CADA comprobante emitido
+// (factura / NC / ND). Es OBLIGATORIA en el mapeo visual — el frontend la exige
+// en requiredMappingFields y bloquea el guardado sin ella. La dejamos FUERA de
+// REQUIRED_MAPPING_FIELDS a propósito: el auto-mapeo de plantilla postea sin
+// is_complete=false y un board viejo (sin la columna) no la tendría → exigirla
+// acá rompería ese alta automática. El schema `mapping` es z.record abierto, así
+// que la clave persiste igual en visual_mappings.mapping_json.
+
 // Campos de mapeo OPCIONALES. No se exigen nunca (un cliente que solo emite
 // facturas con la config básica no necesita mapearlos), por eso quedan fuera de
 // REQUIRED_MAPPING_FIELDS. El schema `mapping` es un z.record abierto, así que
