@@ -1283,8 +1283,19 @@ async function afipConsultarComprobante({ token, sign, cuit, pointOfSale, cbteTy
     const cae = extractXmlTag(xml, 'CodAutorizacion') || extractXmlTag(xml, 'CAE');
     if (!cae) return null; // sin CAE = no encontrado
 
+    // CbtesAsoc (comprobantes asociados): para NC/ND identifica QUÉ factura
+    // anula. El recovery (Fase 1) lo usa para validar que el comprobante
+    // recuperado corresponde a esta emisión y no a otra que pisó el número.
+    const cbtesAsocBlocks = String(xml).match(/<(?:\w+:)?CbteAsoc[^>]*>[\s\S]*?<\/(?:\w+:)?CbteAsoc>/gi) || [];
+    const cbtes_asoc = cbtesAsocBlocks.map((b) => ({
+        tipo:    Number(extractXmlTag(b, 'Tipo')   || 0),
+        pto_vta: Number(extractXmlTag(b, 'PtoVta') || 0),
+        nro:     Number(extractXmlTag(b, 'Nro')    || 0),
+    })).filter((c) => c.nro > 0);
+
     return {
         cae,
+        cbtes_asoc,
         cae_vencimiento: extractXmlTag(xml, 'FchVto') || null,
         resultado: extractXmlTag(xml, 'Resultado') || null,
         cbte_tipo: Number(extractXmlTag(xml, 'CbteTipo') || 0),
@@ -1413,7 +1424,64 @@ async function afipGetCotizacion({ token, sign, cuit, monId }) {
     return { monCotiz, fchCotiz };
 }
 
-async function afipIssueFactura({
+// ─── Serialización por serie de emisión (anti-race del número correlativo) ──
+// Dos emisiones del MISMO (cuit, PV, cbteType) que corren casi a la vez pueden
+// leer el mismo "último número autorizado" de AFIP y reservar el MISMO cbteNro.
+// La que pierde termina "recuperando" (Fase 1) el comprobante de la que ganó y
+// queda un comprobante fantasma (incidente Polifroni NC 0007-00000002,
+// 2026-06-05: dos NC de facturas distintas con el mismo número y CAE).
+//
+// Este wrapper toma un advisory lock de Postgres por serie ANTES de pedir el
+// número y lo libera al terminar (xact lock → auto-release en COMMIT/ROLLBACK,
+// a prueba de fugas de conexión). Así dos emisiones de la misma serie se hacen
+// fila: la 2da espera y toma el número siguiente. Cubre factura, NC y ND.
+async function afipIssueFactura(args) {
+    const { cuit, pointOfSale, comprobanteClass, cbtesAsoc, invoiceType = 'C' } = args;
+    // Derivar la serie (cbteType) igual que adentro, para la clave del lock.
+    const isDebitNote  = comprobanteClass === 'ND';
+    const isCreditNote = !isDebitNote
+        && (comprobanteClass === 'NC' || (Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0));
+    const clase = isDebitNote ? 'ND' : isCreditNote ? 'NC' : 'Factura';
+    const cbteType = deriveCbteTipoFromLetra(invoiceType, clase);
+    if (cbteType == null) {
+        // No debería pasar (la letra siempre es A/B/C). Si pasa, emitimos sin
+        // lock antes que romper: el lock es defensa, no requisito de emisión.
+        console.warn(`[wsfe] lock: cbteType nulo (letra=${invoiceType}, clase=${clase}) — emisión SIN lock de serie`);
+        return afipIssueFacturaLocked(args);
+    }
+    const lockKey = `${cuit}:${pointOfSale}:${cbteType}`;
+    const lockClient = await db.pool.connect();
+    let inTx = false;
+    try {
+        await lockClient.query('BEGIN');
+        inTx = true;
+        // lock_timeout generoso: el holder retiene el lock durante los SOAP a
+        // AFIP (consultar + último nro + emitir + verificar). 120s cubre el peor
+        // caso legítimo; si se excede, algo está trabado → fallar y reintentar es
+        // más seguro que emitir sin serializar.
+        await lockClient.query("SET LOCAL lock_timeout = '120000'");
+        try {
+            await lockClient.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', ['afip_emit_serie', lockKey]);
+        } catch (lockErr) {
+            throw new Error(`No se pudo serializar la emisión (serie ${lockKey}): otra emisión de la misma serie sigue en curso o el lock quedó trabado (${lockErr.message}). Reintentá en unos segundos.`);
+        }
+        console.log(`[wsfe] lock: serie ${lockKey} adquirida`);
+        const result = await afipIssueFacturaLocked(args);
+        await lockClient.query('COMMIT');
+        inTx = false;
+        return result;
+    } catch (err) {
+        if (inTx) {
+            try { await lockClient.query('ROLLBACK'); } catch (_) {}
+            inTx = false;
+        }
+        throw err;
+    } finally {
+        try { lockClient.release(); } catch (_) {}
+    }
+}
+
+async function afipIssueFacturaLocked({
     token, sign, cuit, pointOfSale, draft, invoiceType = 'C',
     // Fase 1 — idempotency: si en un attempt anterior reservamos un cbteNro
     // y la respuesta de AFIP no llego (timeout / micro-corte), `previousCbteNro`
@@ -1479,8 +1547,41 @@ async function afipIssueFactura({
                 cbteNro:     previousCbteNro,
             });
             if (recovered && recovered.cae) {
-                console.log(`[wsfe] recovery: cbteNro=${previousCbteNro} ya existe en AFIP con CAE=${recovered.cae} — reutilizando emision previa`);
                 const totalAmountForCheck = Number(draft.importe_total || 0);
+
+                // ── Anti-fantasma (incidente Polifroni NC 0007-00000002) ──────
+                // Validar que el comprobante recuperado es REALMENTE el de esta
+                // emisión y no uno que otra emisión registró con el mismo número.
+                // Solo invalidamos con EVIDENCIA POSITIVA de mismatch (importe o
+                // factura asociada que difieren); si no podemos determinarlo, NO
+                // bloqueamos (evita falsos positivos en recoveries legítimos).
+                const importeKnown = recovered.imp_total != null
+                    && Number(recovered.imp_total) > 0 && totalAmountForCheck > 0;
+                const importeMismatch = importeKnown
+                    && Math.abs(Number(recovered.imp_total) - totalAmountForCheck) > 0.01;
+
+                let cbtesAsocMismatch = false;
+                if (Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0
+                    && Array.isArray(recovered.cbtes_asoc) && recovered.cbtes_asoc.length > 0) {
+                    // NC/ND: el comprobante recuperado debe anular la MISMA factura.
+                    const want = cbtesAsoc.map(c => `${Number(c.tipo)}|${Number(c.ptoVta)}|${Number(c.nro)}`).sort();
+                    const got  = recovered.cbtes_asoc.map(c => `${Number(c.tipo)}|${Number(c.pto_vta)}|${Number(c.nro)}`).sort();
+                    cbtesAsocMismatch = want.length !== got.length || want.some((w, i) => w !== got[i]);
+                }
+
+                if (importeMismatch || cbtesAsocMismatch) {
+                    const detail =
+                        `[RECOVERY_MISMATCH] cbteNro=${previousCbteNro} (PV ${recoveryPtoVta}, tipo ${recoveryCbteType}) ` +
+                        `ya existe en AFIP con CAE=${recovered.cae} pero NO corresponde a esta emisión ` +
+                        `(importeMismatch=${importeMismatch}, cbtesAsocMismatch=${cbtesAsocMismatch}). ` +
+                        `Esperado total=${totalAmountForCheck} cbtesAsoc=${JSON.stringify(cbtesAsoc || [])}; ` +
+                        `AFIP total=${recovered.imp_total} cbtesAsoc=${JSON.stringify(recovered.cbtes_asoc || [])}. ` +
+                        `Probable número pisado por otra emisión — NO se reutiliza, se aborta para revisión manual.`;
+                    console.error(`[wsfe] ${detail}`);
+                    throw new Error(detail);
+                }
+
+                console.log(`[wsfe] recovery: cbteNro=${previousCbteNro} ya existe en AFIP con CAE=${recovered.cae} y COINCIDE (importe+cbtesAsoc) — reutilizando emision previa`);
                 return {
                     resultado: recovered.resultado || 'A',
                     cae: recovered.cae,
@@ -1504,6 +1605,11 @@ async function afipIssueFactura({
             }
             console.log(`[wsfe] recovery: cbteNro=${previousCbteNro} no existe en AFIP — continuando con emision nueva`);
         } catch (recErr) {
+            // [RECOVERY_MISMATCH] es un throw DELIBERADO (el comprobante
+            // recuperado NO es de esta emisión): NO lo tragamos — propaga para
+            // abortar la emisión y alertar a Slack. Es distinto de un error de
+            // red/AFIP lenta, que sí se traga para continuar con emisión nueva.
+            if (/^\[RECOVERY_MISMATCH\]/.test(String(recErr?.message || ''))) throw recErr;
             // Si la consulta falla (red, AFIP lenta), seguimos con emision
             // nueva. Riesgo conocido: si el cbte previo si existia, podriamos
             // duplicar. Pero bloquear emision por una falla de red transitoria
@@ -7744,7 +7850,7 @@ function classifyAuditError(err) {
         || reMonday.test(msg)
         || rePostgres.test(msg)
         || /error sistema|sistema simulado|TEST forzado/i.test(msg)
-        || /\[ABANDONED\]|Reconciliation abandoned|\[FASE2_MISMATCH\]/i.test(msg)) {
+        || /\[ABANDONED\]|Reconciliation abandoned|\[FASE2_MISMATCH\]|\[RECOVERY_MISMATCH\]/i.test(msg)) {
         return AUDIT_ESTADO.error_sistema;
     }
     // 3) Por defecto: error de VALIDACIÓN / negocio — dato del usuario corregible
