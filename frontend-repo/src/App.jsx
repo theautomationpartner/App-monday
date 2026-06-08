@@ -225,6 +225,13 @@ const App = () => {
   // Lo usamos como un flag de "ya fui posteado en esta sesión".
   const autoMappingPostedRef = useRef(false);
 
+  // Marca si la cuenta YA tenía un mapeo guardado en la DB al cargar la página.
+  // Si lo tenía, el auto-mapeo NO debe re-postear el TEMPLATE_MAPPING: pisaría
+  // las customizaciones del cliente (ej. apuntar receptor_cuit a otra columna
+  // distinta a la de la plantilla). Sin esto, cada reload revertía el mapeo
+  // manual al default de la plantilla.
+  const dbHadMappingRef = useRef(false);
+
   const showToast = (type, message, opts = {}) => {
     setToast({ type, message });
     // Errores se quedan 7s para que dé tiempo a leer la sugerencia.
@@ -807,11 +814,15 @@ const App = () => {
           setSavedMappingSnapshot(hydratedMapping);
           setHasSavedMapping(Object.keys(hydratedMapping).length > 0);
           setIsMappingEditMode(false);
+          // Hubo mapeo guardado en DB → el auto-mapeo no debe re-postear el
+          // template (pisaría la customización del cliente al recargar).
+          dbHadMappingRef.current = Object.keys(hydratedMapping).length > 0;
         } else {
           setMapping({});
           setSavedMappingSnapshot(null);
           setHasSavedMapping(false);
           setIsMappingEditMode(false);
+          dbHadMappingRef.current = false;
         }
 
         if (data?.boardConfig && typeof data.boardConfig === "object") {
@@ -957,6 +968,15 @@ const App = () => {
     // que el useEffect se vuelva a ejecutar cuando hasSavedFiscalData cambie.
     if (!hasSavedFiscalData) {
       console.log("[auto-mapeo] Datos Fiscales todavía no cargados — state local seteado, POST diferido");
+      return;
+    }
+
+    // Si la cuenta YA tenía un mapeo guardado en la DB al cargar, NO auto-postear
+    // el template: este efecto re-corre en cada reload y antes revertía
+    // receptor_cuit (y cualquier campo customizado) al default de la plantilla.
+    // El auto-POST es sólo para inicializar boards de plantilla SIN mapeo previo.
+    if (dbHadMappingRef.current) {
+      console.log("[auto-mapeo] ya hay mapeo guardado en DB — no se re-postea el template (se respeta la customización del cliente)");
       return;
     }
 
