@@ -1621,20 +1621,32 @@ async function afipIssueFacturaLocked({
     const lastVoucher = await afipGetLastVoucher({ token, sign, cuit, pointOfSale, cbteType });
     const nextVoucher = lastVoucher + 1;
 
-    // Persistir el cbteNro reservado ANTES del SOAP para que en caso de
-    // timeout el retry pueda recuperarlo via FECompConsultar.
+    // Persistir el cbteNro reservado ANTES del SOAP. Es OBLIGATORIO: si AFIP
+    // emite (timeout de respuesta) y el número no quedó persistido, el
+    // comprobante queda HUÉRFANO sin rastro recuperable (incidente Polifroni:
+    // AFIP tenía comprobantes que el sistema no). Antes esto tragaba el error y
+    // emitía igual; ahora reintentamos unas veces y, si no se puede grabar,
+    // ABORTAMOS antes del SOAP — no le pedimos nada a AFIP sin tener el número
+    // anotado. Mejor fallar y que el usuario reintente que arriesgar un huérfano.
     if (typeof onCbteNroAssigned === 'function') {
-        try {
-            await onCbteNroAssigned({
-                cbteType,
-                pointOfSale: Number(pointOfSale),
-                cbteNro: nextVoucher,
-            });
-        } catch (cbErr) {
-            // No bloquea la emision: si fallamos persistiendo el numero
-            // reservado, perdemos solo la capacidad de recovery — la
-            // emision en si sigue funcionando.
-            console.warn(`[wsfe] onCbteNroAssigned fallo: ${cbErr.message}`);
+        let reserved = false;
+        let lastErr = null;
+        for (let i = 0; i < 3 && !reserved; i++) {
+            try {
+                await onCbteNroAssigned({
+                    cbteType,
+                    pointOfSale: Number(pointOfSale),
+                    cbteNro: nextVoucher,
+                });
+                reserved = true;
+            } catch (cbErr) {
+                lastErr = cbErr;
+                console.warn(`[wsfe] onCbteNroAssigned intento ${i + 1}/3 falló: ${cbErr.message}`);
+                if (i < 2) await new Promise((r) => setTimeout(r, 300));
+            }
+        }
+        if (!reserved) {
+            throw new Error(`[RESERVA_FALLIDA] No se pudo reservar el número de comprobante (cbteNro=${nextVoucher}, PV=${pointOfSale}, tipo=${cbteType}) en la base antes de emitir: ${lastErr?.message || 'error desconocido'}. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP. Reintentá en unos segundos.`);
         }
     }
 
@@ -5991,7 +6003,7 @@ async function comprobanteHandler(req, res) {
                         // Persistimos el numero reservado ANTES de enviar a AFIP.
                         // Si el SOAP timeout-ea, en el retry leemos este nro y
                         // consultamos AFIP para recuperar el estado real.
-                        await db.query(
+                        const r = await db.query(
                             `UPDATE invoice_emissions
                              SET attempted_cbte_tipo=$5,
                                  attempted_pto_vta=$6,
@@ -6001,6 +6013,10 @@ async function comprobanteHandler(req, res) {
                             [company.id, boardId, itemId, typeForIdempotency,
                              cbteType, pv, cbteNro]
                         );
+                        // La reserva DEBE impactar la fila del claim. Si 0 filas, no
+                        // quedó persistido el número → lanzamos para que el loop de
+                        // reserva reintente y, si no, aborte (mejor que un huérfano).
+                        if (r.rowCount !== 1) throw new Error(`reserva de cbteNro no impactó la fila esperada (rowCount=${r.rowCount})`);
                     },
                 });
             }
@@ -7052,13 +7068,14 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     monCotiz: ncDraft.cotizacion || 1.0,
                     cbtesAsoc,
                     onCbteNroAssigned: async ({ cbteType, pointOfSale: pv, cbteNro }) => {
-                        await db.query(
+                        const r = await db.query(
                             `UPDATE invoice_emissions
                              SET attempted_cbte_tipo=$4, attempted_pto_vta=$5,
                                  attempted_cbte_nro=$6, updated_at=CURRENT_TIMESTAMP
                              WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$7`,
                             [company.id, boardId, itemId, cbteType, pv, cbteNro, clase]
                         );
+                        if (r.rowCount !== 1) throw new Error(`reserva de cbteNro (NC/ND) no impactó la fila esperada (rowCount=${r.rowCount})`);
                     },
                 });
             }
@@ -7865,7 +7882,7 @@ function classifyAuditError(err) {
         || reMonday.test(msg)
         || rePostgres.test(msg)
         || /error sistema|sistema simulado|TEST forzado/i.test(msg)
-        || /\[ABANDONED\]|Reconciliation abandoned|\[FASE2_MISMATCH\]|\[RECOVERY_MISMATCH\]/i.test(msg)) {
+        || /\[ABANDONED\]|Reconciliation abandoned|\[FASE2_MISMATCH\]|\[RECOVERY_MISMATCH\]|\[RESERVA_FALLIDA\]/i.test(msg)) {
         return AUDIT_ESTADO.error_sistema;
     }
     // 3) Por defecto: error de VALIDACIÓN / negocio — dato del usuario corregible
@@ -8914,8 +8931,154 @@ function scheduleNightlyAfipAudit() {
     setTimeout(async () => {
         try { await runNightlyAfipAudit(); }
         catch (err) { console.error('[nightly-audit] error en corrida:', err.message); }
+        // Detector inverso: ¿AFIP tiene comprobantes que el sistema no registró?
+        try { await detectAfipOrphans(); }
+        catch (err) { console.error('[orphan-detector] error en corrida:', err.message); }
         scheduleNightlyAfipAudit(); // re-agendar para la noche siguiente
     }, delayMs);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Detector inverso de huérfanos (AFIP tiene comprobantes que el sistema no).
+// La auditoría nocturna (Fase 4) chequea lo NUESTRO contra AFIP. Esto chequea
+// al REVÉS: por cada serie (cuit, PV, cbteTipo) que usamos, le pide a AFIP su
+// último número (FECompUltimoAutorizado) y compara contra el CONJUNTO de
+// números que tenemos. Cualquier número en el rango [nuestro_min .. AFIP_last]
+// que AFIP tiene y nosotros NO → comprobante sin registro local (huérfano por
+// doble-emisión, o emisión manual/externa). Caza huecos en el MEDIO (ej. el
+// incidente Polifroni: AFIP tenía Factura B N°17 que el sistema nunca registró).
+// Los gaps ya revisados se "reconocen" en afip_gap_acks para no re-alertar.
+// ─────────────────────────────────────────────────────────────────────────
+async function detectAfipOrphans() {
+    const startedAt = Date.now();
+    console.log('[orphan-detector] iniciando…');
+
+    await db.query(`CREATE TABLE IF NOT EXISTS afip_gap_acks (
+        company_id UUID NOT NULL, pto_vta INT NOT NULL, cbte_tipo INT NOT NULL, cbte_nro INT NOT NULL,
+        acked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, note TEXT,
+        PRIMARY KEY (company_id, pto_vta, cbte_tipo, cbte_nro)
+    )`).catch(e => console.warn('[orphan-detector] ensure afip_gap_acks:', e.message));
+
+    let seriesRows;
+    const acked = new Set();
+    try {
+        const ackRes = await db.query('SELECT company_id, pto_vta, cbte_tipo, cbte_nro FROM afip_gap_acks');
+        for (const a of ackRes.rows) acked.add(`${a.company_id}:${a.pto_vta}:${a.cbte_tipo}:${a.cbte_nro}`);
+
+        const result = await db.query(`
+            SELECT company_id, pv, cbte_tipo,
+                   array_agg(nro) AS nros, MIN(nro) AS min_nro, MAX(nro) AS max_nro
+            FROM (
+                SELECT company_id,
+                       COALESCE(attempted_pto_vta,
+                                CASE WHEN draft_json->>'punto_venta' ~ '^[0-9]+$'
+                                     THEN (draft_json->>'punto_venta')::int END) AS pv,
+                       COALESCE(attempted_cbte_tipo,
+                                CASE WHEN afip_result_json->>'cbte_tipo_afip' ~ '^[0-9]+$'
+                                     THEN (afip_result_json->>'cbte_tipo_afip')::int END) AS cbte_tipo,
+                       CASE WHEN afip_result_json->>'numero_comprobante' ~ '^[0-9]+$'
+                            THEN (afip_result_json->>'numero_comprobante')::int END AS nro
+                FROM invoice_emissions
+                WHERE status='success'
+            ) s
+            WHERE pv IS NOT NULL AND cbte_tipo IS NOT NULL AND nro IS NOT NULL
+            GROUP BY company_id, pv, cbte_tipo
+        `);
+        seriesRows = result.rows;
+    } catch (err) {
+        console.error('[orphan-detector] error buscando series:', err.message);
+        return { error: err.message };
+    }
+
+    if (seriesRows.length === 0) {
+        console.log('[orphan-detector] sin series — skip');
+        return { series: 0, gaps: [] };
+    }
+
+    const byCompany = new Map();
+    for (const r of seriesRows) {
+        if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
+        byCompany.get(r.company_id).push(r);
+    }
+
+    const gaps = [];
+    for (const [companyId, series] of byCompany) {
+        let company, token, sign;
+        try {
+            const compRes = await db.query(
+                'SELECT id, business_name, cuit FROM companies WHERE id=$1 LIMIT 1', [companyId]);
+            company = compRes.rows[0];
+            if (!company) throw new Error('company no encontrada');
+            const certRes = await db.query(
+                'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1', [companyId]);
+            if (!certRes.rows[0]) throw new Error('certs AFIP faltantes');
+            const certPem = normalizePem(certRes.rows[0].crt_file_url, 'CERTIFICATE');
+            const decKey = CryptoJS.AES.decrypt(
+                certRes.rows[0].encrypted_private_key, process.env.ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8);
+            const keyPem = normalizePem(decKey, 'PRIVATE KEY');
+            const tokenData = await afipAuthModule.getToken({
+                certPem, keyPem, cuit: company.cuit, service: 'wsfe', companyId: company.id });
+            token = tokenData.token; sign = tokenData.sign;
+        } catch (setupErr) {
+            console.warn(`[orphan-detector] setup company ${companyId} falló: ${setupErr.message} — skip empresa`);
+            continue;
+        }
+
+        for (const s of series) {
+            try {
+                const afipLast = await afipGetLastVoucher({
+                    token, sign, cuit: company.cuit, pointOfSale: s.pv, cbteType: s.cbte_tipo });
+                const have = new Set((s.nros || []).map(Number));
+                const missing = [];
+                for (let n = Number(s.min_nro); n <= afipLast && missing.length < 500; n++) {
+                    if (!have.has(n) && !acked.has(`${companyId}:${s.pv}:${s.cbte_tipo}:${n}`)) missing.push(n);
+                }
+                if (missing.length > 0) {
+                    gaps.push({ companyId, company: company.business_name, cuit: company.cuit,
+                                pv: s.pv, cbteType: s.cbte_tipo, afipLast, missing });
+                    console.warn(`[orphan-detector] GAP ${company.business_name} PV=${s.pv} tipo=${s.cbte_tipo}: AFIP_last=${afipLast}, faltan [${missing.slice(0, 30).join(',')}${missing.length > 30 ? '…' : ''}]`);
+                }
+            } catch (e) {
+                console.warn(`[orphan-detector] error serie PV=${s.pv} tipo=${s.cbte_tipo} de ${companyId}: ${e.message}`);
+            }
+            await new Promise(r => setTimeout(r, 120));
+        }
+    }
+
+    const durationMs = Date.now() - startedAt;
+    console.log(`[orphan-detector] completado en ${(durationMs / 1000).toFixed(1)}s — series=${seriesRows.length}, gaps=${gaps.length}`);
+    if (gaps.length > 0) await notifyOrphanGaps(gaps);
+    return { series: seriesRows.length, gaps };
+}
+
+async function notifyOrphanGaps(gaps) {
+    if (process.env.APP_ENV === 'staging') {
+        console.log('[orphan-detector] APP_ENV=staging — skip alerta a Slack (canal solo para prod)');
+        return;
+    }
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) { console.warn('[orphan-detector] SLACK_WEBHOOK_URL no configurado — skip'); return; }
+    try {
+        const lines = [':warning: *Comprobantes en AFIP sin registro local (posibles huérfanos / emisiones manuales)*'];
+        for (const g of gaps) {
+            const shown = g.missing.slice(0, 20).join(', ');
+            const extra = g.missing.length > 20 ? ` … (+${g.missing.length - 20} más)` : '';
+            lines.push(`• *${g.company}* (CUIT ${g.cuit}) — PV ${g.pv}, tipo AFIP ${g.cbteType}: faltan ${g.missing.length} → N° ${shown}${extra}`);
+        }
+        lines.push('_AFIP tiene estos números pero el sistema no los registró. Revisar si son duplicados a anular o emisiones manuales. Silenciar con /api/admin/ack-afip-gap._');
+        const res = await fetchWithRetry(webhookUrl, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: lines.join('\n') }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'slack-orphan' });
+        if (!res.ok) {
+            const b = await res.text().catch(() => '');
+            console.error(`[orphan-detector] slack devolvió ${res.status}: ${b.slice(0, 200)}`);
+        } else {
+            console.log(`[orphan-detector] alerta de ${gaps.length} serie(s) con gaps enviada a Slack`);
+        }
+    } catch (err) {
+        console.error('[orphan-detector] error notificando a Slack:', err.message);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -9544,6 +9707,59 @@ app.post('/api/admin/run-nightly-audit', async (req, res) => {
             error: err.message,
             duration_ms: Date.now() - startedAt,
         });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Endpoint admin: detector inverso de huérfanos a demanda (¿AFIP tiene
+// comprobantes que el sistema no registró?). Devuelve los gaps encontrados.
+// ─────────────────────────────────────────────────────────────────────────
+app.post('/api/admin/run-orphan-detector', async (req, res) => {
+    const adminToken = process.env.DEV_MONDAY_TOKEN;
+    const provided = req.headers['x-admin-token'];
+    if (!adminToken) return res.status(500).json({ error: 'DEV_MONDAY_TOKEN no configurado en el server' });
+    if (!safeCompareToken(provided, adminToken)) return res.status(403).json({ error: 'forbidden' });
+
+    console.log('[admin] disparando detectAfipOrphans a demanda');
+    const startedAt = Date.now();
+    try {
+        const out = await detectAfipOrphans();
+        return res.status(200).json({ status: 'completed', duration_ms: Date.now() - startedAt, ...out });
+    } catch (err) {
+        console.error('[admin] detectAfipOrphans falló:', err.message);
+        return res.status(500).json({ status: 'failed', error: err.message, duration_ms: Date.now() - startedAt });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// Endpoint admin: reconocer (silenciar) un gap del detector inverso, para que
+// no se vuelva a alertar. Body: { company_id, pto_vta, cbte_tipo, cbte_nro, note? }
+// ─────────────────────────────────────────────────────────────────────────
+app.post('/api/admin/ack-afip-gap', async (req, res) => {
+    const adminToken = process.env.DEV_MONDAY_TOKEN;
+    const provided = req.headers['x-admin-token'];
+    if (!adminToken) return res.status(500).json({ error: 'DEV_MONDAY_TOKEN no configurado en el server' });
+    if (!safeCompareToken(provided, adminToken)) return res.status(403).json({ error: 'forbidden' });
+
+    const { company_id, pto_vta, cbte_tipo, cbte_nro, note } = req.body || {};
+    if (!company_id || pto_vta == null || cbte_tipo == null || cbte_nro == null) {
+        return res.status(400).json({ error: 'company_id, pto_vta, cbte_tipo y cbte_nro son obligatorios' });
+    }
+    try {
+        await db.query(`CREATE TABLE IF NOT EXISTS afip_gap_acks (
+            company_id UUID NOT NULL, pto_vta INT NOT NULL, cbte_tipo INT NOT NULL, cbte_nro INT NOT NULL,
+            acked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, note TEXT,
+            PRIMARY KEY (company_id, pto_vta, cbte_tipo, cbte_nro))`);
+        await db.query(
+            `INSERT INTO afip_gap_acks (company_id, pto_vta, cbte_tipo, cbte_nro, note)
+             VALUES ($1,$2,$3,$4,$5)
+             ON CONFLICT (company_id, pto_vta, cbte_tipo, cbte_nro)
+             DO UPDATE SET note=EXCLUDED.note, acked_at=CURRENT_TIMESTAMP`,
+            [company_id, Number(pto_vta), Number(cbte_tipo), Number(cbte_nro), note || null]);
+        return res.status(200).json({ status: 'acked', company_id, pto_vta: Number(pto_vta), cbte_tipo: Number(cbte_tipo), cbte_nro: Number(cbte_nro) });
+    } catch (err) {
+        console.error('[admin] ack-afip-gap falló:', err.message);
+        return res.status(500).json({ status: 'failed', error: err.message });
     }
 });
 
