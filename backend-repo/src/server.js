@@ -9051,6 +9051,29 @@ async function detectAfipOrphans() {
     return { series: seriesRows.length, gaps };
 }
 
+// Etiqueta legible del CbteTipo de AFIP (factura/NC/ND por letra).
+const CBTE_TIPO_LABEL = {
+    1: 'Factura A', 6: 'Factura B', 11: 'Factura C',
+    2: 'Nota de Débito A', 7: 'Nota de Débito B', 12: 'Nota de Débito C',
+    3: 'Nota de Crédito A', 8: 'Nota de Crédito B', 13: 'Nota de Crédito C',
+};
+
+// Comprime números consecutivos: [48,49,50,51,52] → "48-52" (corridas de 3+),
+// el resto suelto. Ej: [25,26,46,48,49,50,51,52,64,65] → "25, 26, 46, 48-52, 64, 65".
+function compressNumberRanges(nums) {
+    const sorted = [...nums].map(Number).sort((a, b) => a - b);
+    const parts = [];
+    let i = 0;
+    while (i < sorted.length) {
+        let j = i;
+        while (j + 1 < sorted.length && sorted[j + 1] === sorted[j] + 1) j++;
+        if (j - i >= 2) parts.push(`${sorted[i]}-${sorted[j]}`);
+        else for (let k = i; k <= j; k++) parts.push(String(sorted[k]));
+        i = j + 1;
+    }
+    return parts.join(', ');
+}
+
 async function notifyOrphanGaps(gaps) {
     if (process.env.APP_ENV === 'staging') {
         console.log('[orphan-detector] APP_ENV=staging — skip alerta a Slack (canal solo para prod)');
@@ -9059,13 +9082,34 @@ async function notifyOrphanGaps(gaps) {
     const webhookUrl = process.env.SLACK_WEBHOOK_URL;
     if (!webhookUrl) { console.warn('[orphan-detector] SLACK_WEBHOOK_URL no configurado — skip'); return; }
     try {
-        const lines = [':warning: *Comprobantes en AFIP sin registro local (posibles huérfanos / emisiones manuales)*'];
+        const totalComp = gaps.reduce((acc, g) => acc + g.missing.length, 0);
+        const lines = [];
+        lines.push(`🟡 *Conciliación AFIP — ${totalComp} comprobante${totalComp === 1 ? '' : 's'} sin registrar (${gaps.length} serie${gaps.length === 1 ? '' : 's'})*`);
+        lines.push('');
+        lines.push('AFIP emitió comprobantes que no figuran en el sistema. Revisar si son emisiones manuales o duplicados a anular.');
+
+        // Agrupar por empresa (un cliente puede tener varias series con gaps).
+        const byCompany = new Map();
         for (const g of gaps) {
-            const shown = g.missing.slice(0, 20).join(', ');
-            const extra = g.missing.length > 20 ? ` … (+${g.missing.length - 20} más)` : '';
-            lines.push(`• *${g.company}* (CUIT ${g.cuit}) — PV ${g.pv}, tipo AFIP ${g.cbteType}: faltan ${g.missing.length} → N° ${shown}${extra}`);
+            if (!byCompany.has(g.cuit)) byCompany.set(g.cuit, { company: g.company, cuit: g.cuit, series: [] });
+            byCompany.get(g.cuit).series.push(g);
         }
-        lines.push('_AFIP tiene estos números pero el sistema no los registró. Revisar si son duplicados a anular o emisiones manuales. Silenciar con /api/admin/ack-afip-gap._');
+        for (const { company, cuit, series } of byCompany.values()) {
+            lines.push('');
+            lines.push(`📋 *${company}* · CUIT ${cuit}`);
+            for (const g of series) {
+                const label = CBTE_TIPO_LABEL[g.cbteType] || `tipo AFIP ${g.cbteType}`;
+                const n = g.missing.length;
+                if (n === 1) {
+                    const full = `${String(g.pv).padStart(4, '0')}-${String(g.missing[0]).padStart(8, '0')}`;
+                    lines.push(`   • ${label} (PV ${g.pv}) — falta 1 → ${full}`);
+                } else {
+                    lines.push(`   • ${label} (PV ${g.pv}) — faltan ${n} → N° ${compressNumberRanges(g.missing)}`);
+                }
+            }
+        }
+        lines.push('');
+        lines.push('Silenciar un caso revisado: `/api/admin/ack-afip-gap`');
         const res = await fetchWithRetry(webhookUrl, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ text: lines.join('\n') }),
