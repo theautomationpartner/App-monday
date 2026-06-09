@@ -1426,7 +1426,12 @@ const App = () => {
     : certificateStatus === "pending_crt"
       ? "pending"
       : "incomplete";
-  const mappingStatus = hasSavedMapping || mappingCompleted ? "complete" : "incomplete";
+  // El estado del paso "Mapeo Visual" se basa en si TODOS los campos
+  // obligatorios ACTUALES están mapeados (mappingCompleted), NO en si existe un
+  // mapeo guardado de antes (hasSavedMapping). Si usáramos hasSavedMapping, al
+  // agregar un campo obligatorio nuevo (ej. cae_comprobante) los clientes
+  // existentes verían "Listo / 3/3 / Todo listo" aunque les falte mapearlo.
+  const mappingStatus = mappingCompleted ? "complete" : "incomplete";
   const sectionStatus = {
     datos: fiscalStatus,
     certificados: certSidebarStatus,
