@@ -3424,6 +3424,18 @@ app.get('/onboarding', (req, res) => {
     res.sendFile(path.join(__dirname, 'onboarding.html'));
 });
 
+// Paginas legales publicas requeridas por el marketplace review (developer.monday.com/apps/docs/legal).
+// Deben ser publicas (sin login), HTTPS y bajo el dominio propio (domain ownership).
+// Van a los campos "Privacy Policy" y "Terms of Service" del form de submission:
+//   https://arca.theautomationpartner.com/privacy
+//   https://arca.theautomationpartner.com/terms
+app.get('/privacy', (req, res) => {
+    res.sendFile(path.join(__dirname, 'privacy.html'));
+});
+app.get('/terms', (req, res) => {
+    res.sendFile(path.join(__dirname, 'terms.html'));
+});
+
 // Devuelve el plan y consumo actual del mes para la cuenta autenticada.
 // Lo usa el frontend para mostrar el banner de uso (X / limite facturas).
 app.get('/api/usage', requireMondaySession, async (req, res) => {
