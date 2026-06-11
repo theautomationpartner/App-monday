@@ -1,26 +1,26 @@
 <!doctype html>
 <!--
   ════════════════════════════════════════════════════════════════════════════
-  PRIVACY POLICY — Factura ARCA (monday.com marketplace app)
+  POLÍTICA DE PRIVACIDAD — Factura ARCA (app del marketplace de monday.com)
 
   ⚠️  CONFIRMÁ / REEMPLAZÁ ESTOS PLACEHOLDERS ANTES DE MANDAR A REVIEW:
-      • LEGAL ENTITY NAME  → actualmente "The Automation Partner"
+      • RAZÓN SOCIAL       → actualmente "The Automation Partner"
         DEBE coincidir EXACTAMENTE con la entidad registrada en monday
         (privacy, terms, OAuth page y listing tienen que mostrar la misma).
-      • SUPPORT EMAIL      → actualmente "arca@theautomationpartner.com"
+      • EMAIL DE SOPORTE   → actualmente "arca@theautomationpartner.com"
         DEBE ser del mismo dominio que la app.
-      • LAST UPDATED date  → actualizá si cambiás el contenido.
+      • FECHA DE ACTUALIZACIÓN → actualizá si cambiás el contenido.
 
   Si la razón social registrada es una S.A./S.R.L. formal (ej. "Tu Empresa S.R.L."),
   reemplazá las 2 ocurrencias de "The Automation Partner" abajo.
   ════════════════════════════════════════════════════════════════════════════
 -->
-<html lang="en">
+<html lang="es">
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Privacy Policy — Factura ARCA</title>
+    <title>Política de Privacidad — Factura ARCA</title>
     <style>
         :root {
             --navy: #071F32;
@@ -106,143 +106,148 @@
 <body>
     <main class="page">
         <header class="hero">
-            <div class="hero-kicker">Factura ARCA · monday.com app</div>
-            <h1>Privacy Policy</h1>
-            <div class="updated">Last updated: June 11, 2026</div>
+            <div class="hero-kicker">Factura ARCA · app de monday.com</div>
+            <h1>Política de Privacidad</h1>
+            <div class="updated">Última actualización: 11 de junio de 2026</div>
         </header>
 
         <section class="section">
-            <h2>1. Who we are</h2>
-            <p><strong>Factura ARCA</strong> ("the App", "we", "us") is an electronic-invoicing
-            application for the monday.com marketplace, operated by
-            <strong>The Automation Partner</strong> ("the Company"). The App lets monday.com
-            users issue legally valid electronic invoices and related fiscal documents
-            (credit notes, debit notes) through Argentina's tax authority (AFIP/ARCA)
-            directly from their monday.com boards.</p>
-            <p>This Privacy Policy explains what personal data we process, why, who we share
-            it with, and how we protect it. By installing or using the App you agree to this
-            Policy.</p>
+            <h2>1. Quiénes somos</h2>
+            <p><strong>Factura ARCA</strong> ("la App", "nosotros") es una aplicación de
+            facturación electrónica para el marketplace de monday.com, operada por
+            <strong>The Automation Partner</strong> ("la Empresa"). La App permite a los
+            usuarios de monday.com emitir facturas electrónicas y documentos fiscales
+            relacionados (notas de crédito y notas de débito) legalmente válidos a través de
+            la autoridad tributaria de Argentina (AFIP/ARCA), directamente desde sus tableros
+            de monday.com.</p>
+            <p>Esta Política de Privacidad explica qué datos personales procesamos, con qué
+            fin, con quién los compartimos y cómo los protegemos. Al instalar o usar la App,
+            aceptás esta Política.</p>
         </section>
 
         <section class="section">
-            <h2>2. Data we process and why</h2>
+            <h2>2. Qué datos procesamos y por qué</h2>
 
-            <h3>2.1 Issuer (your business) fiscal data</h3>
-            <p>Legal name, trade name, tax ID (CUIT), fiscal address, phone, email, website
-            and logo. We store this to generate the legally required electronic invoices and
-            render the invoice PDF on your behalf.</p>
+            <h3>2.1 Datos fiscales del emisor (tu empresa)</h3>
+            <p>Razón social, nombre de fantasía, CUIT, domicilio fiscal, teléfono, email,
+            sitio web y logo. Los almacenamos para generar las facturas electrónicas exigidas
+            por la normativa y armar el PDF del comprobante en tu nombre.</p>
 
-            <h3>2.2 AFIP/ARCA digital certificate and private key</h3>
-            <p>Required to authenticate with AFIP's web services (WSAA) and issue invoices on
-            your behalf. The private key is <strong>encrypted at rest using AES</strong>; the
-            encryption key is held only as a server-side secret and is never stored alongside
-            the data in our database.</p>
+            <h3>2.2 Certificado digital y clave privada de AFIP/ARCA</h3>
+            <p>Necesarios para autenticarse con los servicios web de AFIP (WSAA) y emitir
+            comprobantes en tu nombre. La clave privada se <strong>cifra en reposo con
+            AES</strong>; la clave de cifrado se mantiene únicamente como secreto del servidor
+            y nunca se almacena junto a los datos en nuestra base de datos.</p>
 
-            <h3>2.3 monday.com access</h3>
-            <p>To read the relevant board item and write the result back (authorization code
-            "CAE", invoice number, status, PDF), the App uses the <strong>short-lived token
-            that monday.com includes in each automation-recipe execution</strong>. This token
-            is used in memory for that single request and is not persisted. We also process
-            your monday.com account, workspace and user identifiers solely to isolate each
-            customer's data (multi-tenant separation).</p>
+            <h3>2.3 Acceso a monday.com</h3>
+            <p>Para leer el ítem correspondiente del tablero y escribir el resultado
+            (código de autorización "CAE", número de comprobante, estado, PDF), la App utiliza
+            el <strong>token de corta duración que monday.com incluye en cada ejecución de la
+            receta de automatización</strong>. Ese token se usa en memoria para esa única
+            solicitud y no se persiste. También procesamos los identificadores de tu cuenta,
+            workspace y usuario de monday.com con el único fin de aislar los datos de cada
+            cliente (separación multi-tenant).</p>
 
-            <h3>2.4 Invoice recipient (your customers') data</h3>
-            <p>Tax ID / national ID (CUIT/DNI), name, fiscal condition and address of the
-            party you are invoicing. This data is <strong>legally mandated by AFIP/ARCA</strong>
-            to issue a valid invoice — an invoice cannot be emitted without it. Recipient
-            information retrieved from AFIP's public taxpayer registry is cached temporarily
-            (about 24 hours) only to reduce repeated calls to AFIP.</p>
+            <h3>2.4 Datos del receptor del comprobante (tus clientes)</h3>
+            <p>CUIT/DNI, nombre, condición fiscal y domicilio de la parte a la que facturás.
+            Estos datos son <strong>exigidos legalmente por AFIP/ARCA</strong> para emitir un
+            comprobante válido — sin ellos no se puede emitir la factura. La información del
+            receptor obtenida del padrón público de AFIP se cachea temporalmente (alrededor de
+            24 horas) solo para reducir las consultas repetidas a AFIP.</p>
         </section>
 
         <section class="section">
-            <h2>3. Third-party services we use</h2>
-            <p>The App relies on the following third-party providers, on both the frontend and
-            backend. We share with each provider only the data strictly necessary for the
-            stated purpose.</p>
+            <h2>3. Servicios de terceros que utilizamos</h2>
+            <p>La App se apoya en los siguientes proveedores externos, tanto en el frontend
+            como en el backend. Con cada proveedor compartimos únicamente los datos
+            estrictamente necesarios para el fin indicado.</p>
             <table>
                 <thead>
-                    <tr><th>Provider</th><th>Where</th><th>Purpose &amp; data involved</th></tr>
+                    <tr><th>Proveedor</th><th>Dónde</th><th>Propósito y datos involucrados</th></tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td data-label="Provider"><strong>monday.com</strong></td>
-                        <td data-label="Where">Frontend &amp; backend</td>
-                        <td data-label="Purpose">Host platform. Reading the board item to invoice and writing the result back (CAE, PDF, status). Session/automation tokens are validated to authenticate requests.</td>
+                        <td data-label="Proveedor"><strong>monday.com</strong></td>
+                        <td data-label="Dónde">Frontend y backend</td>
+                        <td data-label="Propósito">Plataforma anfitriona. Lectura del ítem del tablero a facturar y escritura del resultado (CAE, PDF, estado). Los tokens de sesión/automatización se validan para autenticar las solicitudes.</td>
                     </tr>
                     <tr>
-                        <td data-label="Provider"><strong>AFIP / ARCA</strong> (afip.gob.ar web services)</td>
-                        <td data-label="Where">Backend</td>
-                        <td data-label="Purpose">Argentina's tax authority. The App sends invoice data (issuer, recipient, line items, amounts) to AFIP's official web services (WSAA, WSFEv1) to obtain the authorization code (CAE). This is legally required to issue the invoice.</td>
+                        <td data-label="Proveedor"><strong>AFIP / ARCA</strong> (servicios web de afip.gob.ar)</td>
+                        <td data-label="Dónde">Backend</td>
+                        <td data-label="Propósito">Autoridad tributaria de Argentina. La App envía los datos del comprobante (emisor, receptor, ítems, importes) a los servicios web oficiales de AFIP (WSAA, WSFEv1) para obtener el código de autorización (CAE). Es un requisito legal para emitir la factura.</td>
                     </tr>
                     <tr>
-                        <td data-label="Provider"><strong>DigitalOcean</strong></td>
-                        <td data-label="Where">Backend</td>
-                        <td data-label="Purpose">Cloud infrastructure: the application server and the managed PostgreSQL database where your fiscal data and encrypted credentials are stored.</td>
+                        <td data-label="Proveedor"><strong>DigitalOcean</strong></td>
+                        <td data-label="Dónde">Backend</td>
+                        <td data-label="Propósito">Infraestructura en la nube: el servidor de la aplicación y la base de datos PostgreSQL administrada donde se almacenan tus datos fiscales y credenciales cifradas.</td>
                     </tr>
                     <tr>
-                        <td data-label="Provider"><strong>Cloudflare</strong></td>
-                        <td data-label="Where">Frontend &amp; backend</td>
-                        <td data-label="Purpose">DNS, TLS/HTTPS encryption and CDN. All traffic to and from the App passes through Cloudflare in encrypted form.</td>
+                        <td data-label="Proveedor"><strong>Cloudflare</strong></td>
+                        <td data-label="Dónde">Frontend y backend</td>
+                        <td data-label="Propósito">DNS, cifrado TLS/HTTPS y CDN. Todo el tráfico desde y hacia la App pasa por Cloudflare en forma cifrada.</td>
                     </tr>
                     <tr>
-                        <td data-label="Provider"><strong>Slack</strong></td>
-                        <td data-label="Where">Backend</td>
-                        <td data-label="Purpose">Internal operational alerting (system errors and nightly reconciliation audits). Used to keep the service reliable; no recipient personal data is intentionally sent.</td>
+                        <td data-label="Proveedor"><strong>Slack</strong></td>
+                        <td data-label="Dónde">Backend</td>
+                        <td data-label="Propósito">Alertas operativas internas (errores del sistema y auditorías nocturnas de conciliación). Se usa para mantener el servicio confiable; no se envían intencionalmente datos personales del receptor.</td>
                     </tr>
                 </tbody>
             </table>
-            <p>We do not sell your personal data, and we do not share it with any party other
-            than those listed above. Sharing with AFIP/ARCA is a legal requirement inherent to
-            issuing the invoice itself.</p>
+            <p>No vendemos tus datos personales y no los compartimos con ninguna parte
+            distinta de las listadas arriba. El intercambio con AFIP/ARCA es un requisito
+            legal inherente a la emisión del comprobante en sí.</p>
         </section>
 
         <section class="section">
-            <h2>4. How we protect your data</h2>
+            <h2>4. Cómo protegemos tus datos</h2>
             <ul>
-                <li><strong>Encryption at rest:</strong> sensitive credentials (AFIP private keys) are encrypted with AES; the key lives only in the server environment, never in the database.</li>
-                <li><strong>Encryption in transit:</strong> all traffic uses HTTPS/TLS (via Cloudflare); the database connection uses PostgreSQL SSL in <em>verify-full</em> mode with certificate pinning to DigitalOcean's certificate authority.</li>
-                <li><strong>Managed, access-controlled infrastructure:</strong> hosted on DigitalOcean (application server + managed PostgreSQL cluster), not publicly exposed.</li>
-                <li><strong>Request authentication:</strong> every request is authenticated by validating the session token signed by monday.com with our client secret.</li>
-                <li><strong>Tenant isolation:</strong> data is scoped per account and workspace; one customer can only access its own data.</li>
-                <li><strong>Security headers:</strong> HSTS, a restrictive Content-Security-Policy and MIME-sniffing protection are enforced.</li>
+                <li><strong>Cifrado en reposo:</strong> las credenciales sensibles (claves privadas de AFIP) se cifran con AES; la clave vive solo en el entorno del servidor, nunca en la base de datos.</li>
+                <li><strong>Cifrado en tránsito:</strong> todo el tráfico usa HTTPS/TLS (vía Cloudflare); la conexión a la base de datos usa SSL de PostgreSQL en modo <em>verify-full</em> con fijación del certificado de la autoridad de DigitalOcean.</li>
+                <li><strong>Infraestructura administrada y con acceso controlado:</strong> alojada en DigitalOcean (servidor de aplicación + clúster PostgreSQL administrado), no expuesta públicamente.</li>
+                <li><strong>Autenticación de cada solicitud:</strong> cada solicitud se autentica validando el token de sesión firmado por monday.com con nuestro client secret.</li>
+                <li><strong>Aislamiento por cliente:</strong> los datos se segmentan por cuenta y workspace; un cliente solo puede acceder a sus propios datos.</li>
+                <li><strong>Cabeceras de seguridad:</strong> se aplican HSTS, una Content-Security-Policy restrictiva y protección contra MIME-sniffing.</li>
             </ul>
         </section>
 
         <section class="section">
-            <h2>5. Data retention and deletion</h2>
-            <p>We retain your data only while the App is installed and for as long as needed
-            to provide the service and comply with applicable fiscal record-keeping rules.</p>
-            <p>When you <strong>uninstall the App</strong>, your operational data is removed and
-            personal contact information is anonymized; we retain only aggregate,
-            non-identifying information. You may also request deletion of your data at any time
-            by contacting us.</p>
+            <h2>5. Retención y eliminación de datos</h2>
+            <p>Conservamos tus datos solo mientras la App esté instalada y durante el tiempo
+            necesario para prestar el servicio y cumplir con las obligaciones de conservación
+            de registros fiscales aplicables.</p>
+            <p>Cuando <strong>desinstalás la App</strong>, tus datos operativos se eliminan y la
+            información de contacto personal se anonimiza; conservamos únicamente información
+            agregada y no identificable. También podés solicitar la eliminación de tus datos
+            en cualquier momento contactándonos.</p>
         </section>
 
         <section class="section">
-            <h2>6. Your rights</h2>
-            <p>Subject to applicable law, you may request access to, correction of, or deletion
-            of your personal data, and you may object to or restrict certain processing. To
-            exercise any of these rights, contact us at the address below. We will respond
-            within a reasonable timeframe.</p>
+            <h2>6. Tus derechos</h2>
+            <p>Sujeto a la legislación aplicable, podés solicitar el acceso, la rectificación
+            o la eliminación de tus datos personales, y oponerte o restringir ciertos
+            tratamientos. Para ejercer cualquiera de estos derechos, contactanos a la
+            dirección de abajo. Responderemos en un plazo razonable.</p>
         </section>
 
         <section class="section">
-            <h2>7. Changes to this Policy</h2>
-            <p>We may update this Privacy Policy from time to time. Material changes will be
-            reflected by updating the "Last updated" date above and, where appropriate,
-            notifying users. Continued use of the App after changes take effect constitutes
-            acceptance of the updated Policy.</p>
+            <h2>7. Cambios en esta Política</h2>
+            <p>Podemos actualizar esta Política de Privacidad cada cierto tiempo. Los cambios
+            relevantes se reflejarán actualizando la fecha de "Última actualización" de arriba
+            y, cuando corresponda, notificando a los usuarios. El uso continuado de la App
+            luego de que los cambios entren en vigencia implica la aceptación de la Política
+            actualizada.</p>
         </section>
 
         <section class="section">
-            <h2>8. Contact</h2>
-            <p>For any privacy question or request, contact <strong>The Automation Partner</strong> at
+            <h2>8. Contacto</h2>
+            <p>Ante cualquier consulta o solicitud sobre privacidad, contactá a
+            <strong>The Automation Partner</strong> en
             <a href="mailto:arca@theautomationpartner.com">arca@theautomationpartner.com</a>.</p>
         </section>
 
         <div class="footer-note">
             Factura ARCA — <a href="https://theautomationpartner.com" target="_blank" rel="noopener">The Automation Partner</a>
-            · <a href="/terms">Terms of Service</a>
+            · <a href="/terms">Términos del Servicio</a>
         </div>
     </main>
 </body>
