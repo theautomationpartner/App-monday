@@ -1184,6 +1184,33 @@ function getAfipEndpoints() {
     };
 }
 
+// ── GUARD anti-fuga staging→producción (incidente Sofia/Martin, jun-2026) ──
+// Causa raíz: los boards de algunos clientes reales viven en la cuenta de monday
+// de TAP (owner del app). Cuando TAP crea una versión Draft (que apunta sus
+// recetas a staging.theautomationpartner.com) para testear un feature, monday se
+// la auto-aplica a ESOS boards → sus emisiones REALES se rutean a la instancia de
+// staging, que emite con AFIP_ENV=production (CAE real) y guarda en stagingdb,
+// invisible para producción. Este guard hace que la instancia de staging se
+// NIEGUE a emitir comprobantes fiscales para CUITs de clientes reales (lista en
+// STAGING_BLOCKED_CUITS). Tira el error ANTES de tocar AFIP, así no se quema un
+// comprobante real. En prod (APP_ENV != 'staging') nunca dispara. Default seguro:
+// si la env var está vacía, no bloquea nada (no rompe los tests legítimos de TAP).
+function assertStagingNotBlocked(company) {
+    if (process.env.APP_ENV !== 'staging') return;
+    const blocked = (process.env.STAGING_BLOCKED_CUITS || '')
+        .split(',').map((s) => s.replace(/\D/g, '')).filter(Boolean);
+    if (blocked.length === 0) return;
+    const cuit = String(company?.cuit || '').replace(/\D/g, '');
+    if (cuit && blocked.includes(cuit)) {
+        console.error(`[guard-staging] BLOQUEADO: emisión real de cliente de producción CUIT=${cuit} ruteada a la instancia de staging`);
+        throw new Error(
+            'Esta es la instancia de PRUEBA (staging) y no puede emitir comprobantes ' +
+            'fiscales para este cliente. Eliminá la versión Draft del app en monday ' +
+            '(Centro de Desarrollo) y volvé a disparar la receta desde la versión Live.'
+        );
+    }
+}
+
 function xmlEscape(value) {
     return String(value)
         .replace(/&/g, '&amp;')
@@ -5315,6 +5342,9 @@ async function comprobanteHandler(req, res) {
             if (!boardId) boardId = itemData.boardId;
             if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
 
+            // GUARD: la instancia de staging NO emite para clientes reales de prod.
+            assertStagingNotBlocked(company);
+
             // Trigger de testing: si el item se llama exactamente "make-errores-",
             // forzar un Error sistema para validar que el flujo de notificación
             // (audit board + Slack) funciona end-to-end. El mensaje no matchea
@@ -6591,6 +6621,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             await ensureInvoiceEmissionsTable();
             const company = await getCompanyForBoard(accountId, boardId);
             if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
+
+            // GUARD: la instancia de staging NO emite para clientes reales de prod.
+            assertStagingNotBlocked(company);
 
             console.log(`[nc] Emitiendo ${docLabel} para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
 
