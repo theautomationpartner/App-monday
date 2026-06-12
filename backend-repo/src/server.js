@@ -842,19 +842,36 @@ function getColumnLabel(columnValues, columnId, canonicalLabel) {
     return `"${canonicalLabel}"`;
 }
 
-// Bloqueo de emisión si el board no mapeó las columnas OBLIGATORIAS de write-back
-// del receptor (razón social + condición IVA). Estas columnas no se LEEN para
-// emitir — la app las ESCRIBE post-emisión — pero el cliente las exigió como
-// obligatorias: sin ellas mapeadas, no se emite (ni factura ni NC/ND). El mapeo
-// es por board, así que el chequeo aplica a los dos flujos. Devuelve un array de
-// errores legibles (vacío si está OK).
+// Bloqueo de emisión si el board no mapeó las columnas OBLIGATORIAS. El cliente
+// (todos hacen NC/ND) exigió que estas columnas estén siempre mapeadas para que
+// el tablero quede completo: sin ellas mapeadas, no se emite (ni factura ni NC/ND).
+//
+// OJO: el chequeo es sobre el MAPEO (que la columna esté asociada), NO sobre que
+// la celda tenga un valor. Por eso "CAE de la factura a anular" puede exigirse en
+// toda emisión: una factura la lleva mapeada-pero-vacía (no anula nada) y una NC/ND
+// la lleva mapeada-y-con-valor — el valor en la NC/ND se valida aparte, más abajo.
+//
+// Grupo write-back (la app los ESCRIBE post-emisión): razón social, condición IVA,
+// N° factura, N° comprobante, letra. Grupo input (el usuario los carga / la app los
+// LEE): tipo de comprobante (rutea Factura/NC/ND), CAE de la factura a anular.
+//
+// El mapeo es por board, así que el chequeo aplica a los dos flujos (factura y
+// NC/ND). Devuelve un array de errores legibles (vacío si está OK).
+const REQUIRED_EMIT_MAPPING = [
+    ['razon_social_receptor',  'Razón Social del Receptor'],
+    ['condicion_iva_receptor', 'Condición IVA del Receptor'],
+    ['tipo_comprobante',       'Tipo de Comprobante'],
+    ['factura_referencia',     'CAE de la factura a anular'],
+    ['nro_factura',            'N° Factura (Pto-Nro)'],
+    ['nro_comprobante',        'N° Comprobante'],
+    ['letra_comprobante',      'Letra del Comprobante'],
+];
 function checkReceptorWriteBackMapped(mapping) {
     const errors = [];
-    if (!mapping?.razon_social_receptor) {
-        errors.push('Falta mapear la columna "Razón Social del Receptor" en el Mapeo Visual (es obligatoria).');
-    }
-    if (!mapping?.condicion_iva_receptor) {
-        errors.push('Falta mapear la columna "Condición IVA del Receptor" en el Mapeo Visual (es obligatoria).');
+    for (const [key, label] of REQUIRED_EMIT_MAPPING) {
+        if (!mapping?.[key]) {
+            errors.push(`Falta mapear la columna "${label}" en el Mapeo Visual (es obligatoria).`);
+        }
     }
     return errors;
 }
@@ -6700,8 +6717,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 console.warn('[nc] no se pudo leer el mapeo del board:', mapErr.message);
             }
 
-            // Columnas de write-back del receptor OBLIGATORIAS (razón social + cond.
-            // IVA). Mismo bloqueo que en factura: sin ellas mapeadas no se emite.
+            // Columnas OBLIGATORIAS del mapeo (los 7 de REQUIRED_EMIT_MAPPING:
+            // razón social, cond. IVA, tipo comprobante, CAE a anular, N° factura,
+            // N° comprobante, letra). Mismo bloqueo que en factura: sin todas
+            // mapeadas no se emite. El valor del CAE a anular se valida más abajo.
             const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping);
             if (ncReceptorErrors.length > 0) {
                 throw new Error(

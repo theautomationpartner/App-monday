@@ -422,6 +422,16 @@ const App = () => {
     // frente al IVA que resuelve desde el padrón AFIP al emitir. Obligatorias.
     "razon_social_receptor",
     "condicion_iva_receptor",
+    // Comprobante completo: todos los clientes hacen NC/ND, así que estas columnas
+    // se exigen siempre para que el tablero quede completo. tipo_comprobante y
+    // factura_referencia son INPUT de NC/ND (la app las lee); nro/letra son
+    // write-back (la app las escribe post-emisión). El bloqueo es sobre el MAPEO,
+    // no sobre el valor de la celda (una factura lleva factura_referencia vacía).
+    "tipo_comprobante",
+    "factura_referencia",
+    "nro_factura",
+    "nro_comprobante",
+    "letra_comprobante",
   ];
   // Campos opcionales — el cliente puede mapearlos pero no son obligatorios
   // para guardar el mapeo ni para emitir.
@@ -1504,6 +1514,11 @@ const App = () => {
         cae_comprobante:      "CAE del Comprobante",
         razon_social_receptor:  "Razón Social del Receptor",
         condicion_iva_receptor: "Condición IVA del Receptor",
+        tipo_comprobante:     "Tipo de Comprobante",
+        factura_referencia:   "CAE de la factura a anular",
+        nro_factura:          "N° Factura (Pto-Nro)",
+        nro_comprobante:      "N° Comprobante",
+        letra_comprobante:    "Letra del Comprobante",
       };
       missingFields.forEach((f) => blockers.push(`Mapear "${labelMap[f] || f}"`));
     } else {
@@ -3382,13 +3397,13 @@ const App = () => {
               </div>
             </div>
 
-            {/* ─── Columnas obligatorias: CAE + datos del receptor ─── */}
+            {/* ─── Columnas obligatorias del comprobante ─── */}
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
                   <div className="rf-mapping-frame-eyebrow">Columnas obligatorias</div>
                   <div className="rf-mapping-frame-title">
-                    Acá la app escribe, al emitir cada comprobante: el CAE, la razón social del receptor y su condición frente al IVA. La razón social y la condición las resuelve la app desde el padrón de AFIP — vos no las cargás, se completan solas. (El CAE es distinto de "CAE de la factura a anular", que sí cargás a mano para una NC/ND.)
+                    Datos del comprobante que la app registra en el item. Algunas las completa sola al emitir (CAE, N° de comprobante, letra, razón social y condición IVA del receptor — estas dos las saca del padrón de AFIP); otras son la base para emitir Notas de Crédito/Débito (Tipo de Comprobante y el CAE de la factura a anular). Mapealas todas para dejar el tablero completo.
                   </div>
                 </div>
               </div>
@@ -3406,6 +3421,36 @@ const App = () => {
                   {mapSel("condicion_iva_receptor", "Columna dropdown")}
                 </div>
               </div>
+              <div className="rf-invoice-client cols-3">
+                <div>
+                  <div className="rf-invoice-client-label">Tipo de Comprobante</div>
+                  {mapSel("tipo_comprobante", "Columna dropdown")}
+                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
+                    El dropdown del item debe tener las opciones: <b>Factura</b>, <b>Nota de Crédito</b>, <b>Nota de Débito</b>.
+                  </div>
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">CAE de la factura a anular</div>
+                  {mapSel("factura_referencia", "Columna numérica")}
+                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
+                    Para una factura va vacía; para una NC/ND pegás acá el CAE de la factura que ajusta.
+                  </div>
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">Letra del Comprobante</div>
+                  {mapSel("letra_comprobante", "Columna dropdown")}
+                </div>
+              </div>
+              <div className="rf-invoice-client cols-3">
+                <div>
+                  <div className="rf-invoice-client-label">N° Factura (Pto-Nro)</div>
+                  {mapSel("nro_factura", "Columna texto")}
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">N° Comprobante</div>
+                  {mapSel("nro_comprobante", "Columna numérica")}
+                </div>
+              </div>
             </div>
 
             {/* ─── Columnas opcionales ─── */}
@@ -3417,39 +3462,14 @@ const App = () => {
                 <div>
                   <div className="rf-mapping-frame-eyebrow">Columnas opcionales</div>
                   <div className="rf-mapping-frame-title">
-                    Mapealas solo si las usás. La app las completa al emitir — o las lee, en el caso del CAE.
+                    Mapealas solo si las usás. La app las completa o las lee al emitir.
                   </div>
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
-                <div>
-                  <div className="rf-invoice-client-label">Tipo de Comprobante</div>
-                  {mapSel("tipo_comprobante", "Opcional")}
-                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
-                    El dropdown del item debe tener las opciones: <b>Factura</b>, <b>Nota de Crédito</b>, <b>Nota de Débito</b>.
-                  </div>
-                </div>
-                <div>
-                  <div className="rf-invoice-client-label">CAE de la factura a anular</div>
-                  {mapSel("factura_referencia", "Opcional")}
-                </div>
                 <div>
                   <div className="rf-invoice-client-label">Punto de Venta</div>
                   {mapSel("punto_venta", "Opcional")}
-                </div>
-              </div>
-              <div className="rf-invoice-client cols-3">
-                <div>
-                  <div className="rf-invoice-client-label">N° Factura (Pto-Nro)</div>
-                  {mapSel("nro_factura", "Opcional")}
-                </div>
-                <div>
-                  <div className="rf-invoice-client-label">N° Comprobante</div>
-                  {mapSel("nro_comprobante", "Opcional")}
-                </div>
-                <div>
-                  <div className="rf-invoice-client-label">Letra del Comprobante</div>
-                  {mapSel("letra_comprobante", "Opcional")}
                 </div>
               </div>
             </div>

@@ -106,28 +106,24 @@ const REQUIRED_MAPPING_FIELDS = [
 //
 // razon_social_receptor (text_mm48w6tm) y condicion_iva_receptor (dropdown_mm48dfba):
 // mismo trato que cae_comprobante. Write-back de la razón social y la condición IVA
-// del receptor (ambas resueltas desde el padrón AFIP al emitir — el usuario NO las
-// carga). OBLIGATORIAS, pero FUERA de REQUIRED_MAPPING_FIELDS por la misma razón
-// que cae_comprobante: no romper el auto-mapeo de plantilla ni el guardado de
-// boards que aún no tengan esas columnas. El "obligatorio" REAL no vive acá (en el
-// guardado del mapeo) sino en la EMISIÓN: checkReceptorWriteBackMapped() en
-// server.js rechaza la factura/NC/ND si el board no mapeó estas 2 columnas. Así un
-// board puede guardar su mapping incompleto, pero no puede emitir hasta mapearlas.
+// del receptor (resueltas desde el padrón AFIP al emitir — el usuario NO las
+// carga), MÁS tipo_comprobante, factura_referencia, nro_factura, nro_comprobante
+// y letra_comprobante. Los 7 son OBLIGATORIOS, pero FUERA de REQUIRED_MAPPING_FIELDS
+// por la misma razón que cae_comprobante: no romper el auto-mapeo de plantilla ni
+// el guardado de boards que aún no tengan esas columnas. El "obligatorio" REAL no
+// vive acá (en el guardado del mapeo) sino en la EMISIÓN: checkReceptorWriteBackMapped()
+// en server.js (lista REQUIRED_EMIT_MAPPING) rechaza la factura/NC/ND si el board no
+// mapeó alguna. Así un board puede guardar su mapping incompleto, pero no puede
+// emitir hasta mapear las 7. (Todos los clientes hacen NC/ND, así que se exigen
+// siempre; el chequeo es sobre el MAPEO, no sobre el valor — una factura lleva
+// factura_referencia mapeada-pero-vacía.)
 
-// Campos de mapeo OPCIONALES. No se exigen nunca (un cliente que solo emite
-// facturas con la config básica no necesita mapearlos), por eso quedan fuera de
+// Campos de mapeo OPCIONALES. No se exigen nunca, por eso quedan fuera de
 // REQUIRED_MAPPING_FIELDS. El schema `mapping` es un z.record abierto, así que
 // estas claves viajan solas; se listan acá solo como documentación:
-//   - tipo_comprobante    → columna que indica Factura / Nota de Crédito / ND.
-//   - factura_referencia  → columna con el CAE de la factura a anular (NC).
-//   - nro_factura         → write-back: N° del comprobante "PPPP-NNNNNNNN".
-//   - nro_comprobante     → write-back: solo el número del comprobante.
-//   - letra_comprobante   → write-back: la letra A / B / C.
 //   - punto_venta         → columna donde el usuario elige el punto de venta a
 //                           facturar (por ítem). Sin mapear → usa el default.
 const OPTIONAL_NC_MAPPING_FIELDS = [
-    'tipo_comprobante', 'factura_referencia',
-    'nro_factura', 'nro_comprobante', 'letra_comprobante',
     'punto_venta',
 ];
 
