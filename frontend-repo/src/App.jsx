@@ -130,6 +130,10 @@ const TEMPLATE_NC_MAPPING = {
   nro_comprobante:    "numeric_mm3kg6ph",
   letra_comprobante:  "dropdown_mm3kzmy5",
   punto_venta:        "dropdown_mm3skjcc",
+  // Write-back de datos del receptor (la app los resuelve desde el padrón AFIP
+  // al emitir — el usuario no los carga). Obligatorias en el mapeo visual.
+  razon_social_receptor:  "text_mm48w6tm",
+  condicion_iva_receptor: "dropdown_mm48dfba",
 };
 // Column IDs de la plantilla que no son de mapeo visual pero sí de config
 const TEMPLATE_STATUS_COLUMN_ID = "status";
@@ -414,6 +418,10 @@ const App = () => {
     // CAE del comprobante: columna donde la app escribe el CAE de cada
     // comprobante emitido (factura / NC / ND). Obligatoria — mapeala sí o sí.
     "cae_comprobante",
+    // Write-back del receptor: la app escribe acá la razón social y la condición
+    // frente al IVA que resuelve desde el padrón AFIP al emitir. Obligatorias.
+    "razon_social_receptor",
+    "condicion_iva_receptor",
   ];
   // Campos opcionales — el cliente puede mapearlos pero no son obligatorios
   // para guardar el mapeo ni para emitir.
@@ -1494,6 +1502,8 @@ const App = () => {
         unidad_medida:        "Unidad de Medida",
         alicuota_iva:         "Alícuota IVA %",
         cae_comprobante:      "CAE del Comprobante",
+        razon_social_receptor:  "Razón Social del Receptor",
+        condicion_iva_receptor: "Condición IVA del Receptor",
       };
       missingFields.forEach((f) => blockers.push(`Mapear "${labelMap[f] || f}"`));
     } else {
@@ -3372,13 +3382,13 @@ const App = () => {
               </div>
             </div>
 
-            {/* ─── Columna obligatoria: CAE del comprobante ─── */}
+            {/* ─── Columnas obligatorias: CAE + datos del receptor ─── */}
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Columna obligatoria</div>
+                  <div className="rf-mapping-frame-eyebrow">Columnas obligatorias</div>
                   <div className="rf-mapping-frame-title">
-                    Acá la app escribe el CAE de CADA comprobante emitido (factura, Nota de Crédito o Nota de Débito). Es tu registro consistente de todos los CAE reales. Distinta de "CAE de la factura a anular", que la cargás vos a mano para una NC/ND.
+                    Acá la app escribe, al emitir cada comprobante: el CAE, la razón social del receptor y su condición frente al IVA. La razón social y la condición las resuelve la app desde el padrón de AFIP — vos no las cargás, se completan solas. (El CAE es distinto de "CAE de la factura a anular", que sí cargás a mano para una NC/ND.)
                   </div>
                 </div>
               </div>
@@ -3386,6 +3396,14 @@ const App = () => {
                 <div>
                   <div className="rf-invoice-client-label">CAE del Comprobante</div>
                   {mapSel("cae_comprobante", "Columna CAE del comprobante")}
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">Razón Social del Receptor</div>
+                  {mapSel("razon_social_receptor", "Columna texto")}
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">Condición IVA del Receptor</div>
+                  {mapSel("condicion_iva_receptor", "Columna dropdown")}
                 </div>
               </div>
             </div>

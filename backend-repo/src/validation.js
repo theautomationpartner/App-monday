@@ -103,6 +103,13 @@ const REQUIRED_MAPPING_FIELDS = [
 // is_complete=false y un board viejo (sin la columna) no la tendría → exigirla
 // acá rompería ese alta automática. El schema `mapping` es z.record abierto, así
 // que la clave persiste igual en visual_mappings.mapping_json.
+//
+// razon_social_receptor (text_mm48w6tm) y condicion_iva_receptor (dropdown_mm48dfba):
+// mismo trato que cae_comprobante. Write-back de la razón social y la condición IVA
+// del receptor (ambas resueltas desde el padrón AFIP al emitir — el usuario NO las
+// carga). OBLIGATORIAS en el frontend (requiredMappingFields), pero FUERA de
+// REQUIRED_MAPPING_FIELDS por la misma razón que cae_comprobante: no romper el
+// auto-mapeo de plantilla en boards que aún no tengan esas columnas.
 
 // Campos de mapeo OPCIONALES. No se exigen nunca (un cliente que solo emite
 // facturas con la config básica no necesita mapearlos), por eso quedan fuera de

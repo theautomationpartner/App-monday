@@ -6339,6 +6339,8 @@ async function comprobanteHandler(req, res) {
                 letra:      tipo,
                 puntoVenta: draft.punto_venta,
                 numero:     afipResult.numero_comprobante,
+                receptorNombre:    draft.receptor_nombre,
+                receptorCondicion: draft.receptorCondicion,
             }).catch((e) => console.warn('[write-back] columnas comprobante fire-and-forget falló:', e.message));
 
             // Renombrar el item del cliente con el formato del comprobante emitido.
@@ -7180,6 +7182,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 puntoVenta: ncDraft.punto_venta,
                 numero:     afipResult.numero_comprobante,
                 cae:        afipResult.cae,
+                receptorNombre:    ncDraft.receptor_nombre,
+                receptorCondicion: ncDraft.receptorCondicion,
             }).catch((e) => console.warn('[nc] write-back columnas comprobante falló:', e.message));
 
             // Si el board mapea "Punto de Venta" y el usuario la dejó VACÍA, la
@@ -7697,6 +7701,40 @@ async function writeMondayNumericColumn({ apiToken, boardId, itemId, columnId, v
     }
 }
 
+// Escribe un valor de texto en una columna del item del cliente. Usado para el
+// write-back de la razón social del receptor a la columna mapeada (text). Fire-
+// and-forget: si falla, solo se loggea (la emisión ya fue exitosa).
+async function writeMondayTextColumn({ apiToken, boardId, itemId, columnId, value }) {
+    if (!apiToken || !boardId || !itemId || !columnId || value == null || value === '') return;
+    try {
+        const valueStr = String(value).slice(0, 255);
+        const mutation = `mutation ($boardId: ID!, $itemId: ID!, $columnId: String!, $value: String!) {
+            change_simple_column_value(
+                board_id: $boardId,
+                item_id: $itemId,
+                column_id: $columnId,
+                value: $value
+            ) { id }
+        }`;
+        const res = await fetchWithRetry('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({
+                query: mutation,
+                variables: { boardId: String(boardId), itemId: String(itemId), columnId, value: valueStr },
+            }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'write-text' });
+        const j = await res.json();
+        if (j?.errors?.length) {
+            console.warn(`[write-text] errors col=${columnId}:`, JSON.stringify(j.errors).slice(0, 300));
+        } else {
+            console.log(`[write-text] col=${columnId} item=${itemId} OK`);
+        }
+    } catch (err) {
+        console.warn(`[write-text] excepción col=${columnId}:`, err.message);
+    }
+}
+
 // Escribe una etiqueta en una columna dropdown del item. create_labels_if_missing
 // crea la etiqueta si todavía no existe (ej: la letra "A"/"B"/"C"). Fire-and-forget.
 async function writeMondayDropdownColumn({ apiToken, boardId, itemId, columnId, label }) {
@@ -7736,7 +7774,12 @@ async function writeMondayDropdownColumn({ apiToken, boardId, itemId, columnId, 
 //   - nro_factura       (texto)    → "PPPP-NNNNNNNN"  (ej: "0005-00000070")
 //   - nro_comprobante   (numérica) → solo el número   (ej: 70)
 //   - letra_comprobante (dropdown) → la letra A / B / C
-async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae }) {
+//   - razon_social_receptor (texto)    → razón social del receptor (de AFIP)
+//   - condicion_iva_receptor(dropdown) → condición IVA legible del receptor
+//                                        ("IVA Responsable Inscripto", "Consumidor
+//                                         Final", etc.). El usuario NO la carga: la
+//                                         resuelve la app desde el padrón AFIP.
+async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae, receptorNombre, receptorCondicion }) {
     if (!apiToken || !boardId || !itemId || !mapping) return;
     const pv  = String(puntoVenta ?? '').replace(/\D/g, '');
     const nro = String(numero ?? '').replace(/\D/g, '');
@@ -7774,6 +7817,25 @@ async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, let
             apiToken, boardId, itemId,
             columnId: mapping.letra_comprobante,
             label: String(letra),
+        });
+    }
+    // Razón social del receptor (texto). La app la resuelve desde el padrón AFIP
+    // al emitir; acá solo la deja registrada en el item para que el cliente la vea.
+    if (mapping.razon_social_receptor && receptorNombre) {
+        await writeMondayTextColumn({
+            apiToken, boardId, itemId,
+            columnId: mapping.razon_social_receptor,
+            value: invoiceRules.toTitleCase(String(receptorNombre)),
+        });
+    }
+    // Condición frente al IVA del receptor (dropdown). receptorCondicion viene en
+    // el código interno (RESPONSABLE_INSCRIPTO, CONSUMIDOR_FINAL, …); lo pasamos por
+    // condicionLabel para escribir la etiqueta legible que ya usa el PDF.
+    if (mapping.condicion_iva_receptor && receptorCondicion) {
+        await writeMondayDropdownColumn({
+            apiToken, boardId, itemId,
+            columnId: mapping.condicion_iva_receptor,
+            label: invoiceRules.toTitleCase(invoiceRules.condicionLabel(receptorCondicion)),
         });
     }
 }
