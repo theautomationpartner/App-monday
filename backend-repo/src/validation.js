@@ -107,9 +107,12 @@ const REQUIRED_MAPPING_FIELDS = [
 // razon_social_receptor (text_mm48w6tm) y condicion_iva_receptor (dropdown_mm48dfba):
 // mismo trato que cae_comprobante. Write-back de la razón social y la condición IVA
 // del receptor (ambas resueltas desde el padrón AFIP al emitir — el usuario NO las
-// carga). OBLIGATORIAS en el frontend (requiredMappingFields), pero FUERA de
-// REQUIRED_MAPPING_FIELDS por la misma razón que cae_comprobante: no romper el
-// auto-mapeo de plantilla en boards que aún no tengan esas columnas.
+// carga). OBLIGATORIAS, pero FUERA de REQUIRED_MAPPING_FIELDS por la misma razón
+// que cae_comprobante: no romper el auto-mapeo de plantilla ni el guardado de
+// boards que aún no tengan esas columnas. El "obligatorio" REAL no vive acá (en el
+// guardado del mapeo) sino en la EMISIÓN: checkReceptorWriteBackMapped() en
+// server.js rechaza la factura/NC/ND si el board no mapeó estas 2 columnas. Así un
+// board puede guardar su mapping incompleto, pero no puede emitir hasta mapearlas.
 
 // Campos de mapeo OPCIONALES. No se exigen nunca (un cliente que solo emite
 // facturas con la config básica no necesita mapearlos), por eso quedan fuera de

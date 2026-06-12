@@ -842,10 +842,30 @@ function getColumnLabel(columnValues, columnId, canonicalLabel) {
     return `"${canonicalLabel}"`;
 }
 
+// Bloqueo de emisión si el board no mapeó las columnas OBLIGATORIAS de write-back
+// del receptor (razón social + condición IVA). Estas columnas no se LEEN para
+// emitir — la app las ESCRIBE post-emisión — pero el cliente las exigió como
+// obligatorias: sin ellas mapeadas, no se emite (ni factura ni NC/ND). El mapeo
+// es por board, así que el chequeo aplica a los dos flujos. Devuelve un array de
+// errores legibles (vacío si está OK).
+function checkReceptorWriteBackMapped(mapping) {
+    const errors = [];
+    if (!mapping?.razon_social_receptor) {
+        errors.push('Falta mapear la columna "Razón Social del Receptor" en el Mapeo Visual (es obligatoria).');
+    }
+    if (!mapping?.condicion_iva_receptor) {
+        errors.push('Falta mapear la columna "Condición IVA del Receptor" en el Mapeo Visual (es obligatoria).');
+    }
+    return errors;
+}
+
 function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
     const errors = [];
     const VALID_ALICUOTAS = new Set(['0', '2.5', '5', '10.5', '21', '27']);
     const VALID_PROD_SERV = new Set(['servicio', 'producto']);
+
+    // Columnas de write-back del receptor obligatorias (razón social + cond. IVA).
+    errors.push(...checkReceptorWriteBackMapped(mapping));
 
     const fechaEmision = getColumnTextById(mainColumns, mapping.fecha_emision);
     if (!fechaEmision) {
@@ -6678,6 +6698,16 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 ncMapping = (await loadBoardMappingForEmit(company.id, boardId)) || {};
             } catch (mapErr) {
                 console.warn('[nc] no se pudo leer el mapeo del board:', mapErr.message);
+            }
+
+            // Columnas de write-back del receptor OBLIGATORIAS (razón social + cond.
+            // IVA). Mismo bloqueo que en factura: sin ellas mapeadas no se emite.
+            const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping);
+            if (ncReceptorErrors.length > 0) {
+                throw new Error(
+                    `No se puede emitir ${docLabel}:\n` +
+                    ncReceptorErrors.map(e => `• ${e}`).join('\n')
+                );
             }
 
             // Validación del Tipo de Comprobante: si esa columna está mapeada y
