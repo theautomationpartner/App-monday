@@ -7504,6 +7504,17 @@ function buildErrorComment(err, displayKind = 'comprobante') {
             solucion: 'Abrí la vista de la app → sección <b>Datos Fiscales</b> → completá Razón Social, CUIT, Punto de Venta y guardá.',
         },
         {
+            // Errores de red transitorios de Node (undici/fetch). "fetch failed"
+            // es el mensaje crudo que tira fetch cuando el socket se cae antes de
+            // recibir respuesta (ECONNRESET / ETIMEDOUT / socket hang up / EAI_AGAIN).
+            // Casi siempre es un micro-corte hablando con AFIP. Va ANTES del patrón
+            // genérico de AFIP para darle un mensaje propio cuando llega pelado.
+            match: /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|network.*error|terminated/i,
+            title: 'Falla de conexión temporal',
+            detail: 'Se cortó la conexión con los servidores de AFIP antes de completar la emisión. <b>No es un problema de los datos del item</b>, es un corte de red momentáneo. <b>El comprobante NO se emitió</b>, así que no hay riesgo de duplicado.',
+            solucion: 'Volvé a disparar la receta en unos segundos — normalmente funciona al reintentar. Si después de varios intentos sigue fallando, esperá unos minutos (puede ser un corte de AFIP) y avisá al soporte si persiste.',
+        },
+        {
             match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
             title: 'AFIP no está respondiendo correctamente',
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
