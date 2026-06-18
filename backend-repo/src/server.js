@@ -3036,6 +3036,7 @@ async function saveReviewFeedback({ accountId, feedback, email }) {
 // así cada comentario queda linkeado a la instalación de la cuenta.
 const FEEDBACK_BOARD_ID = '18418398507';
 const FEEDBACK_COLS = {
+    fecha:         'date_mm4ek9hm',
     comentario:    'long_text_mm4ez9mq',
     instalaciones: 'board_relation_mm4e29na',
 };
@@ -3057,7 +3058,9 @@ async function postFeedbackToBoard({ accountId, feedback }) {
             )).rows[0];
             if (comp?.business_name) label = comp.business_name;
         } catch (_) {}
+        const fecha = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
         const cv = {
+            [FEEDBACK_COLS.fecha]: { date: fecha },
             [FEEDBACK_COLS.comentario]: { text: String(feedback || '').slice(0, 2000) },
         };
         const leadItemId = await getInstallationLeadItemId(accountId);
