@@ -3709,11 +3709,12 @@ app.get('/api/usage', requireMondaySession, async (req, res) => {
 });
 
 // Registra la interacción del usuario con el gate de calificación in-app.
-//   event 'shown'    → apareció el diálogo: cuenta para el tope de vida y arranca
-//                      el cooldown (review_prompt_count++ , last_prompt_date).
+//   event 'dismiss'  → tocó "Ahora no": cuenta para el tope de vida y arranca el
+//                      cooldown de 60 días (review_prompt_count++ , last_prompt_date).
+//                      Si NO toca nada (cierra la app), el front no manda nada →
+//                      el gate reaparece la próxima vez que abre.
 //   event 'rated'    → tocó 👍 y se abrió el popup de monday: no volver a pedir.
 //   event 'feedback' → tocó 👎 y dejó comentario: lo guardamos para el equipo.
-//   event 'dismiss'  → lo cerró: ya quedó contado por 'shown', no hace nada.
 app.post('/api/review-prompt/response', requireMondaySession, async (req, res) => {
     try {
         const accountId = String(req.mondayIdentity.accountId || '');
@@ -3725,7 +3726,7 @@ app.post('/api/review-prompt/response', requireMondaySession, async (req, res) =
              VALUES ($1) ON CONFLICT (monday_account_id) DO NOTHING`,
             [accountId]
         );
-        if (event === 'shown') {
+        if (event === 'shown' || event === 'dismiss') {
             await db.query(
                 `UPDATE account_review_prompts
                     SET review_prompt_count = review_prompt_count + 1,

@@ -565,7 +565,6 @@ const App = () => {
     if (!usage?.show_review_prompt || reviewShownRef.current) return;
     reviewShownRef.current = true;
     setReviewGate({ step: "gate", attempt: usage.review_prompt_attempt || 1 });
-    api.post("/review-prompt/response", { event: "shown" }).catch(() => {});
   }, [usage]);
 
   const reviewChooseUp = () => setReviewGate((g) => ({ ...g, step: "happy" }));
@@ -582,7 +581,14 @@ const App = () => {
     }).catch(() => {});
     setReviewGate((g) => ({ ...g, step: "done" }));
   };
-  const reviewDismiss = () => setReviewGate(null);
+  // "Ahora no" / "En otro momento" / "Cancelar": postergó → recién reaparece a
+  // los 60 días (esto cuenta para el tope de vida 2).
+  const reviewDismiss = () => {
+    api.post("/review-prompt/response", { event: "dismiss" }).catch(() => {});
+    setReviewGate(null);
+  };
+  // Cerrar después de votar (👍/👎 ya quedó registrado): solo cierra, sin contar.
+  const reviewClose = () => setReviewGate(null);
 
   // Notifica a monday cuando el usuario completa el setup de la app
   // (datos fiscales + certificados + mapeo). Se dispara una vez por sesión.
@@ -1953,7 +1959,7 @@ const App = () => {
                   <div className="review-check">✓</div>
                   <h2 className="review-title">¡Gracias!</h2>
                   <p className="review-text">Tu comentario llegó a nuestro equipo. ¡Gracias por ayudarnos a mejorar!</p>
-                  <button className="review-primary" onClick={reviewDismiss}>Cerrar</button>
+                  <button className="review-primary" onClick={reviewClose}>Cerrar</button>
                 </div>
               )}
             </div>
