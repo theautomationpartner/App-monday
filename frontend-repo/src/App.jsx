@@ -321,6 +321,11 @@ const App = () => {
   // muestra. Si la fetch falla (ej: backend viejo sin /api/usage), queda null
   // y el banner no se renderiza — degrada gracefully.
   const [usage, setUsage] = useState(null);
+  // Gate de calificación (review prompt). reviewGate: null | { step, attempt }.
+  const [reviewGate, setReviewGate] = useState(null);
+  const [reviewFeedback, setReviewFeedback] = useState("");
+  const [reviewEmail, setReviewEmail] = useState("");
+  const reviewShownRef = useRef(false);
   const [sessionToken, setSessionToken] = useState("");
   // Datos Fiscales usa modo vista/edición (Stripe-style). El resto de las
   // secciones todavía usa el patrón viejo de lock — se migran en próximas etapas.
@@ -553,6 +558,32 @@ const App = () => {
       });
     return () => { cancelled = true; };
   }, [sessionToken]);
+
+  // Gate de calificación: si el backend (vía /api/usage) marca la cuenta como
+  // elegible, mostramos el mini-diálogo 👍/👎 una vez por carga. El 'shown'
+  // cuenta para el tope de vida (máx 2) y arranca el cooldown en el backend.
+  useEffect(() => {
+    if (!usage?.show_review_prompt || reviewShownRef.current) return;
+    reviewShownRef.current = true;
+    setReviewGate({ step: "gate", attempt: usage.review_prompt_attempt || 1 });
+    api.post("/review-prompt/response", { event: "shown" }).catch(() => {});
+  }, [usage]);
+
+  const reviewChooseUp = () => setReviewGate((g) => ({ ...g, step: "happy" }));
+  const reviewChooseDown = () => setReviewGate((g) => ({ ...g, step: "improve" }));
+  const reviewOpenRating = () => {
+    try { monday.execute("openAppRatingPopup"); }
+    catch (e) { console.warn("openAppRatingPopup:", e); }
+    api.post("/review-prompt/response", { event: "rated" }).catch(() => {});
+    setReviewGate(null);
+  };
+  const reviewSubmitFeedback = () => {
+    api.post("/review-prompt/response", {
+      event: "feedback", feedback: reviewFeedback, email: reviewEmail,
+    }).catch(() => {});
+    setReviewGate((g) => ({ ...g, step: "done" }));
+  };
+  const reviewDismiss = () => setReviewGate(null);
 
   // Notifica a monday cuando el usuario completa el setup de la app
   // (datos fiscales + certificados + mapeo). Se dispara una vez por sesión.
@@ -1874,6 +1905,62 @@ const App = () => {
                 <div className="loader"></div>
                 <p>Procesando datos de forma segura...</p>
             </div>
+        )}
+
+        {reviewGate && (
+          <div className="review-overlay" role="dialog" aria-modal="true">
+            <div className="review-modal">
+              <div className="review-accent" />
+              {reviewGate.step === "gate" && (
+                <div className="review-body">
+                  <div className="review-emoji">🎉</div>
+                  <h2 className="review-title">¡Ya emitiste tus primeras facturas desde monday!</h2>
+                  <p className="review-text">¿Cómo viene la experiencia con la facturación?</p>
+                  <div className="review-choices">
+                    <button className="review-choice" onClick={reviewChooseUp}>
+                      <span className="review-ico">👍</span><span>Muy bien</span>
+                    </button>
+                    <button className="review-choice bad" onClick={reviewChooseDown}>
+                      <span className="review-ico">🛠️</span><span>Puede mejorar</span>
+                    </button>
+                  </div>
+                  <button className="review-ghost" onClick={reviewDismiss}>Ahora no</button>
+                </div>
+              )}
+              {reviewGate.step === "happy" && (
+                <div className="review-body review-center">
+                  <div className="review-emoji">⭐</div>
+                  <h2 className="review-title">¡Genial! ¿Nos dejás una reseña?</h2>
+                  <p className="review-text">Nos ayuda un montón a seguir mejorando la app y a que más gente la encuentre en el marketplace.</p>
+                  <button className="review-primary" onClick={reviewOpenRating}>Calificar en monday</button>
+                  <button className="review-ghost" onClick={reviewDismiss}>En otro momento</button>
+                </div>
+              )}
+              {reviewGate.step === "improve" && (
+                <div className="review-body">
+                  <div className="review-emoji">🙏</div>
+                  <h2 className="review-title">Gracias, queremos mejorar</h2>
+                  <p className="review-text">Contanos qué te gustaría que ajustemos. Esto llega directo a nuestro equipo.</p>
+                  <textarea className="review-input" rows={3} placeholder="Ej: me gustaría poder…"
+                    value={reviewFeedback} onChange={(e) => setReviewFeedback(e.target.value)} />
+                  <input className="review-input" type="email" placeholder="Email de contacto (opcional)"
+                    value={reviewEmail} onChange={(e) => setReviewEmail(e.target.value)} />
+                  <button className="review-primary green" onClick={reviewSubmitFeedback} disabled={!reviewFeedback.trim()}>
+                    Enviar feedback
+                  </button>
+                  <button className="review-ghost" onClick={reviewDismiss}>Cancelar</button>
+                </div>
+              )}
+              {reviewGate.step === "done" && (
+                <div className="review-body review-center">
+                  <div className="review-check">✓</div>
+                  <h2 className="review-title">¡Gracias!</h2>
+                  <p className="review-text">Tu comentario llegó a nuestro equipo. Si dejaste tu email, te vamos a escribir.</p>
+                  <button className="review-primary" onClick={reviewDismiss}>Cerrar</button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* ═══ SECCIÓN: DATOS FISCALES ═══ */}

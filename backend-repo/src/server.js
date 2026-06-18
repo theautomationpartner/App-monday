@@ -2960,6 +2960,75 @@ async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
     }
 }
 
+// Decide si mostrar el gate de calificación al abrir la app. Reglas:
+//   - nunca si ya calificó (has_rated) o si ya se mostró 2 veces (tope de vida).
+//   - 1er intento: con 3+ comprobantes exitosos.
+//   - 2do intento: solo cuentas PAGAS, cooldown >=60 días desde el último prompt,
+//     y un hito de valor sostenido (>=25 comprobantes acumulados).
+async function getReviewPromptDecision(accountId) {
+    if (!accountId) return { show: false };
+    try {
+        await ensureAccountReviewPromptsTable();
+        const st = (await db.query(
+            `SELECT review_prompt_count, last_prompt_date, has_rated
+               FROM account_review_prompts WHERE monday_account_id = $1`,
+            [String(accountId)]
+        )).rows[0] || {};
+        if (st.has_rated) return { show: false };
+        const promptCount = st.review_prompt_count || 0;
+        if (promptCount >= 2) return { show: false };
+        const successes = await getTotalSuccessCount(accountId);
+        if (successes < REVIEW_NUDGE_THRESHOLD) return { show: false };
+        if (promptCount === 0) return { show: true, attempt: 1 };
+        // 2do intento (promptCount === 1): cuenta paga + cooldown + hito.
+        const cooldownMs = 60 * 24 * 60 * 60 * 1000;
+        const lastTs = st.last_prompt_date ? new Date(st.last_prompt_date).getTime() : 0;
+        if (Date.now() - lastTs < cooldownMs) return { show: false };
+        const plan = await getAccountPlan(accountId);
+        const isPaid = plan && plan.plan_id && plan.plan_id !== DEFAULT_PLAN_ID && !plan.is_trial;
+        if (!isPaid) return { show: false };
+        if (successes < 25) return { show: false };
+        return { show: true, attempt: 2 };
+    } catch (e) {
+        console.warn('[review-gate] decisión falló (no crítico):', e.message);
+        return { show: false };
+    }
+}
+
+// Feedback negativo (👎) del gate. Tabla aparte para no perder ninguno aunque
+// todavía no exista el board de monday. Contiene PII → va a deleteAccountData.
+let _reviewFeedbackTableEnsured = false;
+async function ensureReviewFeedbackTable() {
+    if (_reviewFeedbackTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS review_feedback (
+            id                SERIAL PRIMARY KEY,
+            monday_account_id TEXT NOT NULL,
+            feedback          TEXT,
+            email             TEXT,
+            created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    _reviewFeedbackTableEnsured = true;
+}
+
+async function saveReviewFeedback({ accountId, feedback, email }) {
+    try {
+        await ensureReviewFeedbackTable();
+        await db.query(
+            `INSERT INTO review_feedback (monday_account_id, feedback, email) VALUES ($1, $2, $3)`,
+            [
+                String(accountId),
+                feedback ? String(feedback).slice(0, 4000) : null,
+                email ? String(email).slice(0, 255) : null,
+            ]
+        );
+        console.log(`[review-feedback] guardado de cuenta ${accountId}`);
+    } catch (e) {
+        console.warn('[review-feedback] no se pudo guardar (no crítico):', e.message);
+    }
+}
+
 // Chequea si una cuenta puede emitir una factura mas en este momento.
 // Devuelve { allowed, plan, used, limit, remaining, reason }.
 async function checkEmissionAllowed(accountId) {
@@ -3581,6 +3650,7 @@ app.get('/api/usage', requireMondaySession, async (req, res) => {
         const accountId = String(req.mondayIdentity.accountId || '');
         if (!accountId) return res.status(400).json({ error: 'account_id ausente' });
         const check = await checkEmissionAllowed(accountId);
+        const review = await getReviewPromptDecision(accountId);
         res.json({
             plan_id: check.plan.plan_id,
             is_trial: check.plan.is_trial,
@@ -3589,10 +3659,61 @@ app.get('/api/usage', requireMondaySession, async (req, res) => {
             used: check.used,
             remaining: check.remaining,
             allowed: check.allowed,
+            show_review_prompt: review.show === true,
+            review_prompt_attempt: review.attempt || null,
         });
     } catch (err) {
         console.error('[usage] error:', err.message);
         res.status(500).json({ error: 'error consultando usage' });
+    }
+});
+
+// Registra la interacción del usuario con el gate de calificación in-app.
+//   event 'shown'    → apareció el diálogo: cuenta para el tope de vida y arranca
+//                      el cooldown (review_prompt_count++ , last_prompt_date).
+//   event 'rated'    → tocó 👍 y se abrió el popup de monday: no volver a pedir.
+//   event 'feedback' → tocó 👎 y dejó comentario: lo guardamos para el equipo.
+//   event 'dismiss'  → lo cerró: ya quedó contado por 'shown', no hace nada.
+app.post('/api/review-prompt/response', requireMondaySession, async (req, res) => {
+    try {
+        const accountId = String(req.mondayIdentity.accountId || '');
+        if (!accountId) return res.status(400).json({ error: 'account_id ausente' });
+        const { event, feedback, email } = req.body || {};
+        await ensureAccountReviewPromptsTable();
+        await db.query(
+            `INSERT INTO account_review_prompts (monday_account_id)
+             VALUES ($1) ON CONFLICT (monday_account_id) DO NOTHING`,
+            [accountId]
+        );
+        if (event === 'shown') {
+            await db.query(
+                `UPDATE account_review_prompts
+                    SET review_prompt_count = review_prompt_count + 1,
+                        last_prompt_date = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1`,
+                [accountId]
+            );
+        } else if (event === 'rated') {
+            await db.query(
+                `UPDATE account_review_prompts
+                    SET has_rated = TRUE, updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1`,
+                [accountId]
+            );
+        } else if (event === 'feedback') {
+            await db.query(
+                `UPDATE account_review_prompts
+                    SET last_feedback_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1`,
+                [accountId]
+            );
+            await saveReviewFeedback({ accountId, feedback, email });
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[review-prompt] error:', err.message);
+        res.status(500).json({ error: 'error registrando respuesta' });
     }
 });
 
@@ -5162,6 +5283,10 @@ async function deleteAccountData(accountId) {
         )).rowCount;
         stats.account_review_prompts = (await client.query(
             `DELETE FROM account_review_prompts WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
+        stats.review_feedback = (await client.query(
+            `DELETE FROM review_feedback WHERE monday_account_id = $1`,
             [accountId]
         )).rowCount;
         // account_plan_overrides contiene `reason` con texto libre (puede incluir
@@ -8548,6 +8673,12 @@ async function runStartupMigrations() {
         console.log('[migrations] account_review_prompts table asegurada');
     } catch (err) {
         console.error('[migrations] account_review_prompts error:', err.message);
+    }
+    try {
+        await ensureReviewFeedbackTable();
+        console.log('[migrations] review_feedback table asegurada');
+    } catch (err) {
+        console.error('[migrations] review_feedback error:', err.message);
     }
 }
 
