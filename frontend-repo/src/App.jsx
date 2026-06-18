@@ -324,7 +324,6 @@ const App = () => {
   // Gate de calificación (review prompt). reviewGate: null | { step, attempt }.
   const [reviewGate, setReviewGate] = useState(null);
   const [reviewFeedback, setReviewFeedback] = useState("");
-  const [reviewEmail, setReviewEmail] = useState("");
   const reviewShownRef = useRef(false);
   const [sessionToken, setSessionToken] = useState("");
   // Datos Fiscales usa modo vista/edición (Stripe-style). El resto de las
@@ -579,7 +578,7 @@ const App = () => {
   };
   const reviewSubmitFeedback = () => {
     api.post("/review-prompt/response", {
-      event: "feedback", feedback: reviewFeedback, email: reviewEmail,
+      event: "feedback", feedback: reviewFeedback,
     }).catch(() => {});
     setReviewGate((g) => ({ ...g, step: "done" }));
   };
@@ -1943,8 +1942,6 @@ const App = () => {
                   <p className="review-text">Contanos qué te gustaría que ajustemos. Esto llega directo a nuestro equipo.</p>
                   <textarea className="review-input" rows={3} placeholder="Ej: me gustaría poder…"
                     value={reviewFeedback} onChange={(e) => setReviewFeedback(e.target.value)} />
-                  <input className="review-input" type="email" placeholder="Email de contacto (opcional)"
-                    value={reviewEmail} onChange={(e) => setReviewEmail(e.target.value)} />
                   <button className="review-primary green" onClick={reviewSubmitFeedback} disabled={!reviewFeedback.trim()}>
                     Enviar feedback
                   </button>
@@ -1955,7 +1952,7 @@ const App = () => {
                 <div className="review-body review-center">
                   <div className="review-check">✓</div>
                   <h2 className="review-title">¡Gracias!</h2>
-                  <p className="review-text">Tu comentario llegó a nuestro equipo. Si dejaste tu email, te vamos a escribir.</p>
+                  <p className="review-text">Tu comentario llegó a nuestro equipo. ¡Gracias por ayudarnos a mejorar!</p>
                   <button className="review-primary" onClick={reviewDismiss}>Cerrar</button>
                 </div>
               )}
