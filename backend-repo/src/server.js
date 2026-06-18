@@ -2673,6 +2673,30 @@ async function ensureAccountSubscriptionsTable() {
     _accountSubscriptionsTableEnsured = true;
 }
 
+let _accountReviewPromptsTableEnsured = false;
+// Estado por cuenta del pedido de calificación (review prompt):
+//   nudge_comment_sent_at → cuándo dejamos el comentario en el item (UNA sola vez).
+//   review_prompt_count   → cuántas veces mostramos el gate in-app (tope de vida 2).
+//   last_prompt_date      → cooldown (60-90 días entre intentos).
+//   has_rated             → ya calificó, no volver a pedir.
+//   last_feedback_at      → cuándo dejó feedback negativo (👎).
+async function ensureAccountReviewPromptsTable() {
+    if (_accountReviewPromptsTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS account_review_prompts (
+            monday_account_id     TEXT PRIMARY KEY,
+            nudge_comment_sent_at TIMESTAMP,
+            review_prompt_count   INTEGER NOT NULL DEFAULT 0,
+            last_prompt_date      TIMESTAMP,
+            has_rated             BOOLEAN NOT NULL DEFAULT FALSE,
+            last_feedback_at      TIMESTAMP,
+            created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    _accountReviewPromptsTableEnsured = true;
+}
+
 let _accountPlanOverridesTableEnsured = false;
 // Tabla de overrides por cuenta: bonificaciones / planes custom que no encajan
 // en PLAN_LIMITS (ej. caso Polifroni). Si una cuenta tiene fila acá, su
@@ -2857,6 +2881,83 @@ async function getMonthlyEmissionCount(accountId) {
                )
     `, [String(accountId)]);
     return r.rows[0]?.n || 0;
+}
+
+// ── Pedido de calificación (review nudge) ───────────────────────────────────
+// A partir de la 3ra factura exitosa por cuenta, dejamos UN comentario en el
+// item invitando a calificar la app. El gate 👍/👎 vive en el frontend y se
+// muestra al abrir la app; este comentario es el empujón proactivo (la emisión
+// corre por la receta, sin la app abierta). TODO es fire-and-forget: NUNCA
+// debe romper la emisión.
+const REVIEW_NUDGE_THRESHOLD = 3;
+
+// Total histórico de comprobantes exitosos de una cuenta (todas sus companies).
+async function getTotalSuccessCount(accountId) {
+    if (!accountId) return 0;
+    const r = await db.query(`
+        SELECT COUNT(*)::int AS n
+          FROM invoice_emissions ie
+          JOIN companies c ON c.id = ie.company_id
+         WHERE c.monday_account_id::text = $1
+           AND ie.status = 'success'
+    `, [String(accountId)]);
+    return r.rows[0]?.n || 0;
+}
+
+// Slug de la cuenta del CLIENTE (con su token, NO el del dev) para armar el link.
+async function fetchAccountSlug(apiToken) {
+    if (!apiToken) return null;
+    try {
+        const res = await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({ query: 'query { me { account { slug } } }' }),
+        });
+        const json = await res.json().catch(() => null);
+        return json?.data?.me?.account?.slug || null;
+    } catch { return null; }
+}
+
+// Deja (una sola vez) el comentario-invitación en el item al cruzar el umbral.
+// Idempotente por cuenta: nudge_comment_sent_at marca que ya se hizo.
+async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
+    try {
+        if (!accountId || !apiToken || !itemId) return;
+        await ensureAccountReviewPromptsTable();
+        await db.query(
+            `INSERT INTO account_review_prompts (monday_account_id)
+             VALUES ($1) ON CONFLICT (monday_account_id) DO NOTHING`,
+            [String(accountId)]
+        );
+        const st = (await db.query(
+            `SELECT nudge_comment_sent_at, has_rated
+               FROM account_review_prompts WHERE monday_account_id = $1`,
+            [String(accountId)]
+        )).rows[0] || {};
+        if (st.has_rated || st.nudge_comment_sent_at) return; // ya calificó o ya comentamos
+        const count = await getTotalSuccessCount(accountId);
+        if (count < REVIEW_NUDGE_THRESHOLD) return;           // todavía no llegó a 3
+
+        const slug = await fetchAccountSlug(apiToken);
+        const cta = (slug && boardId)
+            ? `<br><br><a href="https://${slug}.monday.com/boards/${boardId}">👉 Abrir Factura ARCA</a>`
+            : ` Abrila desde el ícono de la app en tu tablero.`;
+        const body =
+            `🎉 ¡Ya emitiste ${count} comprobantes con <b>Factura ARCA</b>! ` +
+            `¿Nos contás cómo viene tu experiencia? Abrí la vista <b>Facturación Electrónica</b> ` +
+            `y dejanos tu opinión — nos ayuda un montón a seguir mejorando. 🙌${cta}`;
+
+        await postMondayUpdate({ apiToken, itemId, body });
+        await db.query(
+            `UPDATE account_review_prompts
+                SET nudge_comment_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+              WHERE monday_account_id = $1`,
+            [String(accountId)]
+        );
+        console.log(`[review-nudge] comentario dejado en item ${itemId} (cuenta ${accountId}, ${count} éxitos)`);
+    } catch (e) {
+        console.warn('[review-nudge] falló (no crítico):', e.message);
+    }
 }
 
 // Chequea si una cuenta puede emitir una factura mas en este momento.
@@ -5059,6 +5160,10 @@ async function deleteAccountData(accountId) {
             `DELETE FROM account_subscriptions WHERE monday_account_id = $1`,
             [accountId]
         )).rowCount;
+        stats.account_review_prompts = (await client.query(
+            `DELETE FROM account_review_prompts WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
         // account_plan_overrides contiene `reason` con texto libre (puede incluir
         // nombres / razon social) → es PII y va con el resto de los datos al
         // uninstall. Tabla puede no existir aun si la cuenta no llego a usar
@@ -6279,6 +6384,13 @@ async function comprobanteHandler(req, res) {
                 }).catch((err) => console.warn('[callback] fire-and-forget falló:', err.message));
             }
 
+            // Pedido de calificación (FIRE-AND-FORGET) — al llegar a 3 éxitos deja
+            // UN comentario en el item invitando a calificar. Nunca rompe la emisión.
+            if (afipResult?.cae) {
+                maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId })
+                    .catch((err) => console.warn('[review-nudge] fire-and-forget falló:', err.message));
+            }
+
             // Resumen completo de tiempos — una sola línea legible al final.
             const tTotal = Date.now() - tIncoming;
             const tBg    = Date.now() - tBgStart;
@@ -7334,6 +7446,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     numero: afipResult.numero_comprobante,
                 }).catch((e) => console.warn('[nc] callback fire-and-forget falló:', e.message));
             }
+
+            // Pedido de calificación (FIRE-AND-FORGET) — mismo nudge que en factura.
+            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId })
+                .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
 
             console.log(`[nc] ── OK item ${itemId} ── ${docAbbr} ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
 
@@ -8426,6 +8542,12 @@ async function runStartupMigrations() {
         console.log('[migrations] visual_mappings dedup + UNIQUE (company_id, board_id) aseguradas');
     } catch (err) {
         console.error('[migrations] visual_mappings dedup error:', err.message);
+    }
+    try {
+        await ensureAccountReviewPromptsTable();
+        console.log('[migrations] account_review_prompts table asegurada');
+    } catch (err) {
+        console.error('[migrations] account_review_prompts error:', err.message);
     }
 }
 
