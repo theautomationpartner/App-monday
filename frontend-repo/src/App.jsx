@@ -260,7 +260,7 @@ const App = () => {
       return { msg: "Falta el nombre de fantasía", hint: "Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné lo mismo que la razón social." };
     }
     if (cuitDigits.length !== 11) {
-      return { msg: "CUIT inválido", hint: "El CUIT debe tener 11 dígitos. Sin guiones ni puntos. Ejemplo: 20327446348." };
+      return { msg: "CUIT inválido", hint: "El CUIT debe tener 11 dígitos. Sin guiones ni puntos. Ejemplo: 20123456789." };
     }
     if (!f.puntoVenta || parseInt(f.puntoVenta) < 1) {
       return { msg: "Falta el punto de venta", hint: "Ingresá el número de punto de venta habilitado en AFIP/ARCA. Es un número (ej: 1, 2, 5)." };
@@ -2005,7 +2005,7 @@ const App = () => {
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Ej: Martín Melendrez"
+                  placeholder="Ej: Kiosco El Sol"
                   value={fiscal.nombreFantasia}
                   onChange={(e) => handleFiscalChange("nombreFantasia", e.target.value)}
                 />
