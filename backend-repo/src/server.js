@@ -2918,6 +2918,25 @@ async function fetchAccountSlug(apiToken) {
     } catch { return null; }
 }
 
+// View id de la vista del tablero de la app ("Facturacion Electronica", de tipo
+// FeatureBoardView) en un board dado, para linkear directo a esa vista (donde
+// aparece el gate). El id es distinto en cada board.
+async function fetchAppViewId(apiToken, boardId) {
+    if (!apiToken || !boardId) return null;
+    try {
+        const res = await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({ query: `query { boards(ids: ${Number(boardId)}) { views { id name type } } }` }),
+        });
+        const json = await res.json().catch(() => null);
+        const views = json?.data?.boards?.[0]?.views || [];
+        const appView = views.find(v => v.type === 'FeatureBoardView' && /factura/i.test(v.name || ''))
+            || views.find(v => v.type === 'FeatureBoardView');
+        return appView?.id || null;
+    } catch { return null; }
+}
+
 // Deja (una sola vez) el comentario-invitación en el item al cruzar el umbral.
 // Idempotente por cuenta: nudge_comment_sent_at marca que ya se hizo.
 async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
@@ -2939,9 +2958,14 @@ async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
         if (count < REVIEW_NUDGE_THRESHOLD) return;           // todavía no llegó a 3
 
         const slug = await fetchAccountSlug(apiToken);
-        const cta = (slug && boardId)
-            ? `<br><br><a href="https://${slug}.monday.com/boards/${boardId}">👉 Abrir Factura ARCA</a>`
-            : ` Abrila desde el ícono de la app en tu tablero.`;
+        const viewId = await fetchAppViewId(apiToken, boardId);
+        let cta = ' Abrila desde el ícono de la app en tu tablero.';
+        if (slug && boardId) {
+            const url = viewId
+                ? `https://${slug}.monday.com/boards/${boardId}/views/${viewId}`
+                : `https://${slug}.monday.com/boards/${boardId}`;
+            cta = `<br><br><a href="${url}">👉 Abrir Factura ARCA</a>`;
+        }
         const body =
             `🎉 ¡Ya emitiste ${count} comprobantes con <b>Factura ARCA</b>! ` +
             `¿Nos contás cómo viene tu experiencia? Abrí la vista <b>Facturación Electrónica</b> ` +
