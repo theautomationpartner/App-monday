@@ -3024,8 +3024,48 @@ async function saveReviewFeedback({ accountId, feedback, email }) {
             ]
         );
         console.log(`[review-feedback] guardado de cuenta ${accountId}`);
+        await postFeedbackToBoard({ accountId, feedback });
     } catch (e) {
         console.warn('[review-feedback] no se pudo guardar (no crítico):', e.message);
+    }
+}
+
+// Tablero "Comentarios" de monday donde el equipo gestiona el feedback negativo.
+// Compartido prod+staging (mismo board, como el audit board). El board_relation
+// "Instalaciones APP" apunta al board de leads (DEV_LEADS_BOARD_ID = 18408871816),
+// así cada comentario queda linkeado a la instalación de la cuenta.
+const FEEDBACK_BOARD_ID = '18418398507';
+const FEEDBACK_COLS = {
+    comentario:    'long_text_mm4ez9mq',
+    instalaciones: 'board_relation_mm4e29na',
+};
+
+// Crea el ítem de feedback en el board "Comentarios" y lo linkea a la instalación
+// de la cuenta. Fire-and-forget: si falla, el feedback ya quedó en review_feedback.
+async function postFeedbackToBoard({ accountId, feedback }) {
+    try {
+        const token = process.env.DEV_MONDAY_TOKEN;
+        if (!token) return;
+        // Nombre del ítem: la razón social de la cuenta, si la tenemos.
+        let label = `Cuenta ${accountId}`;
+        try {
+            const comp = (await db.query(
+                `SELECT business_name FROM companies
+                  WHERE monday_account_id = $1 AND business_name IS NOT NULL
+                  ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+                [String(accountId)]
+            )).rows[0];
+            if (comp?.business_name) label = comp.business_name;
+        } catch (_) {}
+        const cv = {
+            [FEEDBACK_COLS.comentario]: { text: String(feedback || '').slice(0, 2000) },
+        };
+        const leadItemId = await getInstallationLeadItemId(accountId);
+        if (leadItemId) cv[FEEDBACK_COLS.instalaciones] = { item_ids: [Number(leadItemId)] };
+        const itemId = await createLeadItem(token, FEEDBACK_BOARD_ID, `Feedback — ${label}`, cv);
+        console.log(`[review-feedback] item ${itemId} creado en board Comentarios (cuenta ${accountId}, lead ${leadItemId || 'n/a'})`);
+    } catch (e) {
+        console.warn('[review-feedback] no se pudo crear item en board (no crítico):', e.message);
     }
 }
 
