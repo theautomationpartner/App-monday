@@ -2961,33 +2961,30 @@ async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
 }
 
 // Decide si mostrar el gate de calificación al abrir la app. Reglas:
-//   - nunca si ya calificó (has_rated) o si ya se mostró 2 veces (tope de vida).
+//   - Si ya INTERACTUÓ (calificó 👍 o dejó feedback 👎) → no se muestra nunca más.
 //   - 1er intento: con 3+ comprobantes exitosos.
-//   - 2do intento: solo cuentas PAGAS, cooldown >=60 días desde el último prompt,
-//     y un hito de valor sostenido (>=25 comprobantes acumulados).
+//   - 2do (y último) intento: si la 1ra vez tocó "Ahora no", reaparece a los
+//     60 días. Tope de vida: 2 (si vuelve a postergar, no aparece más).
 async function getReviewPromptDecision(accountId) {
     if (!accountId) return { show: false };
     try {
         await ensureAccountReviewPromptsTable();
         const st = (await db.query(
-            `SELECT review_prompt_count, last_prompt_date, has_rated
+            `SELECT review_prompt_count, last_prompt_date, has_rated, last_feedback_at
                FROM account_review_prompts WHERE monday_account_id = $1`,
             [String(accountId)]
         )).rows[0] || {};
-        if (st.has_rated) return { show: false };
+        // Interactuó (👍 calificó o 👎 dejó feedback) → terminal, no mostrar más.
+        if (st.has_rated || st.last_feedback_at) return { show: false };
         const promptCount = st.review_prompt_count || 0;
-        if (promptCount >= 2) return { show: false };
+        if (promptCount >= 2) return { show: false };                 // tope de vida: 2
         const successes = await getTotalSuccessCount(accountId);
         if (successes < REVIEW_NUDGE_THRESHOLD) return { show: false };
-        if (promptCount === 0) return { show: true, attempt: 1 };
-        // 2do intento (promptCount === 1): cuenta paga + cooldown + hito.
+        if (promptCount === 0) return { show: true, attempt: 1 };     // 1er intento (3ra factura)
+        // 2do intento: solo si tocó "Ahora no" la 1ra vez y pasaron 60 días.
         const cooldownMs = 60 * 24 * 60 * 60 * 1000;
         const lastTs = st.last_prompt_date ? new Date(st.last_prompt_date).getTime() : 0;
         if (Date.now() - lastTs < cooldownMs) return { show: false };
-        const plan = await getAccountPlan(accountId);
-        const isPaid = plan && plan.plan_id && plan.plan_id !== DEFAULT_PLAN_ID && !plan.is_trial;
-        if (!isPaid) return { show: false };
-        if (successes < 25) return { show: false };
         return { show: true, attempt: 2 };
     } catch (e) {
         console.warn('[review-gate] decisión falló (no crítico):', e.message);
