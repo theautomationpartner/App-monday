@@ -7,6 +7,7 @@ import "monday-ui-react-core/dist/main.css";
 import "./App.css";
 import WelcomePage from "./WelcomePage";
 import iconoFacturacion from "./assets/icono-facturacion.svg";
+import { useT, LanguageSwitcher } from "./i18n.jsx";
 
 const monday = mondaySdk();
 
@@ -77,9 +78,9 @@ const IconCheck = () => (
 );
 
 const MENU_ITEMS = [
-  { id: "datos", label: "Datos Fiscales", icon: <IconBuilding /> },
-  { id: "certificados", label: "Certificados ARCA", icon: <IconCert /> },
-  { id: "mapping_v2", label: "Mapeo Visual", icon: <IconList /> },
+  { id: "datos", label: "Datos Fiscales", labelKey: "menu.datos", icon: <IconBuilding /> },
+  { id: "certificados", label: "Certificados ARCA", labelKey: "menu.certificados", icon: <IconCert /> },
+  { id: "mapping_v2", label: "Mapeo Visual", labelKey: "menu.mapping", icon: <IconList /> },
 ];
 
 
@@ -224,6 +225,7 @@ function buildAutoMappingFromColumns(itemCols, subitemCols) {
 }
 
 const App = () => {
+  const { t } = useT();
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
   const [activeSection, setActiveSection] = useState("datos");
@@ -1765,7 +1767,7 @@ const App = () => {
         </div>
 
         <nav className="gd-checklist">
-          <div className="gd-checklist-heading">Configuración</div>
+          <div className="gd-checklist-heading">{t("sidebar.config")}</div>
           {MENU_ITEMS.map((item) => {
             const s = sectionStatus[item.id] || "incomplete";
             const isActive = activeSection === item.id;
@@ -1784,9 +1786,9 @@ const App = () => {
                   ) : null}
                 </span>
                 <span className="gd-check-body">
-                  <span className="gd-check-label">{item.label}</span>
+                  <span className="gd-check-label">{t(item.labelKey)}</span>
                   <span className={`gd-check-status ${s}`}>
-                    {s === "complete" ? "Listo" : s === "pending" ? "En progreso" : "Pendiente"}
+                    {s === "complete" ? t("status.complete") : s === "pending" ? t("status.pending") : t("status.incomplete")}
                   </span>
                 </span>
               </button>
@@ -1794,9 +1796,13 @@ const App = () => {
           })}
         </nav>
 
+        <div className="gd-sidebar-lang">
+          <LanguageSwitcher />
+        </div>
+
         <div className="gd-sidebar-footer">
           <span className={`status-dot ${context ? "online" : ""}`} />
-          <span>{context ? "Backend conectado" : "Sin contexto Monday"}</span>
+          <span>{context ? t("sidebar.connected") : t("sidebar.noContext")}</span>
         </div>
       </aside>
 
@@ -1889,7 +1895,7 @@ const App = () => {
                 <span className="mono">{completedSections}</span><span>/{totalSections}</span>
               </div>
             </div>
-            <div className="gd-header-progress-label">pasos completos</div>
+            <div className="gd-header-progress-label">{t("header.stepsComplete")}</div>
           </div>
         </div>
 
@@ -1977,17 +1983,15 @@ const App = () => {
           <section className="gd-content">
             <div className="gd-section-head">
               <div>
-                <h2 className="gd-section-title">Datos Fiscales</h2>
+                <h2 className="gd-section-title">{t("fiscal.title")}</h2>
                 <p className="gd-section-sub">
-                  {hasSavedFiscalData
-                    ? "Esto es lo que AFIP va a ver en tus comprobantes."
-                    : "Completá la información de tu empresa para la facturación electrónica."}
+                  {hasSavedFiscalData ? t("fiscal.subSaved") : t("fiscal.subSetup")}
                 </p>
               </div>
               {!inEditMode && (
                 <button type="button" className="btn-secondary section-edit-btn" onClick={handleEnterFiscalEdit}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
-                  Editar
+                  {t("common.edit")}
                 </button>
               )}
             </div>

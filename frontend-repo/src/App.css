@@ -4787,3 +4787,36 @@ body {
 }
 .review-input:focus { outline: none; border-color: #0073ea; }
 
+/* ─── Selector de idioma (EN / ES) ─── */
+.gd-sidebar-lang {
+  padding: 10px 16px 4px;
+  display: flex;
+  justify-content: center;
+}
+.lang-switcher {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  background: #f0f3ff;
+  border-radius: 999px;
+}
+.lang-opt {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #676879;
+  letter-spacing: .03em;
+  padding: 5px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: .15s;
+}
+.lang-opt:hover { color: #323338; }
+.lang-opt.active {
+  background: #ffffff;
+  color: #0073ea;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .12);
+}
+
