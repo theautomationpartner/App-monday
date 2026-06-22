@@ -2084,30 +2084,30 @@ const App = () => {
             <div className="gd-card">
             <div className="form-grid">
               <div className="form-group">
-                <label className="form-label">Razón Social</label>
+                <label className="form-label">{t("fiscal.razonSocial")}</label>
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Ej: Mi Empresa S.A."
+                  placeholder={t("fiscal.razonSocialPh")}
                   value={fiscal.razonSocial}
                   onChange={(e) => handleFiscalChange("razonSocial", e.target.value)}
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Nombre de Fantasía</label>
+                <label className="form-label">{t("fiscal.nombreFantasia")}</label>
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Ej: Kiosco El Sol"
+                  placeholder={t("fiscal.nombreFantasiaPh")}
                   value={fiscal.nombreFantasia}
                   onChange={(e) => handleFiscalChange("nombreFantasia", e.target.value)}
                 />
-                <p className="form-hint">Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné tu razón social.</p>
+                <p className="form-hint">{t("fiscal.nombreFantasiaHint")}</p>
               </div>
 
               <div className="form-group">
-                <label className="form-label">CUIT</label>
+                <label className="form-label">{t("fiscal.cuit")}</label>
                 <input
                   className="form-input"
                   type="text"
@@ -2118,7 +2118,7 @@ const App = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Punto de Venta</label>
+                <label className="form-label">{t("fiscal.puntoVenta")}</label>
                 <input
                   className="form-input"
                   type="text"
@@ -2129,7 +2129,7 @@ const App = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Fecha de Inicio de Actividades</label>
+                <label className="form-label">{t("fiscal.fechaInicio")}</label>
                 <input
                   className="form-input"
                   type="date"
@@ -2139,11 +2139,11 @@ const App = () => {
               </div>
 
               <div className="form-group full-width">
-                <label className="form-label">Domicilio Comercial</label>
+                <label className="form-label">{t("fiscal.domicilio")}</label>
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Av. Corrientes 1234, CABA"
+                  placeholder={t("fiscal.domicilioPh")}
                   value={fiscal.domicilio}
                   onChange={(e) => handleFiscalChange("domicilio", e.target.value)}
                 />
@@ -2153,15 +2153,13 @@ const App = () => {
 
             {/* ─── Subsección opcional: contacto y branding ─── */}
             <div className="subsection-header">
-              <h2 className="subsection-title">Datos de contacto y marca <span className="subsection-tag">opcional</span></h2>
-              <p className="subsection-subtitle">
-                Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.
-              </p>
+              <h2 className="subsection-title">{t("fiscal.contactTitle")} <span className="subsection-tag">{t("common.optional")}</span></h2>
+              <p className="subsection-subtitle">{t("fiscal.contactSub")}</p>
             </div>
 
             <div className="form-grid">
               <div className="form-group">
-                <label className="form-label">Teléfono</label>
+                <label className="form-label">{t("fiscal.phone")}</label>
                 <input
                   className="form-input"
                   type="tel"
@@ -2172,41 +2170,41 @@ const App = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Email</label>
+                <label className="form-label">{t("fiscal.email")}</label>
                 <input
                   className="form-input"
                   type="email"
-                  placeholder="contacto@miempresa.com"
+                  placeholder={t("fiscal.emailPh")}
                   value={fiscal.email}
                   onChange={(e) => handleFiscalChange("email", e.target.value)}
                 />
               </div>
 
               <div className="form-group full-width">
-                <label className="form-label">Sitio web</label>
+                <label className="form-label">{t("fiscal.website")}</label>
                 <input
                   className="form-input"
                   type="url"
-                  placeholder="https://miempresa.com"
+                  placeholder={t("fiscal.websitePh")}
                   value={fiscal.sitioWeb}
                   onChange={(e) => handleFiscalChange("sitioWeb", e.target.value)}
                 />
               </div>
 
               <div className="form-group full-width">
-                <label className="form-label">Logo de la empresa</label>
+                <label className="form-label">{t("fiscal.logo")}</label>
                 <div className="logo-uploader">
                   <div className="logo-uploader-row">
                     <div className="logo-preview">
                       {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) ? (
                         <img src={logoPreviewUrl || savedLogoDataUrl} alt="Logo de la empresa" />
                       ) : (
-                        <span className="logo-preview-empty">Sin logo</span>
+                        <span className="logo-preview-empty">{t("fiscal.logoNone")}</span>
                       )}
                     </div>
                     <div className="logo-uploader-actions">
                       <label className="btn-secondary logo-upload-btn">
-                        {(logoPreviewUrl || savedLogoDataUrl) ? "Cambiar imagen" : "Subir imagen"}
+                        {(logoPreviewUrl || savedLogoDataUrl) ? t("fiscal.logoChange") : t("fiscal.logoUpload")}
                         <input
                           type="file"
                           accept="image/png,image/jpeg,image/svg+xml,image/webp"
@@ -2216,10 +2214,10 @@ const App = () => {
                       </label>
                       {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) && (
                         <button type="button" className="btn-secondary" onClick={handleRemoveLogo}>
-                          Quitar
+                          {t("fiscal.logoRemove")}
                         </button>
                       )}
-                      <p className="logo-uploader-hint">PNG, JPG, SVG o WebP. Hasta 1 MB.</p>
+                      <p className="logo-uploader-hint">{t("fiscal.logoHint")}</p>
                     </div>
                   </div>
 

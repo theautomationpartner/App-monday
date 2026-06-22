@@ -34,6 +34,33 @@ export const translations = {
     "fiscal.subSaved": "Esto es lo que AFIP va a ver en tus comprobantes.",
     "fiscal.subSetup":
       "Completá la información de tu empresa para la facturación electrónica.",
+    // ── Datos Fiscales (formulario) ──
+    "fiscal.razonSocial": "Razón Social",
+    "fiscal.razonSocialPh": "Ej: Mi Empresa S.A.",
+    "fiscal.nombreFantasia": "Nombre de Fantasía",
+    "fiscal.nombreFantasiaPh": "Ej: Kiosco El Sol",
+    "fiscal.nombreFantasiaHint":
+      "Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné tu razón social.",
+    "fiscal.cuit": "CUIT",
+    "fiscal.puntoVenta": "Punto de Venta",
+    "fiscal.fechaInicio": "Fecha de Inicio de Actividades",
+    "fiscal.domicilio": "Domicilio Comercial",
+    "fiscal.domicilioPh": "Av. Corrientes 1234, CABA",
+    "fiscal.contactTitle": "Datos de contacto y marca",
+    "fiscal.contactSub":
+      "Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.",
+    "fiscal.phone": "Teléfono",
+    "fiscal.email": "Email",
+    "fiscal.emailPh": "contacto@miempresa.com",
+    "fiscal.website": "Sitio web",
+    "fiscal.websitePh": "https://miempresa.com",
+    "fiscal.logo": "Logo de la empresa",
+    "fiscal.logoNone": "Sin logo",
+    "fiscal.logoChange": "Cambiar imagen",
+    "fiscal.logoUpload": "Subir imagen",
+    "fiscal.logoRemove": "Quitar",
+    "fiscal.logoHint": "PNG, JPG, SVG o WebP. Hasta 1 MB.",
+    "common.optional": "opcional",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -54,6 +81,33 @@ export const translations = {
     "fiscal.subSaved": "This is what AFIP will see on your invoices.",
     "fiscal.subSetup":
       "Complete your company information for electronic invoicing.",
+    // ── Tax Details (form) ──
+    "fiscal.razonSocial": "Legal Name",
+    "fiscal.razonSocialPh": "e.g. Acme Inc.",
+    "fiscal.nombreFantasia": "Trade Name",
+    "fiscal.nombreFantasiaPh": "e.g. Sunny Store",
+    "fiscal.nombreFantasiaHint":
+      "It's the commercial name shown in bold at the top of the PDF. If you don't have one, use your legal name.",
+    "fiscal.cuit": "Tax ID (CUIT)",
+    "fiscal.puntoVenta": "Point of Sale",
+    "fiscal.fechaInicio": "Business Start Date",
+    "fiscal.domicilio": "Business Address",
+    "fiscal.domicilioPh": "e.g. 123 Main St, City",
+    "fiscal.contactTitle": "Contact & branding",
+    "fiscal.contactSub":
+      "These details are optional. We'll use them later to personalize your invoice PDF with your company information.",
+    "fiscal.phone": "Phone",
+    "fiscal.email": "Email",
+    "fiscal.emailPh": "contact@mycompany.com",
+    "fiscal.website": "Website",
+    "fiscal.websitePh": "https://mycompany.com",
+    "fiscal.logo": "Company logo",
+    "fiscal.logoNone": "No logo",
+    "fiscal.logoChange": "Change image",
+    "fiscal.logoUpload": "Upload image",
+    "fiscal.logoRemove": "Remove",
+    "fiscal.logoHint": "PNG, JPG, SVG or WebP. Up to 1 MB.",
+    "common.optional": "optional",
   },
 };
 
