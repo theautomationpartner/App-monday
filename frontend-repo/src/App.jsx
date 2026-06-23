@@ -256,25 +256,25 @@ const App = () => {
   const validateFiscal = (f) => {
     const cuitDigits = String(f.cuit || "").replace(/\D/g, "");
     if (!f.razonSocial?.trim()) {
-      return { msg: "Falta la razón social", hint: "Cargá la razón social registrada en AFIP (la que figura en tu constancia)." };
+      return { msg: t("val.razonSocial.msg"), hint: t("val.razonSocial.hint") };
     }
     if (!f.nombreFantasia?.trim()) {
-      return { msg: "Falta el nombre de fantasía", hint: "Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné lo mismo que la razón social." };
+      return { msg: t("val.fantasia.msg"), hint: t("val.fantasia.hint") };
     }
     if (cuitDigits.length !== 11) {
-      return { msg: "CUIT inválido", hint: "El CUIT debe tener 11 dígitos. Sin guiones ni puntos. Ejemplo: 20123456789." };
+      return { msg: t("val.cuit.msg"), hint: t("val.cuit.hint") };
     }
     if (!f.puntoVenta || parseInt(f.puntoVenta) < 1) {
-      return { msg: "Falta el punto de venta", hint: "Ingresá el número de punto de venta habilitado en AFIP/ARCA. Es un número (ej: 1, 2, 5)." };
+      return { msg: t("val.puntoVenta.msg"), hint: t("val.puntoVenta.hint") };
     }
     if (!f.fechaInicio) {
-      return { msg: "Falta la fecha de inicio de actividades", hint: "La fecha que figura en tu constancia de inscripción de AFIP." };
+      return { msg: t("val.fechaInicio.msg"), hint: t("val.fechaInicio.hint") };
     }
     if (!f.domicilio?.trim()) {
-      return { msg: "Falta el domicilio comercial", hint: "El domicilio fiscal registrado en AFIP. Aparece en el PDF de la factura." };
+      return { msg: t("val.domicilio.msg"), hint: t("val.domicilio.hint") };
     }
     if (f.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) {
-      return { msg: "Email con formato inválido", hint: "Revisá que tenga el formato correcto, ej: ventas@empresa.com.ar" };
+      return { msg: t("val.email.msg"), hint: t("val.email.hint") };
     }
     return null;
   };
@@ -286,23 +286,23 @@ const App = () => {
     const backendMsg = err?.response?.data?.error;
     const status = err?.response?.status;
     const map = {
-      MISSING_TRADE_NAME:   { msg: "Falta el nombre de fantasía",     hint: "Cargálo arriba del CUIT. Puede ser igual a la razón social si no tenés uno comercial." },
-      MISSING_FISCAL_DATA:  { msg: "Faltan datos fiscales",            hint: "Cargá razón social, CUIT y punto de venta antes de continuar." },
-      INVALID_EMAIL:        { msg: "Email con formato inválido",       hint: "Tiene que tener un @ y un dominio válido (ej: ventas@empresa.com)." },
-      INVALID_WEBSITE:      { msg: "Sitio web con formato inválido",   hint: "Empezá con http:// o https:// (ej: https://empresa.com)." },
-      INVALID_LOGO_MIME:    { msg: "Formato de logo no soportado",     hint: "Usá PNG, JPG, SVG o WebP. Otros formatos no se aceptan." },
-      LOGO_TOO_LARGE:       { msg: "El logo es muy grande",            hint: "Reducilo a menos de 500 KB (podés comprimirlo en tinypng.com)." },
-      KEY_CRT_MISMATCH:     { msg: "El .crt y el .key no son pareja",  hint: "Bajaste el cert correspondiente a otra solicitud. Volvé a generar el CSR y descargá el .crt nuevo de ARCA." },
-      CRT_EXPIRED:          { msg: "El certificado venció",            hint: "Generá uno nuevo en ARCA con el mismo alias y volvé a subirlo." },
-      NO_PENDING_CSR:       { msg: "No hay una solicitud pendiente",   hint: "Generá primero el CSR desde el paso 1 antes de subir el .crt." },
+      MISSING_TRADE_NAME:   { msg: t("val.MISSING_TRADE_NAME.msg"),   hint: t("val.MISSING_TRADE_NAME.hint") },
+      MISSING_FISCAL_DATA:  { msg: t("val.MISSING_FISCAL_DATA.msg"),  hint: t("val.MISSING_FISCAL_DATA.hint") },
+      INVALID_EMAIL:        { msg: t("val.INVALID_EMAIL.msg"),        hint: t("val.INVALID_EMAIL.hint") },
+      INVALID_WEBSITE:      { msg: t("val.INVALID_WEBSITE.msg"),      hint: t("val.INVALID_WEBSITE.hint") },
+      INVALID_LOGO_MIME:    { msg: t("val.INVALID_LOGO_MIME.msg"),    hint: t("val.INVALID_LOGO_MIME.hint") },
+      LOGO_TOO_LARGE:       { msg: t("val.LOGO_TOO_LARGE.msg"),       hint: t("val.LOGO_TOO_LARGE.hint") },
+      KEY_CRT_MISMATCH:     { msg: t("val.KEY_CRT_MISMATCH.msg"),     hint: t("val.KEY_CRT_MISMATCH.hint") },
+      CRT_EXPIRED:          { msg: t("val.CRT_EXPIRED.msg"),          hint: t("val.CRT_EXPIRED.hint") },
+      NO_PENDING_CSR:       { msg: t("val.NO_PENDING_CSR.msg"),       hint: t("val.NO_PENDING_CSR.hint") },
     };
     if (code && map[code]) return map[code];
-    if (status === 401)    return { msg: "Tu sesión expiró",        hint: "Cerrá la pestaña de monday y volvé a abrir la app." };
-    if (status === 403)    return { msg: "No tenés permisos",       hint: "Pedíle al admin de monday que te de permisos sobre este tablero." };
-    if (status === 404)    return { msg: "No se encontró la empresa", hint: "Cargá primero los Datos Fiscales antes de hacer esta acción." };
-    if (status === 413)    return { msg: "El archivo es muy grande", hint: "Subí uno más liviano." };
-    if (backendMsg)        return { msg: backendMsg,                  hint: "Si persiste, contactá soporte." };
-    return { msg: err?.message || "Error desconocido", hint: "Intentá de nuevo en unos segundos. Si sigue fallando, contactá soporte." };
+    if (status === 401)    return { msg: t("val.401.msg"), hint: t("val.401.hint") };
+    if (status === 403)    return { msg: t("val.403.msg"), hint: t("val.403.hint") };
+    if (status === 404)    return { msg: t("val.404.msg"), hint: t("val.404.hint") };
+    if (status === 413)    return { msg: t("val.413.msg"), hint: t("val.413.hint") };
+    if (backendMsg)        return { msg: backendMsg,        hint: t("val.backendFallback.hint") };
+    return { msg: err?.message || t("val.unknown.msg"), hint: t("val.unknown.hint") };
   };
 
   const [isLoading, setIsLoading] = useState(false);
