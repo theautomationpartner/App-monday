@@ -279,6 +279,24 @@ export const translations = {
     "map.optionalCols": "Columnas opcionales",
     "map.optionalColsDesc": "Mapealas solo si las usás. La app las completa o las lee al emitir.",
     "map.saveInitial": "Guardar Mapeo Visual",
+    "common.close": "Cerrar",
+    // ── WelcomePage ──
+    "welcome.title": "¡Bienvenido a Factura ARCA!",
+    "welcome.subtitle":
+      "Vas a poder facturar electrónicamente desde tus boards de monday en 3 pasos. Configurá una vez y olvidate de la carga manual en la web de AFIP.",
+    "welcome.step1Desc":
+      "Cargá los datos de tu empresa (CUIT, razón social, punto de venta). Es la información que va a aparecer en cada factura que emitas.",
+    "welcome.step2Desc":
+      "Conectá tu certificado digital de ARCA. Si ya tenés uno, lo subís. Si no, te guiamos paso a paso para generarlo sin salir de la app.",
+    "welcome.step3Desc":
+      "Decile a la app qué columna del board representa el cliente, qué columna el monto, etc. Es como armar la plantilla de la factura una sola vez.",
+    "welcome.zoomAria": "Ampliar captura del paso",
+    "welcome.stepWord": "Paso",
+    "welcome.clickToZoom": "Click para ampliar",
+    "welcome.footer":
+      "Después, cada cambio de estado en el board dispara una factura AFIP automática con CAE, número y PDF adjunto al item.",
+    "welcome.startBtn": "Empezar configuración",
+    "welcome.lightboxAria": "Imagen ampliada",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -544,6 +562,24 @@ export const translations = {
     "map.optionalCols": "Optional columns",
     "map.optionalColsDesc": "Map them only if you use them. The app fills or reads them when issuing.",
     "map.saveInitial": "Save Visual Mapping",
+    "common.close": "Close",
+    // ── WelcomePage ──
+    "welcome.title": "Welcome to Factura ARCA!",
+    "welcome.subtitle":
+      "You'll be able to issue electronic invoices from your monday boards in 3 steps. Set it up once and forget about manual entry on the AFIP website.",
+    "welcome.step1Desc":
+      "Enter your company details (CUIT, legal name, point of sale). This is the information that will appear on every invoice you issue.",
+    "welcome.step2Desc":
+      "Connect your ARCA digital certificate. If you already have one, upload it. If not, we guide you step by step to generate it without leaving the app.",
+    "welcome.step3Desc":
+      "Tell the app which board column represents the client, which one the amount, etc. It's like building the invoice template once.",
+    "welcome.zoomAria": "Zoom screenshot of step",
+    "welcome.stepWord": "Step",
+    "welcome.clickToZoom": "Click to zoom",
+    "welcome.footer":
+      "After that, each status change on the board triggers an automatic AFIP invoice with CAE, number, and PDF attached to the item.",
+    "welcome.startBtn": "Start setup",
+    "welcome.lightboxAria": "Zoomed image",
   },
 };
 

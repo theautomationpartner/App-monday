@@ -14,41 +14,24 @@ import { useState } from "react";
 import step1 from "./assets/onboarding/step-1-datos.png";
 import step2 from "./assets/onboarding/step-2-certificados.png";
 import step3 from "./assets/onboarding/step-3-mapeo.png";
+import { useT } from "./i18n.jsx";
 
 const STEPS = [
-  {
-    n: 1,
-    title: "Datos Fiscales",
-    desc: "Cargá los datos de tu empresa (CUIT, razón social, punto de venta). Es la información que va a aparecer en cada factura que emitas.",
-    img: step1,
-  },
-  {
-    n: 2,
-    title: "Certificados ARCA",
-    desc: "Conectá tu certificado digital de ARCA. Si ya tenés uno, lo subís. Si no, te guiamos paso a paso para generarlo sin salir de la app.",
-    img: step2,
-  },
-  {
-    n: 3,
-    title: "Mapeo Visual",
-    desc: "Decile a la app qué columna del board representa el cliente, qué columna el monto, etc. Es como armar la plantilla de la factura una sola vez.",
-    img: step3,
-  },
+  { n: 1, titleKey: "fiscal.title", descKey: "welcome.step1Desc", img: step1 },
+  { n: 2, titleKey: "cert.title", descKey: "welcome.step2Desc", img: step2 },
+  { n: 3, titleKey: "menu.mapping", descKey: "welcome.step3Desc", img: step3 },
 ];
 
 export default function WelcomePage({ onStart }) {
+  const { t } = useT();
   const [zoomImg, setZoomImg] = useState(null);
 
   return (
     <div className="welcome-frame">
       <div className="welcome-card">
         <div className="welcome-hero">
-          <h1 className="welcome-title">¡Bienvenido a Factura ARCA!</h1>
-          <p className="welcome-subtitle">
-            Vas a poder facturar electrónicamente desde tus boards de monday en
-            3 pasos. Configurá una vez y olvidate de la carga manual en la web
-            de AFIP.
-          </p>
+          <h1 className="welcome-title">{t("welcome.title")}</h1>
+          <p className="welcome-subtitle">{t("welcome.subtitle")}</p>
         </div>
 
         <div className="welcome-steps">
@@ -57,19 +40,19 @@ export default function WelcomePage({ onStart }) {
               <div className="welcome-step-header">
                 <div className="welcome-step-num">{s.n}</div>
                 <div>
-                  <div className="welcome-step-title">{s.title}</div>
-                  <div className="welcome-step-desc">{s.desc}</div>
+                  <div className="welcome-step-title">{t(s.titleKey)}</div>
+                  <div className="welcome-step-desc">{t(s.descKey)}</div>
                 </div>
               </div>
               <button
                 type="button"
                 className="welcome-step-img-wrap"
                 onClick={() => setZoomImg(s)}
-                aria-label={`Ampliar captura del paso ${s.n}: ${s.title}`}
+                aria-label={`${t("welcome.zoomAria")} ${s.n}: ${t(s.titleKey)}`}
               >
                 <img
                   src={s.img}
-                  alt={`Paso ${s.n}: ${s.title}`}
+                  alt={`${t("welcome.stepWord")} ${s.n}: ${t(s.titleKey)}`}
                   className="welcome-step-img"
                 />
                 <span className="welcome-step-img-hint">
@@ -79,7 +62,7 @@ export default function WelcomePage({ onStart }) {
                     <line x1="11" y1="8" x2="11" y2="14" />
                     <line x1="8" y1="11" x2="14" y2="11" />
                   </svg>
-                  Click para ampliar
+                  {t("welcome.clickToZoom")}
                 </span>
               </button>
             </div>
@@ -87,17 +70,14 @@ export default function WelcomePage({ onStart }) {
         </div>
 
         <div className="welcome-footer">
-          <p className="welcome-footer-text">
-            Después, cada cambio de estado en el board dispara una factura AFIP
-            automática con CAE, número y PDF adjunto al item.
-          </p>
+          <p className="welcome-footer-text">{t("welcome.footer")}</p>
           <div className="welcome-actions">
             <button
               type="button"
               className="welcome-btn-primary"
               onClick={onStart}
             >
-              Empezar configuración
+              {t("welcome.startBtn")}
             </button>
           </div>
         </div>
@@ -108,21 +88,21 @@ export default function WelcomePage({ onStart }) {
           className="welcome-lightbox"
           onClick={() => setZoomImg(null)}
           role="dialog"
-          aria-label="Imagen ampliada"
+          aria-label={t("welcome.lightboxAria")}
         >
           <button
             type="button"
             className="welcome-lightbox-close"
             onClick={() => setZoomImg(null)}
-            aria-label="Cerrar"
+            aria-label={t("common.close")}
           >
             ✕
           </button>
           <div className="welcome-lightbox-content" onClick={(e) => e.stopPropagation()}>
             <div className="welcome-lightbox-caption">
-              Paso {zoomImg.n}: {zoomImg.title}
+              {t("welcome.stepWord")} {zoomImg.n}: {t(zoomImg.titleKey)}
             </div>
-            <img src={zoomImg.img} alt={zoomImg.title} className="welcome-lightbox-img" />
+            <img src={zoomImg.img} alt={t(zoomImg.titleKey)} className="welcome-lightbox-img" />
           </div>
         </div>
       )}
