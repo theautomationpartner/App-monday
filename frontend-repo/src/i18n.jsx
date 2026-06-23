@@ -297,6 +297,24 @@ export const translations = {
       "Después, cada cambio de estado en el board dispara una factura AFIP automática con CAE, número y PDF adjunto al item.",
     "welcome.startBtn": "Empezar configuración",
     "welcome.lightboxAria": "Imagen ampliada",
+    // ── Gate de calificación (review) ──
+    "review.gateTitle": "¡Ya emitiste tus primeras facturas desde monday!",
+    "review.gateSub": "¿Cómo viene la experiencia con la facturación?",
+    "review.good": "Muy bien",
+    "review.improve": "Puede mejorar",
+    "review.notNow": "Ahora no",
+    "review.happyTitle": "¡Genial! ¿Nos dejás una reseña?",
+    "review.happySub":
+      "Nos ayuda un montón a seguir mejorando la app y a que más gente la encuentre en el marketplace.",
+    "review.rateOnMonday": "Calificar en monday",
+    "review.later": "En otro momento",
+    "review.improveTitle": "Gracias, queremos mejorar",
+    "review.improveSub":
+      "Contanos qué te gustaría que ajustemos. Esto llega directo a nuestro equipo.",
+    "review.feedbackPh": "Ej: me gustaría poder…",
+    "review.sendFeedback": "Enviar feedback",
+    "review.doneTitle": "¡Gracias!",
+    "review.doneSub": "Tu comentario llegó a nuestro equipo. ¡Gracias por ayudarnos a mejorar!",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -580,6 +598,24 @@ export const translations = {
       "After that, each status change on the board triggers an automatic AFIP invoice with CAE, number, and PDF attached to the item.",
     "welcome.startBtn": "Start setup",
     "welcome.lightboxAria": "Zoomed image",
+    // ── Rating gate (review) ──
+    "review.gateTitle": "You've issued your first invoices from monday!",
+    "review.gateSub": "How's your invoicing experience going?",
+    "review.good": "Great",
+    "review.improve": "Could be better",
+    "review.notNow": "Not now",
+    "review.happyTitle": "Awesome! Would you leave us a review?",
+    "review.happySub":
+      "It helps us a lot to keep improving the app and to help more people find it in the marketplace.",
+    "review.rateOnMonday": "Rate on monday",
+    "review.later": "Another time",
+    "review.improveTitle": "Thanks, we want to improve",
+    "review.improveSub":
+      "Tell us what you'd like us to adjust. This goes straight to our team.",
+    "review.feedbackPh": "e.g. I'd love to be able to…",
+    "review.sendFeedback": "Send feedback",
+    "review.doneTitle": "Thanks!",
+    "review.doneSub": "Your comment reached our team. Thanks for helping us improve!",
   },
 };
 

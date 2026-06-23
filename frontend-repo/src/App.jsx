@@ -1925,47 +1925,47 @@ const App = () => {
               {reviewGate.step === "gate" && (
                 <div className="review-body">
                   <div className="review-emoji">🎉</div>
-                  <h2 className="review-title">¡Ya emitiste tus primeras facturas desde monday!</h2>
-                  <p className="review-text">¿Cómo viene la experiencia con la facturación?</p>
+                  <h2 className="review-title">{t("review.gateTitle")}</h2>
+                  <p className="review-text">{t("review.gateSub")}</p>
                   <div className="review-choices">
                     <button className="review-choice" onClick={reviewChooseUp}>
-                      <span className="review-ico">👍</span><span>Muy bien</span>
+                      <span className="review-ico">👍</span><span>{t("review.good")}</span>
                     </button>
                     <button className="review-choice bad" onClick={reviewChooseDown}>
-                      <span className="review-ico">🛠️</span><span>Puede mejorar</span>
+                      <span className="review-ico">🛠️</span><span>{t("review.improve")}</span>
                     </button>
                   </div>
-                  <button className="review-ghost" onClick={reviewDismiss}>Ahora no</button>
+                  <button className="review-ghost" onClick={reviewDismiss}>{t("review.notNow")}</button>
                 </div>
               )}
               {reviewGate.step === "happy" && (
                 <div className="review-body review-center">
                   <div className="review-emoji">⭐</div>
-                  <h2 className="review-title">¡Genial! ¿Nos dejás una reseña?</h2>
-                  <p className="review-text">Nos ayuda un montón a seguir mejorando la app y a que más gente la encuentre en el marketplace.</p>
-                  <button className="review-primary" onClick={reviewOpenRating}>Calificar en monday</button>
-                  <button className="review-ghost" onClick={reviewDismiss}>En otro momento</button>
+                  <h2 className="review-title">{t("review.happyTitle")}</h2>
+                  <p className="review-text">{t("review.happySub")}</p>
+                  <button className="review-primary" onClick={reviewOpenRating}>{t("review.rateOnMonday")}</button>
+                  <button className="review-ghost" onClick={reviewDismiss}>{t("review.later")}</button>
                 </div>
               )}
               {reviewGate.step === "improve" && (
                 <div className="review-body">
                   <div className="review-emoji">🙏</div>
-                  <h2 className="review-title">Gracias, queremos mejorar</h2>
-                  <p className="review-text">Contanos qué te gustaría que ajustemos. Esto llega directo a nuestro equipo.</p>
-                  <textarea className="review-input" rows={3} placeholder="Ej: me gustaría poder…"
+                  <h2 className="review-title">{t("review.improveTitle")}</h2>
+                  <p className="review-text">{t("review.improveSub")}</p>
+                  <textarea className="review-input" rows={3} placeholder={t("review.feedbackPh")}
                     value={reviewFeedback} onChange={(e) => setReviewFeedback(e.target.value)} />
                   <button className="review-primary green" onClick={reviewSubmitFeedback} disabled={!reviewFeedback.trim()}>
-                    Enviar feedback
+                    {t("review.sendFeedback")}
                   </button>
-                  <button className="review-ghost" onClick={reviewDismiss}>Cancelar</button>
+                  <button className="review-ghost" onClick={reviewDismiss}>{t("common.cancel")}</button>
                 </div>
               )}
               {reviewGate.step === "done" && (
                 <div className="review-body review-center">
                   <div className="review-check">✓</div>
-                  <h2 className="review-title">¡Gracias!</h2>
-                  <p className="review-text">Tu comentario llegó a nuestro equipo. ¡Gracias por ayudarnos a mejorar!</p>
-                  <button className="review-primary" onClick={reviewClose}>Cerrar</button>
+                  <h2 className="review-title">{t("review.doneTitle")}</h2>
+                  <p className="review-text">{t("review.doneSub")}</p>
+                  <button className="review-primary" onClick={reviewClose}>{t("common.close")}</button>
                 </div>
               )}
             </div>
