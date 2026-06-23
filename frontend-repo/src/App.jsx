@@ -2316,19 +2316,19 @@ const App = () => {
               <div>
                 <h2 className="gd-section-title">
                   {certFlow === "guided"
-                    ? "Obtené tu certificado ARCA"
+                    ? t("cert.titleGuided")
                     : certFlow === "manual"
-                      ? "Subir certificado manualmente"
-                      : "Certificados ARCA"}
+                      ? t("cert.titleManual")
+                      : t("cert.title")}
                 </h2>
                 <p className="gd-section-sub">
                   {certFlow === "guided"
-                    ? "Asistente paso a paso. No necesitás usar terminal ni OpenSSL."
+                    ? t("cert.subGuided")
                     : certFlow === "manual"
-                      ? "Si ya generaste tu .crt y .key por fuera, subilos directamente."
+                      ? t("cert.subManual")
                       : certificateStatus === "active"
-                        ? "Certificado digital de AFIP que firma tus comprobantes."
-                        : "Para facturar necesitás un certificado digital de ARCA. Te guiamos paso a paso."}
+                        ? t("cert.subActive")
+                        : t("cert.subSetup")}
                 </p>
               </div>
               <div className="gd-section-head-actions">
@@ -2339,7 +2339,7 @@ const App = () => {
                     onClick={handleStartCertRenewal}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
-                    Renovar
+                    {t("cert.renew")}
                   </button>
                 )}
                 {CERT_TUTORIAL_URL && (
@@ -2348,12 +2348,12 @@ const App = () => {
                     href={CERT_TUTORIAL_URL}
                     target="_blank"
                     rel="noreferrer"
-                    title="Abrir tutorial en video"
+                    title={t("cert.watchTutorialTitle")}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <polygon points="5 3 19 12 5 21 5 3" />
                     </svg>
-                    Ver tutorial
+                    {t("cert.watchTutorial")}
                   </a>
                 )}
               </div>
@@ -2370,11 +2370,11 @@ const App = () => {
                     </svg>
                   </div>
                   <div className="cert-active-hero-text">
-                    <h2 className="cert-active-hero-title">Certificado activo</h2>
+                    <h2 className="cert-active-hero-title">{t("cert.activeTitle")}</h2>
                     <p className="cert-active-hero-sub">
-                      Tu app está lista para emitir facturas en ARCA.
+                      {t("cert.activeSub")}
                       {certDaysBadge && (
-                        <> Vence en <strong>{certificateExpirationDate}</strong> · {certDaysBadge.text.toLowerCase()}.</>
+                        <> {t("cert.expiresOn")} <strong>{certificateExpirationDate}</strong> · {certDaysBadge.text.toLowerCase()}.</>
                       )}
                     </p>
                   </div>
@@ -2383,12 +2383,12 @@ const App = () => {
                 <div className="data-view">
                   {certificateAlias && (
                     <div className="data-row">
-                      <span className="data-label">Alias</span>
+                      <span className="data-label">{t("cert.alias")}</span>
                       <span className="data-value">{certificateAlias}</span>
                     </div>
                   )}
                   <div className={`data-row ${!certificateAlias ? "full-width" : ""}`}>
-                    <span className="data-label">Vencimiento</span>
+                    <span className="data-label">{t("cert.expiration")}</span>
                     <span className={`data-value ${!certificateExpirationDate ? "empty" : ""}`}>
                       {certificateExpirationDate || "—"}
                       {certDaysBadge && (
@@ -2399,7 +2399,7 @@ const App = () => {
                     </span>
                   </div>
                   <div className="data-row full-width">
-                    <span className="data-label">Última actualización</span>
+                    <span className="data-label">{t("cert.lastUpdate")}</span>
                     <span className={`data-value ${!certificateUpdatedAt ? "empty" : ""}`}>
                       {certificateUpdatedAt
                         ? new Date(certificateUpdatedAt).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
@@ -2410,7 +2410,7 @@ const App = () => {
 
                 <div className="cert-secondary-actions">
                   <button type="button" className="cert-secondary-link" onClick={() => setCertFlow("manual")}>
-                    También podés subir nuevos archivos .crt y .key manualmente
+                    {t("cert.uploadManualLink")}
                   </button>
                 </div>
               </>
@@ -2422,7 +2422,7 @@ const App = () => {
                 <div className="cert-pending-header">
                   <span className="cert-pending-dot" />
                   <div>
-                    <h2 className="cert-active-title">Solicitud pendiente</h2>
+                    <h2 className="cert-active-title">{t("cert.pendingTitle")}</h2>
                     <p className="cert-active-sub">
                       Generaste una solicitud
                       {certificateUpdatedAt ? <> el {new Date(certificateUpdatedAt).toLocaleDateString("es-AR")}</> : null}.
@@ -2437,15 +2437,15 @@ const App = () => {
                     className="cert-action-card primary"
                     onClick={() => { setCertFlow("guided"); setGuidedStep(4); }}
                   >
-                    <div className="cert-action-card-badge">✨ Recomendado</div>
+                    <div className="cert-action-card-badge">{t("cert.recommended")}</div>
                     <div className="cert-action-card-icon">
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0073ea" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                       </svg>
                     </div>
-                    <div className="cert-action-card-title">Subir certificado .crt de ARCA</div>
-                    <div className="cert-action-card-desc">Terminá el trámite que empezaste — solo te queda adjuntar el archivo que te dio ARCA.</div>
-                    <span className="cert-action-card-cta">Continuar →</span>
+                    <div className="cert-action-card-title">{t("cert.uploadCrtTitle")}</div>
+                    <div className="cert-action-card-desc">{t("cert.uploadCrtDesc")}</div>
+                    <span className="cert-action-card-cta">{t("cert.continue")}</span>
                   </button>
 
                   <button
@@ -2458,9 +2458,9 @@ const App = () => {
                         <path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3v5h5"/>
                       </svg>
                     </div>
-                    <div className="cert-action-card-title">Subir archivos manualmente</div>
+                    <div className="cert-action-card-title">{t("cert.uploadManualTitle")}</div>
                     <div className="cert-action-card-desc">Si ya tenés tu <code>.crt</code> y <code>.key</code> generados por fuera.</div>
-                    <span className="cert-action-card-cta alt">Subir archivos →</span>
+                    <span className="cert-action-card-cta alt">{t("cert.uploadFiles")}</span>
                   </button>
                 </div>
 
@@ -2469,8 +2469,8 @@ const App = () => {
                     <div className="cert-reset-confirm-header">
                       <span className="cert-reset-confirm-icon">⚠</span>
                       <div>
-                        <strong id="cert-reset-title">¿Empezar una nueva solicitud?</strong>
-                        <p>La solicitud actual se reemplaza y vas a tener que hacer todo el trámite de nuevo en ARCA.</p>
+                        <strong id="cert-reset-title">{t("cert.resetTitle")}</strong>
+                        <p>{t("cert.resetBody")}</p>
                       </div>
                     </div>
                     <div className="cert-reset-confirm-actions">
@@ -2479,7 +2479,7 @@ const App = () => {
                         className="cert-helper-btn"
                         onClick={() => setShowResetConfirm(false)}
                       >
-                        Cancelar
+                        {t("common.cancel")}
                       </button>
                       <button
                         type="button"
@@ -2490,7 +2490,7 @@ const App = () => {
                           setGuidedStep(1);
                         }}
                       >
-                        Sí, empezar de nuevo
+                        {t("cert.resetConfirm")}
                       </button>
                     </div>
                   </div>
