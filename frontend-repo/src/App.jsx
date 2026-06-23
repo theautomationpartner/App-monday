@@ -3025,7 +3025,7 @@ const App = () => {
                 {!inMappingEditMode && (
                   <button type="button" className="btn-secondary section-edit-btn" onClick={handleEnterMappingEdit}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
-                  Editar
+                  {t("common.edit")}
                   </button>
                 )}
               </div>
@@ -3081,12 +3081,10 @@ const App = () => {
             {/* ─── Acciones automáticas en el item (2 checkboxes opcionales) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Acciones automáticas en el item</span>
-                <span className="gd-dim">Opcionales</span>
+                <span className="h-eyebrow">{t("map.autoActions")}</span>
+                <span className="gd-dim">{t("map.optionals")}</span>
               </div>
-              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>
-                Decidí qué cambios automáticos hace la app sobre el item de monday cuando se emite la factura.
-              </p>
+              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>{t("map.autoActionsDesc")}</p>
 
               {/* Checkbox 1: renombrar item */}
               <label
@@ -3111,7 +3109,7 @@ const App = () => {
                   style={{ marginTop: 3, cursor: inMappingEditMode ? "pointer" : "default" }}
                 />
                 <span style={{ flex: 1 }}>
-                  <strong>Renombrar el item con el N° de factura</strong>
+                  <strong>{t("map.renameItem")}</strong>
                   <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
                     Ej: <em>"Cliente Juan"</em> pasa a <em>"Factura B N° 0002-00000019"</em> tras emitir.
                   </span>
@@ -3140,7 +3138,7 @@ const App = () => {
                   style={{ marginTop: 3, cursor: inMappingEditMode ? "pointer" : "default" }}
                 />
                 <span style={{ flex: 1 }}>
-                  <strong>Cambiar el estado del item automáticamente</strong>
+                  <strong>{t("map.changeStatus")}</strong>
                   <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
                     Ej: <em>Procesando</em> → <em>Comprobante Creado</em>, o <em>Error</em> si falla.
                   </span>
@@ -3151,14 +3149,14 @@ const App = () => {
               {boardConfig.auto_update_status && (
                 <div className="gd-confirm-grid" style={{ marginTop: 12 }}>
                   <div className="gd-confirm-row">
-                    <span className="gd-confirm-label">Columna de estado del item</span>
+                    <span className="gd-confirm-label">{t("map.statusColumn")}</span>
                     {inMappingEditMode ? (
                       <select
                         className={`invoice-preview-select ${boardConfig.status_column_id ? "mapped" : "unmapped"}`}
                         value={boardConfig.status_column_id || ""}
                         onChange={(e) => setBoardConfig((prev) => ({ ...prev, status_column_id: e.target.value }))}
                       >
-                        <option value="">— Elegir columna Status —</option>
+                        <option value="">{t("map.chooseStatus")}</option>
                         {statusColumns.map((c) => (
                           <option key={c.value} value={c.value}>{c.label}</option>
                         ))}
@@ -3166,7 +3164,7 @@ const App = () => {
                     ) : (
                       <span className="gd-confirm-value">
                         {statusColumns.find((c) => c.value === boardConfig.status_column_id)?.label || (
-                          <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                          <em style={{ color: "var(--ink-400)" }}>{t("map.notConfigured")}</em>
                         )}
                       </span>
                     )}
@@ -3181,19 +3179,19 @@ const App = () => {
             {/* ─── Columna de salida del PDF (siempre obligatoria) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Columna del PDF emitido</span>
-                <span className="gd-dim">Obligatoria</span>
+                <span className="h-eyebrow">{t("map.pdfColumnTitle")}</span>
+                <span className="gd-dim">{t("common.required")}</span>
               </div>
               <div className="gd-confirm-grid">
                 <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Columna Comprobante PDF</span>
+                  <span className="gd-confirm-label">{t("map.pdfColumnLabel")}</span>
                   {inMappingEditMode ? (
                     <select
                       className={`invoice-preview-select ${boardConfig.invoice_pdf_column_id ? "mapped" : "unmapped"}`}
                       value={boardConfig.invoice_pdf_column_id || ""}
                       onChange={(e) => setBoardConfig((prev) => ({ ...prev, invoice_pdf_column_id: e.target.value }))}
                     >
-                      <option value="">— Elegir columna Archivo —</option>
+                      <option value="">{t("map.chooseFile")}</option>
                       {fileColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3201,23 +3199,19 @@ const App = () => {
                   ) : (
                     <span className="gd-confirm-value">
                       {fileColumns.find((c) => c.value === boardConfig.invoice_pdf_column_id)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.notConfigured")}</em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    La columna (tipo Archivo) donde se va a adjuntar el PDF emitido por AFIP.
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.pdfHint")}</span>
                 </div>
               </div>
               {inMappingEditMode && fileColumns.length === 0 && (
                 <div className="gd-infobox warn" style={{ marginTop: 12 }}>
                   <span className="gd-infobox-icon">⚠</span>
                   <div>
-                    <p className="gd-infobox-title">Tu tablero no tiene columna de Archivo</p>
-                    <p className="gd-infobox-body">
-                      Necesitás agregar una columna tipo "Archivo" al tablero para que la app pueda adjuntar el PDF de la factura.
-                    </p>
+                    <p className="gd-infobox-title">{t("map.noFileColTitle")}</p>
+                    <p className="gd-infobox-body">{t("map.noFileColBody")}</p>
                   </div>
                 </div>
               )}
@@ -3226,23 +3220,21 @@ const App = () => {
             {/* ─── Configuración opcional (campos no obligatorios — moneda, etc.) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Configuración opcional</span>
-                <span className="gd-dim">Opcionales</span>
+                <span className="h-eyebrow">{t("map.optionalConfig")}</span>
+                <span className="gd-dim">{t("map.optionals")}</span>
               </div>
-              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>
-                Configuraciones avanzadas que extienden el comportamiento de la app. Si no las usás, la app funciona en su modo por defecto.
-              </p>
+              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>{t("map.optionalConfigDesc")}</p>
 
               <div className="gd-confirm-grid">
                 <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Moneda</span>
+                  <span className="gd-confirm-label">{t("map.currency")}</span>
                   {inMappingEditMode ? (
                     <select
                       className={`invoice-preview-select ${mapping.moneda ? "mapped" : "unmapped"}`}
                       value={mapping.moneda || ""}
                       onChange={(e) => setMapping({ ...mapping, moneda: e.target.value })}
                     >
-                      <option value="">— Default: pesos —</option>
+                      <option value="">{t("map.defaultPesos")}</option>
                       {columns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3250,7 +3242,7 @@ const App = () => {
                   ) : (
                     <span className="gd-confirm-value">
                       {columns.find((c) => c.value === mapping.moneda)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>Default: pesos</em>
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.defaultPesosShort")}</em>
                       )}
                     </span>
                   )}

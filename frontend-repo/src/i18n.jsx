@@ -188,6 +188,28 @@ export const translations = {
     "map.f.prodServ": "Prod / Serv",
     "map.f.unidadMedida": "Unidad de Medida",
     "map.f.alicuotaIva": "Alícuota IVA %",
+    "map.autoActions": "Acciones automáticas en el item",
+    "map.optionals": "Opcionales",
+    "map.autoActionsDesc":
+      "Decidí qué cambios automáticos hace la app sobre el item de monday cuando se emite la factura.",
+    "map.renameItem": "Renombrar el item con el N° de factura",
+    "map.changeStatus": "Cambiar el estado del item automáticamente",
+    "map.statusColumn": "Columna de estado del item",
+    "map.chooseStatus": "— Elegir columna Status —",
+    "map.notConfigured": "Sin configurar",
+    "map.pdfColumnTitle": "Columna del PDF emitido",
+    "map.pdfColumnLabel": "Columna Comprobante PDF",
+    "map.chooseFile": "— Elegir columna Archivo —",
+    "map.pdfHint": "La columna (tipo Archivo) donde se va a adjuntar el PDF emitido por AFIP.",
+    "map.noFileColTitle": "Tu tablero no tiene columna de Archivo",
+    "map.noFileColBody":
+      "Necesitás agregar una columna tipo \"Archivo\" al tablero para que la app pueda adjuntar el PDF de la factura.",
+    "map.optionalConfig": "Configuración opcional",
+    "map.optionalConfigDesc":
+      "Configuraciones avanzadas que extienden el comportamiento de la app. Si no las usás, la app funciona en su modo por defecto.",
+    "map.currency": "Moneda",
+    "map.defaultPesos": "— Default: pesos —",
+    "map.defaultPesosShort": "Default: pesos",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -362,6 +384,28 @@ export const translations = {
     "map.f.prodServ": "Product / Service",
     "map.f.unidadMedida": "Unit of Measure",
     "map.f.alicuotaIva": "VAT Rate %",
+    "map.autoActions": "Automatic actions on the item",
+    "map.optionals": "Optional",
+    "map.autoActionsDesc":
+      "Decide which automatic changes the app makes to the monday item when the invoice is issued.",
+    "map.renameItem": "Rename the item with the invoice number",
+    "map.changeStatus": "Change the item status automatically",
+    "map.statusColumn": "Item status column",
+    "map.chooseStatus": "— Choose Status column —",
+    "map.notConfigured": "Not configured",
+    "map.pdfColumnTitle": "Issued PDF column",
+    "map.pdfColumnLabel": "Invoice PDF column",
+    "map.chooseFile": "— Choose File column —",
+    "map.pdfHint": "The (File-type) column where the PDF issued by AFIP will be attached.",
+    "map.noFileColTitle": "Your board has no File column",
+    "map.noFileColBody":
+      "You need to add a \"File\" column to the board so the app can attach the invoice PDF.",
+    "map.optionalConfig": "Optional settings",
+    "map.optionalConfigDesc":
+      "Advanced settings that extend the app's behavior. If you don't use them, the app works in its default mode.",
+    "map.currency": "Currency",
+    "map.defaultPesos": "— Default: pesos —",
+    "map.defaultPesosShort": "Default: pesos",
   },
 };
 
