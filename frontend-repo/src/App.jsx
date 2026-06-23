@@ -2674,12 +2674,12 @@ const App = () => {
                         </span>
                         <div className="gd-download-file-info">
                           <div className="gd-download-name">{csrFilename}</div>
-                          <div className="gd-download-meta">{csrSizeKb} KB · listo para subir a ARCA</div>
+                          <div className="gd-download-meta">{csrSizeKb} KB · {t("cert.s2ReadyToUpload")}</div>
                         </div>
                       </div>
                       <button className="btn-secondary" onClick={handleRedownloadCsr} disabled={isLoading}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Descargar otra vez
+                        {t("cert.downloadAgain")}
                       </button>
                     </div>
 
@@ -2699,10 +2699,10 @@ const App = () => {
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(1)} disabled={isLoading}>
-                        Volver
+                        {t("common.back")}
                       </button>
                       <button className="btn-primary" onClick={() => setGuidedStep(3)}>
-                        Ya lo tengo&nbsp;<span aria-hidden="true">→</span>
+                        {t("cert.gotIt")}&nbsp;<span aria-hidden="true">→</span>
                       </button>
                     </div>
                   </div>
@@ -2712,10 +2712,8 @@ const App = () => {
                 {/* ─── PASO 3: Instrucciones ARCA ─── */}
                 {guidedStep === 3 && (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Subí el <code>.csr</code> a ARCA</h3>
-                    <p className="cert-step-desc">
-                      Seguí estos pasos en el portal de AFIP.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s3Title")}</h3>
+                    <p className="cert-step-desc">{t("cert.s3Desc")}</p>
 
                     {/* Collapsible de primera vez: adherir el servicio */}
                     <div className="gd-adhered-collapsible">
@@ -2778,7 +2776,7 @@ const App = () => {
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(2)} disabled={isLoading}>
-                        Volver
+                        {t("common.back")}
                       </button>
                       <a
                         className="btn-secondary"
@@ -2787,10 +2785,10 @@ const App = () => {
                         rel="noreferrer"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                        Abrir ARCA
+                        {t("cert.openArca")}
                       </a>
                       <button className="btn-primary" onClick={() => setGuidedStep(4)}>
-                        Ya tengo el .crt&nbsp;<span aria-hidden="true">→</span>
+                        {t("cert.gotCrt")}&nbsp;<span aria-hidden="true">→</span>
                       </button>
                     </div>
                   </div>
@@ -2799,23 +2797,21 @@ const App = () => {
                 {/* ─── PASO 4: Subir .crt ─── */}
                 {guidedStep === 4 && (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Subí el certificado</h3>
-                    <p className="cert-step-desc">
-                      Adjuntá el <code>.crt</code> que descargaste de ARCA.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s4Title")}</h3>
+                    <p className="cert-step-desc">{t("cert.s4Desc")}</p>
 
                     <div className="gd-upload-dropzone-wrap">
                       {finalCrtFile ? (
                         <label className="gd-upload-dropzone has-file" htmlFor="crt-final-upload">
                           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                          <span className="gd-upload-main">Archivo seleccionado</span>
+                          <span className="gd-upload-main">{t("cert.fileSelected")}</span>
                           <span className="gd-upload-filename">{finalCrtFile.name}</span>
                           <button
                             type="button"
                             className="gd-upload-change"
                             onClick={(e) => { e.preventDefault(); setFinalCrtFile(null); }}
                           >
-                            Cambiar archivo
+                            {t("cert.changeFile")}
                           </button>
                           <input
                             id="crt-final-upload"
@@ -2828,8 +2824,8 @@ const App = () => {
                       ) : (
                         <label className="gd-upload-dropzone" htmlFor="crt-final-upload">
                           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                          <span className="gd-upload-main">Arrastrá el archivo o hacé clic</span>
-                          <span className="gd-upload-hint">.crt · hasta 200 KB</span>
+                          <span className="gd-upload-main">{t("cert.dropOrClick")}</span>
+                          <span className="gd-upload-hint">{t("cert.crtUpTo200")}</span>
                           <input
                             id="crt-final-upload"
                             type="file"
@@ -2843,14 +2839,14 @@ const App = () => {
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(3)} disabled={isLoading}>
-                        Volver
+                        {t("common.back")}
                       </button>
                       <button
                         className="btn-primary"
                         onClick={handleFinalizeCsr}
                         disabled={isLoading || !finalCrtFile}
                       >
-                        {isLoading ? "Validando..." : "Activar certificado"}
+                        {isLoading ? t("cert.validating") : t("cert.activateCert")}
                       </button>
                     </div>
                   </div>
@@ -2861,9 +2857,9 @@ const App = () => {
             {/* Alt-path: ofrecer subida manual fuera del wizard guiado */}
             {certFlow === "guided" && (
               <div className="gd-alt-path">
-                <span>¿Ya generaste <code className="mono" style={{background:"var(--ink-100)", padding:"1px 6px", borderRadius:"4px", fontSize:"12px"}}>.crt</code> y <code className="mono" style={{background:"var(--ink-100)", padding:"1px 6px", borderRadius:"4px", fontSize:"12px"}}>.key</code> por fuera?</span>
+                <span>{t("cert.altQ")}</span>
                 <button type="button" className="btn-link" onClick={() => setCertFlow("manual")}>
-                  Subirlos manualmente →
+                  {t("cert.uploadThemManually")}
                 </button>
               </div>
             )}
