@@ -2001,28 +2001,28 @@ const App = () => {
               <>
                 <div className="gd-card">
                   <div className="gd-card-head">
-                    <span className="h-eyebrow">Identidad fiscal</span>
-                    <span className="gd-dim">Obligatorio</span>
+                    <span className="h-eyebrow">{t("fiscal.identityTitle")}</span>
+                    <span className="gd-dim">{t("common.required")}</span>
                   </div>
                   <div className="gd-data-grid">
                     <div className="data-row">
-                      <span className="data-label">Razón Social</span>
+                      <span className="data-label">{t("fiscal.razonSocial")}</span>
                       <span className={`data-value ${!fiscal.razonSocial ? "empty" : ""}`}>{fiscal.razonSocial || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">Nombre de Fantasía</span>
+                      <span className="data-label">{t("fiscal.nombreFantasia")}</span>
                       <span className={`data-value ${!fiscal.nombreFantasia ? "empty" : ""}`}>{fiscal.nombreFantasia || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">Punto de Venta</span>
+                      <span className="data-label">{t("fiscal.puntoVenta")}</span>
                       <span className={`data-value mono ${!fiscal.puntoVenta ? "empty" : ""}`}>{fiscal.puntoVenta || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">CUIT</span>
+                      <span className="data-label">{t("fiscal.cuit")}</span>
                       <span className={`data-value mono ${!fiscal.cuit ? "empty" : ""}`}>{fiscal.cuit || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">Inicio de actividades</span>
+                      <span className="data-label">{t("fiscal.startDateShort")}</span>
                       <span className={`data-value mono ${!fiscal.fechaInicio ? "empty" : ""}`}>
                         {fiscal.fechaInicio
                           ? formatDateAR(fiscal.fechaInicio)
@@ -2030,7 +2030,7 @@ const App = () => {
                       </span>
                     </div>
                     <div className="data-row full-width">
-                      <span className="data-label">Domicilio Comercial</span>
+                      <span className="data-label">{t("fiscal.domicilio")}</span>
                       <span className={`data-value ${!fiscal.domicilio ? "empty" : ""}`}>{fiscal.domicilio || "—"}</span>
                     </div>
                   </div>
@@ -2038,8 +2038,8 @@ const App = () => {
 
                 <div className="gd-card">
                   <div className="gd-card-head">
-                    <span className="h-eyebrow">Marca & contacto · opcional</span>
-                    <span className="gd-dim">Se imprime en el PDF</span>
+                    <span className="h-eyebrow">{t("fiscal.brandContact")}</span>
+                    <span className="gd-dim">{t("fiscal.printedOnPdf")}</span>
                   </div>
                   {hasContactData ? (
                     <div className="gd-brand-row">
@@ -2049,21 +2049,21 @@ const App = () => {
                         ) : (
                           <>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            <span>Sin logo</span>
+                            <span>{t("fiscal.logoNone")}</span>
                           </>
                         )}
                       </div>
                       <div className="gd-data-grid compact">
                         <div className="data-row">
-                          <span className="data-label">Teléfono</span>
+                          <span className="data-label">{t("fiscal.phone")}</span>
                           <span className={`data-value mono ${!fiscal.telefono ? "empty" : ""}`}>{fiscal.telefono || "—"}</span>
                         </div>
                         <div className="data-row">
-                          <span className="data-label">Email</span>
+                          <span className="data-label">{t("fiscal.email")}</span>
                           <span className={`data-value ${!fiscal.email ? "empty" : ""}`}>{fiscal.email || "—"}</span>
                         </div>
                         <div className="data-row full-width">
-                          <span className="data-label">Sitio web</span>
+                          <span className="data-label">{t("fiscal.website")}</span>
                           <span className={`data-value ${!fiscal.sitioWeb ? "empty" : ""}`}>
                             {fiscal.sitioWeb
                               ? <a href={fiscal.sitioWeb} target="_blank" rel="noreferrer">{fiscal.sitioWeb}</a>
@@ -2073,9 +2073,7 @@ const App = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="data-view-empty full-width">
-                      Aún no configuraste datos de contacto ni logo. Apretá <em>Editar</em> para agregarlos.
-                    </div>
+                    <div className="data-view-empty full-width">{t("fiscal.noContactYet")}</div>
                   )}
                 </div>
               </>
@@ -2293,19 +2291,19 @@ const App = () => {
               <div className="form-actions">
                 {!isInitialSetup && (
                   <button type="button" className="btn-secondary" onClick={handleCancelFiscalEdit} disabled={isLoading}>
-                    Cancelar
+                    {t("common.cancel")}
                   </button>
                 )}
                 <button className="btn-primary" onClick={handleSaveFiscal} disabled={isLoading}>
                   {isLoading
-                    ? "Guardando..."
-                    : (isInitialSetup ? "Guardar Datos Fiscales" : "Guardar cambios")}
+                    ? t("fiscal.saving")
+                    : (isInitialSetup ? t("fiscal.saveInitial") : t("fiscal.saveChanges"))}
                 </button>
               </div>
             )}
 
             {isFetchingSavedData && (
-              <p className="fetching-text">Cargando datos guardados...</p>
+              <p className="fetching-text">{t("fiscal.loadingSaved")}</p>
             )}
           </section>
           );

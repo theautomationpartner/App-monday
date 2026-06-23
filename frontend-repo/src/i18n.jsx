@@ -60,7 +60,20 @@ export const translations = {
     "fiscal.logoUpload": "Subir imagen",
     "fiscal.logoRemove": "Quitar",
     "fiscal.logoHint": "PNG, JPG, SVG o WebP. Hasta 1 MB.",
+    // ── Datos Fiscales (vista solo-lectura + botones) ──
+    "fiscal.identityTitle": "Identidad fiscal",
+    "fiscal.startDateShort": "Inicio de actividades",
+    "fiscal.brandContact": "Marca & contacto · opcional",
+    "fiscal.printedOnPdf": "Se imprime en el PDF",
+    "fiscal.noContactYet":
+      "Aún no configuraste datos de contacto ni logo. Apretá Editar para agregarlos.",
+    "fiscal.saving": "Guardando...",
+    "fiscal.saveInitial": "Guardar Datos Fiscales",
+    "fiscal.saveChanges": "Guardar cambios",
+    "fiscal.loadingSaved": "Cargando datos guardados...",
     "common.optional": "opcional",
+    "common.required": "Obligatorio",
+    "common.cancel": "Cancelar",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -107,7 +120,20 @@ export const translations = {
     "fiscal.logoUpload": "Upload image",
     "fiscal.logoRemove": "Remove",
     "fiscal.logoHint": "PNG, JPG, SVG or WebP. Up to 1 MB.",
+    // ── Tax Details (read-only view + buttons) ──
+    "fiscal.identityTitle": "Tax identity",
+    "fiscal.startDateShort": "Start date",
+    "fiscal.brandContact": "Brand & contact · optional",
+    "fiscal.printedOnPdf": "Printed on the PDF",
+    "fiscal.noContactYet":
+      "You haven't set up contact details or a logo yet. Click Edit to add them.",
+    "fiscal.saving": "Saving...",
+    "fiscal.saveInitial": "Save Tax Details",
+    "fiscal.saveChanges": "Save changes",
+    "fiscal.loadingSaved": "Loading saved data...",
     "common.optional": "optional",
+    "common.required": "Required",
+    "common.cancel": "Cancel",
   },
 };
 
