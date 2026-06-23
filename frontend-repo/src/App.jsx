@@ -1462,10 +1462,10 @@ const App = () => {
   })();
   const certDaysBadge = (() => {
     if (certDaysRemaining === null) return null;
-    if (certDaysRemaining < 0) return { cls: "expired", text: "Vencido" };
-    if (certDaysRemaining < 30) return { cls: "warning", text: `Vence en ${certDaysRemaining} días` };
-    if (certDaysRemaining < 90) return { cls: "notice", text: `${certDaysRemaining} días restantes` };
-    return { cls: "ok", text: `${certDaysRemaining} días restantes` };
+    if (certDaysRemaining < 0) return { cls: "expired", text: t("cert.badge.expired") };
+    if (certDaysRemaining < 30) return { cls: "warning", text: `${t("cert.badge.expiresInPre")}${certDaysRemaining}${t("cert.badge.daysSuffix")}` };
+    if (certDaysRemaining < 90) return { cls: "notice", text: `${certDaysRemaining}${t("cert.badge.daysRemaining")}` };
+    return { cls: "ok", text: `${certDaysRemaining}${t("cert.badge.daysRemaining")}` };
   })();
 
   const fiscalFormCompleted =
@@ -1697,12 +1697,8 @@ const App = () => {
     return (
       <div className="gd-frame gd-frame-splash">
         <div className="gd-splash" style={{ maxWidth: 480 }}>
-          <div className="gd-splash-title">Acceso de solo lectura</div>
-          <div className="gd-splash-sub">
-            Como viewer en monday no tenés permisos para usar ARCA Facturación.
-            Pedile a un administrador del workspace que te asigne permisos de
-            miembro para configurar y emitir facturas.
-          </div>
+          <div className="gd-splash-title">{t("readonly.title")}</div>
+          <div className="gd-splash-sub">{t("readonly.sub")}</div>
         </div>
       </div>
     );
@@ -1734,8 +1730,8 @@ const App = () => {
       <div className="gd-frame gd-frame-splash">
         <div className="gd-splash">
           <div className="loader" />
-          <div className="gd-splash-title">Cargando tu app…</div>
-          <div className="gd-splash-sub">Conectando con monday y trayendo tu configuración.</div>
+          <div className="gd-splash-title">{t("splash.title")}</div>
+          <div className="gd-splash-sub">{t("splash.sub")}</div>
         </div>
       </div>
     );
@@ -1759,9 +1755,9 @@ const App = () => {
       {/* ─── SIDEBAR (checklist guiado, marca TAP) ─── */}
       <aside className="gd-sidebar">
         <div className="gd-sidebar-brand">
-          <img className="gd-sidebar-logo" src={iconoFacturacion} alt="Facturación AFIP" />
+          <img className="gd-sidebar-logo" src={iconoFacturacion} alt={t("brand.title")} />
           <div>
-            <div className="gd-sidebar-brand-title">Facturación AFIP</div>
+            <div className="gd-sidebar-brand-title">{t("brand.title")}</div>
             <div className="gd-sidebar-brand-sub">Monday App</div>
           </div>
         </div>
@@ -1837,14 +1833,14 @@ const App = () => {
         })()}
         <div className="gd-header">
           <div className="gd-header-main">
-            <div className="gd-header-kicker">Monday App · Facturación Electrónica AFIP</div>
+            <div className="gd-header-kicker">{t("header.kicker")}</div>
             <h1 className="gd-header-title">
               {completedSections === totalSections ? (
-                <>Todo listo. Tu app está facturando.</>
+                <>{t("header.allSet")}</>
               ) : nextStepItem ? (
-                <>Te falta <span className="gd-header-accent">{nextStepItem.label.toLowerCase()}</span> para empezar a facturar</>
+                <>{t("header.youStillNeedPre")}<span className="gd-header-accent">{nextStepItem.label.toLowerCase()}</span>{t("header.youStillNeedSuf")}</>
               ) : (
-                <>Casi listo</>
+                <>{t("header.almostReady")}</>
               )}
             </h1>
             <p className="gd-header-sub">
@@ -1914,7 +1910,7 @@ const App = () => {
         {isLoading && (
             <div className="loading-overlay">
                 <div className="loader"></div>
-                <p>Procesando datos de forma segura...</p>
+                <p>{t("common.processingSecurely")}</p>
             </div>
         )}
 
@@ -2045,7 +2041,7 @@ const App = () => {
                     <div className="gd-brand-row">
                       <div className={`gd-logo-slot ${displayLogoUrl ? "has-logo" : ""}`}>
                         {displayLogoUrl ? (
-                          <img src={displayLogoUrl} alt="Logo de la empresa" />
+                          <img src={displayLogoUrl} alt={t("common.companyLogoAlt")} />
                         ) : (
                           <>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -2195,7 +2191,7 @@ const App = () => {
                   <div className="logo-uploader-row">
                     <div className="logo-preview">
                       {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) ? (
-                        <img src={logoPreviewUrl || savedLogoDataUrl} alt="Logo de la empresa" />
+                        <img src={logoPreviewUrl || savedLogoDataUrl} alt={t("common.companyLogoAlt")} />
                       ) : (
                         <span className="logo-preview-empty">{t("fiscal.logoNone")}</span>
                       )}
@@ -2221,13 +2217,13 @@ const App = () => {
 
                   {/* Mockup en vivo: cómo va a quedar en la cabecera de la factura. */}
                   <div className="logo-mockup-wrap">
-                    <span className="logo-mockup-label">Vista previa en la factura:</span>
+                    <span className="logo-mockup-label">{t("map.invoicePreviewLabel")}</span>
                     <div className="invoice-mockup">
                       <div className="invoice-mockup-logo">
                         {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) ? (
                           <img src={logoPreviewUrl || savedLogoDataUrl} alt="" />
                         ) : (
-                          <span className="invoice-mockup-logo-empty">Tu logo<br/>acá</span>
+                          <span className="invoice-mockup-logo-empty" dangerouslySetInnerHTML={{ __html: t("map.yourLogoHere") }} />
                         )}
                       </div>
                       <div className="invoice-mockup-data">
@@ -2459,7 +2455,7 @@ const App = () => {
                       </svg>
                     </div>
                     <div className="cert-action-card-title">{t("cert.uploadManualTitle")}</div>
-                    <div className="cert-action-card-desc">Si ya tenés tu <code>.crt</code> y <code>.key</code> generados por fuera.</div>
+                    <div className="cert-action-card-desc" dangerouslySetInnerHTML={{ __html: t("cert.manualEntryDesc") }} />
                     <span className="cert-action-card-cta alt">{t("cert.uploadFiles")}</span>
                   </button>
                 </div>
@@ -2662,10 +2658,11 @@ const App = () => {
                     : "2.1";
                   return (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Descargá tu solicitud</h3>
-                    <p className="cert-step-desc">
-                      Este archivo <code>.csr</code> lo vas a subir al portal de ARCA en el siguiente paso.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s2Title")}</h3>
+                    <p
+                      className="cert-step-desc"
+                      dangerouslySetInnerHTML={{ __html: t("cert.s2Desc") }}
+                    />
 
                     <div className="gd-download-slot">
                       <div className="gd-download-file">
@@ -3028,10 +3025,10 @@ const App = () => {
                 background: "#fff8e1", border: "1.5px solid #f59e0b", borderRadius: "8px",
                 padding: "10px 14px", color: "#7c5a00", fontSize: "13px"
               }}>
-                <strong>Columnas no cargadas.</strong> Información de diagnóstico:
+                <strong>{t("map.diag.colsNotLoaded")}</strong> {t("map.diag.diagInfo")}
                 <ul style={{margin:"6px 0 0 0", paddingLeft:"18px", fontSize:"12px"}}>
-                  <li>boardId: <code>{String(context?.boardId ?? context?.locationContext?.boardId ?? "no disponible")}</code></li>
-                  <li>Columnas ítem: {columns.length} · Subitems: {subitemColumns.length}</li>
+                  <li>boardId: <code>{String(context?.boardId ?? context?.locationContext?.boardId ?? t("map.diag.notAvailable"))}</code></li>
+                  <li>{t("map.diag.itemCols")} {columns.length} · Subitems: {subitemColumns.length}</li>
                   {columnsLoadError && (
                     <li style={{color:"#a52020"}}>
                       Error:
@@ -3047,7 +3044,7 @@ const App = () => {
                 background: "#fff8e1", border: "1.5px solid #f59e0b", borderRadius: "8px",
                 padding: "10px 14px", color: "#7c5a00", fontSize: "13px"
               }}>
-                <strong>Columnas de subitems no detectadas.</strong> Asegurate de que el tablero tenga al menos un subitem creado y recargá la vista.
+                <strong>{t("map.diag.noSubitemsTitle")}</strong> {t("map.diag.noSubitemsBody")}
               </div>
             )}
 
@@ -3056,16 +3053,16 @@ const App = () => {
                 background: "#fff0f0", border: "1.5px solid #d83b3b", borderRadius: "8px",
                 padding: "10px 14px", color: "#a52020", fontSize: "13px"
               }}>
-                <strong>Faltan seleccionar:</strong>{" "}
+                <strong>{t("map.diag.missingTitle")}</strong>{" "}
                 {missingMappingFields.map(f => ({
-                  fecha_emision: "Fecha Emisión",
-                  receptor_cuit: "CUIT Receptor",
-                  concepto: "Concepto/Detalle",
-                  cantidad: "Cantidad",
-                  precio_unitario: "Precio Unitario",
-                  prod_serv: "Prod / Serv",
+                  fecha_emision: t("map.f.fechaEmision"),
+                  receptor_cuit: t("map.f.receptorCuit"),
+                  concepto: t("map.f.concepto"),
+                  cantidad: t("map.f.cantidad"),
+                  precio_unitario: t("map.f.precioUnitario"),
+                  prod_serv: t("map.f.prodServ"),
                 }[f] || f)).join(", ")}
-                {" "}— Los campos marcados en rojo deben asignarse antes de guardar.
+                {" "}{t("map.diag.missingSuffix")}
               </div>
             )}
 
@@ -3101,9 +3098,11 @@ const App = () => {
                 />
                 <span style={{ flex: 1 }}>
                   <strong>{t("map.renameItem")}</strong>
-                  <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
-                    Ej: <em>"Cliente Juan"</em> pasa a <em>"Factura B N° 0002-00000019"</em> tras emitir.
-                  </span>
+                  <span
+                    className="gd-confirm-hint"
+                    style={{ display: "block", marginTop: 2 }}
+                    dangerouslySetInnerHTML={{ __html: t("map.renameExample") }}
+                  />
                 </span>
               </label>
 
@@ -3130,9 +3129,11 @@ const App = () => {
                 />
                 <span style={{ flex: 1 }}>
                   <strong>{t("map.changeStatus")}</strong>
-                  <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
-                    Ej: <em>Procesando</em> → <em>Comprobante Creado</em>, o <em>Error</em> si falla.
-                  </span>
+                  <span
+                    className="gd-confirm-hint"
+                    style={{ display: "block", marginTop: 2 }}
+                    dangerouslySetInnerHTML={{ __html: t("map.statusExample") }}
+                  />
                 </span>
               </label>
 
@@ -3237,9 +3238,7 @@ const App = () => {
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    El item escribe <code>Pesos</code> o <code>Dólares</code> (mayúsc/minúsc/tilde indistinto). Vacío → Pesos.
-                  </span>
+                  <span className="gd-confirm-hint" dangerouslySetInnerHTML={{ __html: t("map.currencyHelp") }} />
                 </div>
 
                 <div className="gd-confirm-row">
@@ -3468,9 +3467,10 @@ const App = () => {
                 <div>
                   <div className="rf-invoice-client-label">{t("map.voucherType")}</div>
                   {mapSel("tipo_comprobante", t("map.colDropdown"))}
-                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
-                    El dropdown del item debe tener las opciones: <b>Factura</b>, <b>Nota de Crédito</b>, <b>Nota de Débito</b>.
-                  </div>
+                  <div
+                    style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}
+                    dangerouslySetInnerHTML={{ __html: t("map.voucherTypeHelp") }}
+                  />
                 </div>
                 <div>
                   <div className="rf-invoice-client-label">{t("map.caeToCancel")}</div>
