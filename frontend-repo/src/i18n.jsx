@@ -105,6 +105,41 @@ export const translations = {
     "cert.resetBody":
       "La solicitud actual se reemplaza y vas a tener que hacer todo el trámite de nuevo en ARCA.",
     "cert.resetConfirm": "Sí, empezar de nuevo",
+    // ── Certificados: asistente guiado (inicio + stepper + paso 1) ──
+    "cert.redownloadCsr": "Re-descargar la solicitud (.csr)",
+    "cert.startNewRequest": "Empezar una nueva solicitud",
+    "cert.heroTitle": "Obtené tu certificado ARCA con nuestro asistente",
+    "cert.heroDesc":
+      "La forma más rápida y segura. Sin tener que usar comandos técnicos — generamos la solicitud por vos, la subís al portal de ARCA y listo.",
+    "cert.feature1": "Guía paso a paso dentro de la app",
+    "cert.feature2": "Sólo subís un archivo al final",
+    "cert.feature3": "Tu clave privada queda cifrada automáticamente",
+    "cert.startNow": "Empezar ahora →",
+    "cert.altQ": "¿Ya generaste tu .crt y .key por fuera?",
+    "cert.uploadThemManually": "Subirlos manualmente →",
+    "cert.step1Title": "Confirmar datos",
+    "cert.step1Desc": "Revisamos tu razón social y CUIT",
+    "cert.step2Title": "Descargar solicitud",
+    "cert.step2Desc": "Generamos un .csr con tu clave privada cifrada",
+    "cert.step3Title": "Subir a ARCA",
+    "cert.step3Desc": "Pegás el alias y el .csr en AFIP",
+    "cert.step4Title": "Subir certificado",
+    "cert.step4Desc": "Adjuntás el .crt que te devuelve AFIP",
+    "cert.s1Title": "Confirmá los datos",
+    "cert.s1Desc":
+      "Estos datos se firman en la solicitud. Si hay algo mal, corregilo en Datos Fiscales antes.",
+    "cert.s1RenewTitle": "Estás renovando tu certificado",
+    "cert.s1RenewBody":
+      "Al generar la nueva solicitud, el actual queda reemplazado y no vas a poder facturar hasta completar el paso 4. Usá un alias distinto al anterior — ARCA no permite repetirlos.",
+    "cert.s1MissingTitle": "Faltan datos fiscales",
+    "cert.s1MissingBody":
+      "Completá razón social y CUIT en la sección \"Datos Fiscales\" antes de generar la solicitud.",
+    "cert.aliasLabel": "Alias del certificado",
+    "cert.aliasHint": "Tiene que ser único en ARCA. Prepoblado con el mes actual.",
+    "cert.keyEncTitle": "Tu clave privada queda cifrada",
+    "cert.keyEncBody": "Se genera y guarda con AES-256. No vas a tener que manejarla nunca.",
+    "cert.generating": "Generando...",
+    "cert.generateRequest": "Generar solicitud",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -196,6 +231,41 @@ export const translations = {
     "cert.resetBody":
       "The current request will be replaced and you'll have to do the whole process again in ARCA.",
     "cert.resetConfirm": "Yes, start over",
+    // ── Certificates: guided assistant (start + stepper + step 1) ──
+    "cert.redownloadCsr": "Re-download the request (.csr)",
+    "cert.startNewRequest": "Start a new request",
+    "cert.heroTitle": "Get your ARCA certificate with our assistant",
+    "cert.heroDesc":
+      "The fastest, safest way. No technical commands needed — we generate the request for you, you upload it to the ARCA portal, and you're done.",
+    "cert.feature1": "Step-by-step guide inside the app",
+    "cert.feature2": "You only upload one file at the end",
+    "cert.feature3": "Your private key is encrypted automatically",
+    "cert.startNow": "Start now →",
+    "cert.altQ": "Already generated your .crt and .key elsewhere?",
+    "cert.uploadThemManually": "Upload them manually →",
+    "cert.step1Title": "Confirm details",
+    "cert.step1Desc": "We review your legal name and CUIT",
+    "cert.step2Title": "Download request",
+    "cert.step2Desc": "We generate a .csr with your encrypted private key",
+    "cert.step3Title": "Upload to ARCA",
+    "cert.step3Desc": "Paste the alias and the .csr into AFIP",
+    "cert.step4Title": "Upload certificate",
+    "cert.step4Desc": "Attach the .crt that AFIP returns",
+    "cert.s1Title": "Confirm the details",
+    "cert.s1Desc":
+      "These details are signed in the request. If something is wrong, fix it in Tax Details first.",
+    "cert.s1RenewTitle": "You're renewing your certificate",
+    "cert.s1RenewBody":
+      "When you generate the new request, the current one is replaced and you won't be able to invoice until you complete step 4. Use a different alias than before — ARCA doesn't allow repeats.",
+    "cert.s1MissingTitle": "Missing tax details",
+    "cert.s1MissingBody":
+      "Complete legal name and CUIT in the \"Tax Details\" section before generating the request.",
+    "cert.aliasLabel": "Certificate alias",
+    "cert.aliasHint": "It must be unique in ARCA. Pre-filled with the current month.",
+    "cert.keyEncTitle": "Your private key is encrypted",
+    "cert.keyEncBody": "It's generated and stored with AES-256. You'll never have to handle it.",
+    "cert.generating": "Generating...",
+    "cert.generateRequest": "Generate request",
   },
 };
 

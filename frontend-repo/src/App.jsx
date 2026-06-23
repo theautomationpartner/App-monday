@@ -2498,7 +2498,7 @@ const App = () => {
                   <div className="cert-pending-helpers">
                     <button type="button" className="cert-helper-btn" onClick={handleRedownloadCsr} disabled={isLoading}>
                       <span>📥</span>
-                      <span>Re-descargar la solicitud (.csr)</span>
+                      <span>{t("cert.redownloadCsr")}</span>
                     </button>
                     <button
                       type="button"
@@ -2506,7 +2506,7 @@ const App = () => {
                       onClick={() => setShowResetConfirm(true)}
                     >
                       <span>↻</span>
-                      <span>Empezar una nueva solicitud</span>
+                      <span>{t("cert.startNewRequest")}</span>
                     </button>
                   </div>
                 )}
@@ -2521,28 +2521,26 @@ const App = () => {
                   className="cert-entry-hero"
                   onClick={() => { setCertFlow("guided"); setGuidedStep(1); }}
                 >
-                  <div className="cert-entry-hero-badge">✨ Recomendado</div>
+                  <div className="cert-entry-hero-badge">{t("cert.recommended")}</div>
                   <div className="cert-entry-hero-icon">
                     <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#0073ea" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                     </svg>
                   </div>
-                  <h2 className="cert-entry-hero-title">Obtené tu certificado ARCA con nuestro asistente</h2>
-                  <p className="cert-entry-hero-desc">
-                    La forma más rápida y segura. <strong>Sin tener que usar comandos técnicos</strong> — generamos la solicitud por vos, la subís al portal de ARCA y listo.
-                  </p>
+                  <h2 className="cert-entry-hero-title">{t("cert.heroTitle")}</h2>
+                  <p className="cert-entry-hero-desc">{t("cert.heroDesc")}</p>
                   <ul className="cert-entry-hero-features">
-                    <li><span className="cert-entry-check">✓</span> Guía paso a paso dentro de la app</li>
-                    <li><span className="cert-entry-check">✓</span> Sólo subís un archivo al final</li>
-                    <li><span className="cert-entry-check">✓</span> Tu clave privada queda cifrada automáticamente</li>
+                    <li><span className="cert-entry-check">✓</span> {t("cert.feature1")}</li>
+                    <li><span className="cert-entry-check">✓</span> {t("cert.feature2")}</li>
+                    <li><span className="cert-entry-check">✓</span> {t("cert.feature3")}</li>
                   </ul>
-                  <span className="cert-entry-hero-cta">Empezar ahora →</span>
+                  <span className="cert-entry-hero-cta">{t("cert.startNow")}</span>
                 </button>
 
                 <div className="cert-entry-alt">
-                  <span>¿Ya generaste tu <code>.crt</code> y <code>.key</code> por fuera?</span>
+                  <span>{t("cert.altQ")}</span>
                   <button className="btn-text" onClick={() => setCertFlow("manual")}>
-                    Subirlos manualmente →
+                    {t("cert.uploadThemManually")}
                   </button>
                 </div>
               </div>
@@ -2554,10 +2552,10 @@ const App = () => {
                 <div className="cert-guided-header">
                   <ol className="cert-stepper">
                     {[
-                      { n: 1, title: "Confirmar datos",      desc: "Revisamos tu razón social y CUIT" },
-                      { n: 2, title: "Descargar solicitud",  desc: "Generamos un .csr con tu clave privada cifrada" },
-                      { n: 3, title: "Subir a ARCA",         desc: "Pegás el alias y el .csr en AFIP" },
-                      { n: 4, title: "Subir certificado",    desc: "Adjuntás el .crt que te devuelve AFIP" },
+                      { n: 1, title: t("cert.step1Title"), desc: t("cert.step1Desc") },
+                      { n: 2, title: t("cert.step2Title"), desc: t("cert.step2Desc") },
+                      { n: 3, title: t("cert.step3Title"), desc: t("cert.step3Desc") },
+                      { n: 4, title: t("cert.step4Title"), desc: t("cert.step4Desc") },
                     ].map((s) => (
                       <li
                         key={s.n}
@@ -2579,10 +2577,8 @@ const App = () => {
                   const missingFiscalData = !fiscal.razonSocial || !fiscal.cuit;
                   return (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Confirmá los datos</h3>
-                    <p className="cert-step-desc">
-                      Estos datos se firman en la solicitud. Si hay algo mal, corregilo en Datos Fiscales antes.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s1Title")}</h3>
+                    <p className="cert-step-desc">{t("cert.s1Desc")}</p>
 
                     {isRenewing && (
                       <div className="gd-infobox warn">
@@ -2590,10 +2586,8 @@ const App = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         </span>
                         <div>
-                          <p className="gd-infobox-title">Estás renovando tu certificado</p>
-                          <p className="gd-infobox-body">
-                            Al generar la nueva solicitud, el actual queda reemplazado y no vas a poder facturar hasta completar el paso 4. Usá un alias distinto al anterior — ARCA no permite repetirlos.
-                          </p>
+                          <p className="gd-infobox-title">{t("cert.s1RenewTitle")}</p>
+                          <p className="gd-infobox-body">{t("cert.s1RenewBody")}</p>
                         </div>
                       </div>
                     )}
@@ -2604,24 +2598,22 @@ const App = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         </span>
                         <div>
-                          <p className="gd-infobox-title">Faltan datos fiscales</p>
-                          <p className="gd-infobox-body">
-                            Completá razón social y CUIT en la sección "Datos Fiscales" antes de generar la solicitud.
-                          </p>
+                          <p className="gd-infobox-title">{t("cert.s1MissingTitle")}</p>
+                          <p className="gd-infobox-body">{t("cert.s1MissingBody")}</p>
                         </div>
                       </div>
                     ) : (
                       <div className="gd-confirm-grid">
                         <div className="gd-confirm-row">
-                          <span className="gd-confirm-label">Razón Social</span>
+                          <span className="gd-confirm-label">{t("fiscal.razonSocial")}</span>
                           <span className="gd-confirm-value">{fiscal.razonSocial}</span>
                         </div>
                         <div className="gd-confirm-row">
-                          <span className="gd-confirm-label">CUIT</span>
+                          <span className="gd-confirm-label">{t("fiscal.cuit")}</span>
                           <span className="gd-confirm-value mono">{fiscal.cuit}</span>
                         </div>
                         <div className="gd-confirm-row full">
-                          <span className="gd-confirm-label">Alias del certificado</span>
+                          <span className="gd-confirm-label">{t("cert.aliasLabel")}</span>
                           <input
                             className="gd-input"
                             type="text"
@@ -2629,9 +2621,7 @@ const App = () => {
                             onChange={(e) => setAliasInput(e.target.value)}
                             placeholder="monday-facturacion"
                           />
-                          <span className="gd-confirm-hint">
-                            Tiene que ser único en ARCA. Prepoblado con el mes actual.
-                          </span>
+                          <span className="gd-confirm-hint">{t("cert.aliasHint")}</span>
                         </div>
                       </div>
                     )}
@@ -2641,23 +2631,21 @@ const App = () => {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                       </span>
                       <div>
-                        <p className="gd-infobox-title">Tu clave privada queda cifrada</p>
-                        <p className="gd-infobox-body">
-                          Se genera y guarda con AES-256. No vas a tener que manejarla nunca.
-                        </p>
+                        <p className="gd-infobox-title">{t("cert.keyEncTitle")}</p>
+                        <p className="gd-infobox-body">{t("cert.keyEncBody")}</p>
                       </div>
                     </div>
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={resetCertFlow} disabled={isLoading}>
-                        Cancelar
+                        {t("common.cancel")}
                       </button>
                       <button
                         className="btn-primary"
                         onClick={handleGenerateCsr}
                         disabled={isLoading || missingFiscalData || !aliasInput.trim()}
                       >
-                        {isLoading ? "Generando..." : "Generar solicitud"}
+                        {isLoading ? t("cert.generating") : t("cert.generateRequest")}
                         {!isLoading && <span aria-hidden="true">&nbsp;→</span>}
                       </button>
                     </div>
