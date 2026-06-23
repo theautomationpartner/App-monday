@@ -3253,7 +3253,7 @@ const App = () => {
 
                 <div className="gd-confirm-row">
                   <span className="gd-confirm-label">
-                    Tipo de cambio
+                    {t("map.exchangeRate")}
                     {mapping.moneda && <span style={{ color: "var(--danger-500, #b91c1c)", marginLeft: 4 }}>*</span>}
                   </span>
                   {inMappingEditMode ? (
@@ -3262,7 +3262,7 @@ const App = () => {
                       value={mapping.cotizacion || ""}
                       onChange={(e) => setMapping({ ...mapping, cotizacion: e.target.value })}
                     >
-                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Default: AFIP"} —</option>
+                      <option value="">— {mapping.moneda ? t("map.requiredIfCurrency") : t("map.defaultAfip")} —</option>
                       {numericColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3271,20 +3271,18 @@ const App = () => {
                     <span className="gd-confirm-value">
                       {numericColumns.find((c) => c.value === mapping.cotizacion)?.label || (
                         <em style={{ color: "var(--ink-400)" }}>
-                          {mapping.moneda ? "Falta mapear" : "Default: cotización AFIP"}
+                          {mapping.moneda ? t("map.needsMapping") : t("map.defaultAfipQuote")}
                         </em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    Celda vacía → la app pide cotización a AFIP y la escribe acá como registro. Con valor → se respeta como override.
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.exchangeHint")}</span>
                 </div>
 
                 <div className="gd-confirm-row">
                   <span className="gd-confirm-label">
-                    Precio Unitario USD
-                    <span style={{ color: "var(--ink-400)", fontWeight: 400, fontSize: 11, marginLeft: 4 }}>(subitem)</span>
+                    {t("map.unitPriceUsd")}
+                    <span style={{ color: "var(--ink-400)", fontWeight: 400, fontSize: 11, marginLeft: 4 }}>{t("map.subitemTag")}</span>
                     {mapping.moneda && <span style={{ color: "var(--danger-500, #b91c1c)", marginLeft: 4 }}>*</span>}
                   </span>
                   {inMappingEditMode ? (
@@ -3293,7 +3291,7 @@ const App = () => {
                       value={mapping.precio_unitario_usd || ""}
                       onChange={(e) => setMapping({ ...mapping, precio_unitario_usd: e.target.value })}
                     >
-                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Solo si emitís en USD"} —</option>
+                      <option value="">— {mapping.moneda ? t("map.requiredIfCurrency") : t("map.onlyIfUsd")} —</option>
                       {subitemNumericColumns
                         .filter((c) => c.value !== mapping.precio_unitario)
                         .map((c) => (
@@ -3304,14 +3302,12 @@ const App = () => {
                     <span className="gd-confirm-value">
                       {subitemNumericColumns.find((c) => c.value === mapping.precio_unitario_usd)?.label || (
                         <em style={{ color: "var(--ink-400)" }}>
-                          {mapping.moneda ? "Falta mapear" : "No mapeado"}
+                          {mapping.moneda ? t("map.needsMapping") : t("map.notMapped")}
                         </em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    Columna numérica del subitem con el precio en dólares. Solo se usa para items con moneda <code>Dólares</code>.
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.usdHint")}</span>
                 </div>
 
                 {mapping.moneda && (!mapping.cotizacion || !mapping.precio_unitario_usd) && (
@@ -3324,19 +3320,19 @@ const App = () => {
                     color: "#78350f",
                     gridColumn: "1 / -1",
                   }}>
-                    Mapeás Moneda → mapeá también <strong>Tipo de Cambio</strong> y <strong>Precio Unitario USD</strong>. Los 3 van juntos.
+                    {t("map.currencyWarn")}
                   </div>
                 )}
 
                 <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Observaciones</span>
+                  <span className="gd-confirm-label">{t("map.observations")}</span>
                   {inMappingEditMode ? (
                     <select
                       className={`invoice-preview-select ${mapping.observaciones ? "mapped" : "unmapped"}`}
                       value={mapping.observaciones || ""}
                       onChange={(e) => setMapping({ ...mapping, observaciones: e.target.value })}
                     >
-                      <option value="">— No mapeado —</option>
+                      <option value="">— {t("map.notMapped")} —</option>
                       {textColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3344,13 +3340,11 @@ const App = () => {
                   ) : (
                     <span className="gd-confirm-value">
                       {textColumns.find((c) => c.value === mapping.observaciones)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>No mapeado</em>
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.notMapped")}</em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    Columna texto del item. Si tiene contenido, aparece en el PDF entre la tabla y los totales (máx 255 chars; si excede, se trunca).
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.obsHint")}</span>
                 </div>
               </div>
             </div>
@@ -3359,16 +3353,16 @@ const App = () => {
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Factura modelo</div>
+                  <div className="rf-mapping-frame-eyebrow">{t("map.invoiceModel")}</div>
                   <div className="rf-mapping-frame-title">
                     {inMappingEditMode
-                      ? "Hacé click en cada campo para mapear una columna"
-                      : "Vista del mapeo configurado — apretá Editar para cambiar"}
+                      ? t("map.frameEdit")
+                      : t("map.frameView")}
                   </div>
                 </div>
                 <div className="rf-mapping-legend">
-                  <span><span className="rf-legend-swatch mapped" /> Mapeado</span>
-                  <span><span className="rf-legend-swatch unmapped" /> Sin mapear</span>
+                  <span><span className="rf-legend-swatch mapped" /> {t("map.mapped")}</span>
+                  <span><span className="rf-legend-swatch unmapped" /> {t("map.unmapped")}</span>
                 </div>
               </div>
 
@@ -3383,11 +3377,11 @@ const App = () => {
                   </div>
                   <div className="rf-invoice-meta">
                     <div className="rf-invoice-meta-row">
-                      <span>Fecha de emisión</span>
-                      {mapSel("fecha_emision", "Columna fecha")}
+                      <span>{t("map.issueDate")}</span>
+                      {mapSel("fecha_emision", t("map.colDate"))}
                     </div>
                     <div className="rf-invoice-meta-row">
-                      <span>Punto de venta</span>
+                      <span>{t("map.pointOfSale")}</span>
                       <span className="mono rf-invoice-meta-static">{pvFormatted}</span>
                     </div>
                   </div>
@@ -3396,28 +3390,28 @@ const App = () => {
                 {/* Cliente */}
                 <div className="rf-invoice-client">
                   <div>
-                    <div className="rf-invoice-client-label">Cliente — CUIT/DNI</div>
-                    {mapSel("receptor_cuit", "Columna CUIT receptor")}
+                    <div className="rf-invoice-client-label">{t("map.clientLabel")}</div>
+                    {mapSel("receptor_cuit", t("map.colCuitReceptor"))}
                   </div>
                   <div>
-                    <div className="rf-invoice-client-label">Condición de venta</div>
-                    {mapSel("condicion_venta", "Opcional")}
+                    <div className="rf-invoice-client-label">{t("map.paymentTermsLabel")}</div>
+                    {mapSel("condicion_venta", t("map.optional"))}
                   </div>
                 </div>
 
                 {/* Fechas de servicio y vencimiento (integradas a la factura modelo) */}
                 <div className="rf-invoice-client cols-3">
                   <div>
-                    <div className="rf-invoice-client-label">Servicio desde</div>
-                    {mapSel("fecha_servicio_desde", "Columna fecha")}
+                    <div className="rf-invoice-client-label">{t("map.serviceFrom")}</div>
+                    {mapSel("fecha_servicio_desde", t("map.colDate"))}
                   </div>
                   <div>
-                    <div className="rf-invoice-client-label">Servicio hasta</div>
-                    {mapSel("fecha_servicio_hasta", "Columna fecha")}
+                    <div className="rf-invoice-client-label">{t("map.serviceTo")}</div>
+                    {mapSel("fecha_servicio_hasta", t("map.colDate"))}
                   </div>
                   <div>
-                    <div className="rf-invoice-client-label">Vencimiento de pago</div>
-                    {mapSel("fecha_vto_pago", "Columna fecha")}
+                    <div className="rf-invoice-client-label">{t("map.paymentDue")}</div>
+                    {mapSel("fecha_vto_pago", t("map.colDate"))}
                   </div>
                 </div>
 
@@ -3425,36 +3419,34 @@ const App = () => {
                 <table className="rf-invoice-table">
                   <thead>
                     <tr>
-                      <th style={{ width: "32%" }}>Concepto {mapSel("concepto", "Concepto", "subitem")}</th>
-                      <th>Cant {mapSel("cantidad", "Cantidad", "subitem")}</th>
-                      <th>Unidad {mapSel("unidad_medida", "Opcional", "subitem")}</th>
-                      <th>Prod/Serv {mapSel("prod_serv", "Prod/Serv", "subitem")}</th>
-                      <th>Precio unit. {mapSel("precio_unitario", "Precio", "subitem", ["precio_unitario_usd"])}</th>
-                      <th>IVA % {mapSel("alicuota_iva", "Opcional", "subitem")}</th>
+                      <th style={{ width: "32%" }}>{t("map.thConcept")} {mapSel("concepto", t("map.colConcepto"), "subitem")}</th>
+                      <th>{t("map.thQty")} {mapSel("cantidad", t("map.colQty"), "subitem")}</th>
+                      <th>{t("map.thUnit")} {mapSel("unidad_medida", t("map.optional"), "subitem")}</th>
+                      <th>{t("map.thProdServ")} {mapSel("prod_serv", t("map.colProdServ"), "subitem")}</th>
+                      <th>{t("map.thUnitPrice")} {mapSel("precio_unitario", t("map.colPrice"), "subitem", ["precio_unitario_usd"])}</th>
+                      <th>{t("map.thVat")} {mapSel("alicuota_iva", t("map.optional"), "subitem")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr className="rf-invoice-row-sample">
-                      <td>Consultoría abril 2026</td>
+                      <td>{t("map.sampleConcept")}</td>
                       <td className="mono">1,00</td>
-                      <td>Hora</td>
-                      <td>Servicio</td>
+                      <td>{t("map.sampleUnit")}</td>
+                      <td>{t("map.sampleServ")}</td>
                       <td className="mono">$ 180.000,00</td>
                       <td>21%</td>
                     </tr>
                     <tr className="rf-invoice-row-ghost">
-                      <td colSpan="6">
-                        Los subítems del tablero van a aparecer como líneas acá.
-                      </td>
+                      <td colSpan="6">{t("map.ghostRow")}</td>
                     </tr>
                   </tbody>
                 </table>
 
                 {/* Totales (solo demo) */}
                 <div className="rf-invoice-totals">
-                  <div><span>Subtotal</span><span className="mono">$ 180.000,00</span></div>
-                  <div><span>IVA 21%</span><span className="mono">$ 37.800,00</span></div>
-                  <div className="rf-total"><span>Total</span><span className="mono">$ 217.800,00</span></div>
+                  <div><span>{t("map.subtotal")}</span><span className="mono">$ 180.000,00</span></div>
+                  <div><span>{t("map.vat21")}</span><span className="mono">$ 37.800,00</span></div>
+                  <div className="rf-total"><span>{t("map.total")}</span><span className="mono">$ 217.800,00</span></div>
                 </div>
               </div>
             </div>
@@ -3463,24 +3455,22 @@ const App = () => {
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Columnas obligatorias</div>
-                  <div className="rf-mapping-frame-title">
-                    Datos del comprobante que la app registra en el item. Algunas las completa sola al emitir (CAE, N° de comprobante, letra, razón social y condición IVA del receptor — estas dos las saca del padrón de AFIP); otras son la base para emitir Notas de Crédito/Débito (Tipo de Comprobante y el CAE de la factura a anular). Mapealas todas para dejar el tablero completo.
-                  </div>
+                  <div className="rf-mapping-frame-eyebrow">{t("map.requiredCols")}</div>
+                  <div className="rf-mapping-frame-title">{t("map.requiredColsDesc")}</div>
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">CAE del Comprobante</div>
-                  {mapSel("cae_comprobante", "Columna CAE del comprobante")}
+                  <div className="rf-invoice-client-label">{t("map.caeLabel")}</div>
+                  {mapSel("cae_comprobante", t("map.colCae"))}
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">Razón Social del Receptor</div>
-                  {mapSel("razon_social_receptor", "Columna texto")}
+                  <div className="rf-invoice-client-label">{t("map.receptorName")}</div>
+                  {mapSel("razon_social_receptor", t("map.colText"))}
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">Condición IVA del Receptor</div>
-                  {mapSel("condicion_iva_receptor", "Columna dropdown")}
+                  <div className="rf-invoice-client-label">{t("map.receptorIvaCond")}</div>
+                  {mapSel("condicion_iva_receptor", t("map.colDropdown"))}
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
