@@ -622,7 +622,7 @@ const App = () => {
         setApiError("");
       } catch (err) {
         setApiStatus("error");
-        setApiError(err?.message || "No se pudo conectar al backend");
+        setApiError(err?.message || t("debug.cantConnect"));
       }
     };
 
@@ -1086,7 +1086,7 @@ const App = () => {
         console.log("[auto-mapeo] Board config de plantilla guardado en DB exitosamente");
 
         monday.execute("notice", {
-          message: "Mapeo automático configurado para la plantilla de facturación",
+          message: t("notice.autoMapConfigured"),
           type: "success",
           duration: 4000,
         });
@@ -1537,39 +1537,39 @@ const App = () => {
       setTimeout(() => setMissingMappingFields([]), 5000);
       // Construir labels legibles a partir de los IDs canónicos
       const labelMap = {
-        fecha_emision:        "Fecha de Emisión",
-        receptor_cuit:        "CUIT / DNI Receptor",
-        condicion_venta:      "Condición de Venta",
-        fecha_servicio_desde: "Fecha Servicio Desde",
-        fecha_servicio_hasta: "Fecha Servicio Hasta",
-        fecha_vto_pago:       "Fecha Vto. Pago",
-        concepto:             "Concepto / Producto",
-        cantidad:             "Cantidad",
-        precio_unitario:      "Precio Unitario",
-        prod_serv:            "Prod/Serv",
-        unidad_medida:        "Unidad de Medida",
-        alicuota_iva:         "Alícuota IVA %",
-        cae_comprobante:      "CAE del Comprobante",
-        razon_social_receptor:  "Razón Social del Receptor",
-        condicion_iva_receptor: "Condición IVA del Receptor",
-        tipo_comprobante:     "Tipo de Comprobante",
-        factura_referencia:   "CAE de la factura a anular",
-        nro_factura:          "N° Factura (Pto-Nro)",
-        nro_comprobante:      "N° Comprobante",
-        letra_comprobante:    "Letra del Comprobante",
+        fecha_emision:        t("map.f.fechaEmision"),
+        receptor_cuit:        t("map.f.receptorCuit"),
+        condicion_venta:      t("map.f.condicionVenta"),
+        fecha_servicio_desde: t("map.f.fechaServDesde"),
+        fecha_servicio_hasta: t("map.f.fechaServHasta"),
+        fecha_vto_pago:       t("map.f.fechaVtoPago"),
+        concepto:             t("map.f.concepto"),
+        cantidad:             t("map.f.cantidad"),
+        precio_unitario:      t("map.f.precioUnitario"),
+        prod_serv:            t("map.f.prodServ"),
+        unidad_medida:        t("map.f.unidadMedida"),
+        alicuota_iva:         t("map.f.alicuotaIva"),
+        cae_comprobante:      t("map.f.caeComprobante"),
+        razon_social_receptor:  t("map.f.razonSocialReceptor"),
+        condicion_iva_receptor: t("map.f.condicionIvaReceptor"),
+        tipo_comprobante:     t("map.f.tipoComprobante"),
+        factura_referencia:   t("map.f.facturaReferencia"),
+        nro_factura:          t("map.f.nroFactura"),
+        nro_comprobante:      t("map.f.nroComprobante"),
+        letra_comprobante:    t("map.f.letraComprobante"),
       };
-      missingFields.forEach((f) => blockers.push(`Mapear "${labelMap[f] || f}"`));
+      missingFields.forEach((f) => blockers.push(`${t("blocker.map")} "${labelMap[f] || f}"`));
     } else {
       setMissingMappingFields([]);
     }
 
     // Validar columnas de operación según los toggles activos
     if (!boardConfig.invoice_pdf_column_id) {
-      blockers.push('Seleccionar la columna donde subir el PDF (en "Columna Comprobante PDF")');
+      blockers.push(t("blocker.pdfColumn"));
     }
     // status_column_id solo es obligatoria si auto_update_status está ON
     if (boardConfig.auto_update_status && !boardConfig.status_column_id) {
-      blockers.push('Seleccionar la columna de estado (porque activaste "Cambiar el estado del item")');
+      blockers.push(t("blocker.statusColumn"));
     }
 
     if (blockers.length > 0) {
@@ -1817,12 +1817,12 @@ const App = () => {
           const planLabels = { free: 'Free', small: 'Small', medium: 'Medium', large: 'Large', enterprise: 'Enterprise' };
           const planLabel = planLabels[plan_id] || plan_id;
           let counterText;
-          if (status === 'cancelled') counterText = 'Suscripción cancelada';
-          else if (status === 'trial_expired') counterText = 'Trial finalizado';
-          else if (limit == null) counterText = 'Comprobantes ilimitados este mes';
-          else counterText = `${used}/${limit} comprobantes este mes`;
+          if (status === 'cancelled') counterText = t("usage.cancelled");
+          else if (status === 'trial_expired') counterText = t("usage.trialExpired");
+          else if (limit == null) counterText = t("usage.unlimited");
+          else counterText = `${used}/${limit} ${t("usage.vouchersThisMonth")}`;
           let cta = null;
-          if (!allowed) cta = (status === 'cancelled' || status === 'trial_expired') ? 'Renová tu plan' : 'Upgradeá tu plan';
+          if (!allowed) cta = (status === 'cancelled' || status === 'trial_expired') ? t("usage.renewPlan") : t("usage.upgradePlan");
           return (
             <div className={`usage-banner usage-banner-${level}`}>
               <span className="usage-plan-pill">Plan {planLabel}{is_trial ? ' · Trial' : ''}</span>
@@ -1843,9 +1843,7 @@ const App = () => {
                 <>{t("header.almostReady")}</>
               )}
             </h1>
-            <p className="gd-header-sub">
-              Configurá tu app una vez. Después cada cambio de estado en el tablero dispara una factura AFIP automática.
-            </p>
+            <p className="gd-header-sub">{t("header.sub")}</p>
             <a
               href={HOW_TO_USE_URL}
               target="_blank"
@@ -1871,7 +1869,7 @@ const App = () => {
                 <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
-              Cómo usar la app
+              {t("header.howToUse")}
             </a>
           </div>
           <div className="gd-header-progress">
@@ -1900,9 +1898,9 @@ const App = () => {
             <div className="gd-meta-strip">
               <span className="gd-build-tag">Build: {APP_BUILD_VERSION}</span>
               <span>
-                {apiStatus === "ok"       && <>Backend conectado correctamente ({API_URL})</>}
-                {apiStatus === "checking" && <>Verificando conexión backend...</>}
-                {apiStatus === "error"    && <>⚠ Backend sin conexión ({API_URL}) — {apiError}</>}
+                {apiStatus === "ok"       && <>{t("debug.backendOk")} ({API_URL})</>}
+                {apiStatus === "checking" && <>{t("debug.backendChecking")}</>}
+                {apiStatus === "error"    && <>⚠ {t("debug.backendError")} ({API_URL}) — {apiError}</>}
               </span>
             </div>
           )}
@@ -2247,9 +2245,7 @@ const App = () => {
                       const hasLogo = Boolean(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl));
                       if (!hasLogo) {
                         return (
-                          <p className="logo-feedback neutral">
-                            Subí tu logo para verlo en la vista previa.
-                          </p>
+                          <p className="logo-feedback neutral">{t("logo.fb.neutral")}</p>
                         );
                       }
                       if (!logoNaturalSize) return null;
@@ -2258,20 +2254,18 @@ const App = () => {
                       if (minDim < 200) {
                         return (
                           <p className="logo-feedback warn">
-                            ⚠ La imagen es chica ({logoNaturalSize.width}×{logoNaturalSize.height} px). Puede verse borrosa al imprimir. Recomendamos al menos 300×300 px.
+                            {t("logo.fb.smallPre")}{logoNaturalSize.width}×{logoNaturalSize.height}{t("logo.fb.smallSuf")}
                           </p>
                         );
                       }
                       if (ratio > 3 || ratio < 0.34) {
                         return (
-                          <p className="logo-feedback info">
-                            ℹ Imagen muy alargada — el cuadro de la factura es casi cuadrado, así que puede quedar reducida.
-                          </p>
+                          <p className="logo-feedback info">{t("logo.fb.tooWide")}</p>
                         );
                       }
                       return (
                         <p className="logo-feedback ok">
-                          ✓ Se va a ver bien en la factura ({logoNaturalSize.width}×{logoNaturalSize.height} px).
+                          {t("logo.fb.okPre")}{logoNaturalSize.width}×{logoNaturalSize.height}{t("logo.fb.okSuf")}
                         </p>
                       );
                     })()}
@@ -2420,9 +2414,9 @@ const App = () => {
                   <div>
                     <h2 className="cert-active-title">{t("cert.pendingTitle")}</h2>
                     <p className="cert-active-sub">
-                      Generaste una solicitud
-                      {certificateUpdatedAt ? <> el {new Date(certificateUpdatedAt).toLocaleDateString("es-AR")}</> : null}.
-                      Falta subir el archivo <code>.crt</code> que te da ARCA para terminar.
+                      {t("cert.pendingBody1")}
+                      {certificateUpdatedAt ? <>{t("cert.pendingBodyOn")}{new Date(certificateUpdatedAt).toLocaleDateString("es-AR")}</> : null}
+                      {t("cert.pendingBody2")}<code>.crt</code>{t("cert.pendingBody3")}
                     </p>
                   </div>
                 </div>
@@ -3008,7 +3002,7 @@ const App = () => {
               </div>
               <div className="gd-section-head-actions">
                 <span className={pillKind === "ok" ? "gd-pill-ok" : "gd-pill-warn"}>
-                  {mappedRequiredCount}/{totalRequiredCount} campos mapeados
+                  {mappedRequiredCount}/{totalRequiredCount} {t("map.fieldsMapped")}
                 </span>
                 {!inMappingEditMode && (
                   <button type="button" className="btn-secondary section-edit-btn" onClick={handleEnterMappingEdit}>
@@ -3161,7 +3155,7 @@ const App = () => {
                       </span>
                     )}
                     <span className="gd-confirm-hint">
-                      La app va a cambiar esta columna a "{COMPROBANTE_STATUS_FLOW.processing}" al disparar la emisión, y a "{COMPROBANTE_STATUS_FLOW.success}" cuando AFIP devuelva el CAE.
+                      {t("map.statusColHelpPre")}"{COMPROBANTE_STATUS_FLOW.processing}"{t("map.statusColHelpMid")}"{COMPROBANTE_STATUS_FLOW.success}"{t("map.statusColHelpSuf")}
                     </span>
                   </div>
                 </div>
