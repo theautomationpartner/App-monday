@@ -315,6 +315,19 @@ export const translations = {
     "review.sendFeedback": "Enviar feedback",
     "review.doneTitle": "¡Gracias!",
     "review.doneSub": "Tu comentario llegó a nuestro equipo. ¡Gracias por ayudarnos a mejorar!",
+    // ── Toasts (mensajes flotantes) ──
+    "toast.imgFormat": "Formato de imagen no permitido. Usá PNG, JPG, SVG o WebP.",
+    "toast.logoTooBig": "El logo supera el tamaño máximo (1 MB).",
+    "toast.fiscalSaved": "Datos fiscales guardados correctamente",
+    "toast.selectBothFiles": "Seleccioná ambos archivos (.crt y .key)",
+    "toast.certsUploaded": "Certificados subidos correctamente",
+    "toast.requestGenerated": "Solicitud generada y descargada",
+    "toast.selectCrt": "Seleccioná el archivo .crt que descargaste de ARCA",
+    "toast.certActivated": "Certificado activado correctamente",
+    "toast.cantSave": "No se puede guardar — te falta:",
+    "toast.noAccountBoard": "No se pudo identificar cuenta/tablero para guardar el mapeo",
+    "toast.mappingSaved": "Mapeo visual guardado correctamente",
+    "toast.aliasCopied": "Alias copiado",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -616,6 +629,19 @@ export const translations = {
     "review.sendFeedback": "Send feedback",
     "review.doneTitle": "Thanks!",
     "review.doneSub": "Your comment reached our team. Thanks for helping us improve!",
+    // ── Toasts (floating messages) ──
+    "toast.imgFormat": "Image format not allowed. Use PNG, JPG, SVG or WebP.",
+    "toast.logoTooBig": "The logo exceeds the maximum size (1 MB).",
+    "toast.fiscalSaved": "Tax details saved successfully",
+    "toast.selectBothFiles": "Select both files (.crt and .key)",
+    "toast.certsUploaded": "Certificates uploaded successfully",
+    "toast.requestGenerated": "Request generated and downloaded",
+    "toast.selectCrt": "Select the .crt file you downloaded from ARCA",
+    "toast.certActivated": "Certificate activated successfully",
+    "toast.cantSave": "Can't save — you're missing:",
+    "toast.noAccountBoard": "Couldn't identify account/board to save the mapping",
+    "toast.mappingSaved": "Visual mapping saved successfully",
+    "toast.aliasCopied": "Alias copied",
   },
 };
 

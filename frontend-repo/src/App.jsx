@@ -1170,12 +1170,12 @@ const App = () => {
     }
     const allowed = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"];
     if (!allowed.includes(file.type)) {
-      showToast("error", "Formato de imagen no permitido. Usá PNG, JPG, SVG o WebP.");
+      showToast("error", t("toast.imgFormat"));
       return;
     }
     const MAX_BYTES = 1024 * 1024;
     if (file.size > MAX_BYTES) {
-      showToast("error", "El logo supera el tamaño máximo (1 MB).");
+      showToast("error", t("toast.logoTooBig"));
       return;
     }
     setLogoFile(file);
@@ -1261,7 +1261,7 @@ const App = () => {
         setRemoveLogoOnSave(false);
       }
 
-      showToast("success", "Datos fiscales guardados correctamente");
+      showToast("success", t("toast.fiscalSaved"));
       setHasSavedFiscalData(true);
       setSavedFiscalSnapshot(fiscal);
       setIsFiscalEditMode(false);
@@ -1276,7 +1276,7 @@ const App = () => {
 
   const handleUploadCertificates = async () => {
     if (!crtFile || !keyFile || !context) {
-        showToast("error", "Seleccioná ambos archivos (.crt y .key)");
+        showToast("error", t("toast.selectBothFiles"));
         return;
     }
 
@@ -1294,7 +1294,7 @@ const App = () => {
       const res = await api.post(`/certificates`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      showToast("success", "Certificados subidos correctamente");
+      showToast("success", t("toast.certsUploaded"));
       setHasSavedCertificates(true);
       setCertificateStatus("active");
       setCertFlow(null);
@@ -1356,7 +1356,7 @@ const App = () => {
       setCertificateAlias(aliasUsed);
       setCertificateStatus("pending_crt");
       downloadBlob(csrPem, `${aliasUsed}.csr`);
-      showToast("success", "Solicitud generada y descargada");
+      showToast("success", t("toast.requestGenerated"));
       setGuidedStep(3);
     } catch (err) {
       const { msg, hint } = friendlyApiError(err);
@@ -1400,7 +1400,7 @@ const App = () => {
   // Paso 4 del flujo guiado: sube el .crt que ARCA generó a partir del CSR.
   const handleFinalizeCsr = async () => {
     if (!finalCrtFile || !context) {
-      showToast("error", "Seleccioná el archivo .crt que descargaste de ARCA");
+      showToast("error", t("toast.selectCrt"));
       return;
     }
     setIsLoading(true);
@@ -1412,7 +1412,7 @@ const App = () => {
       const res = await api.post(`/certificates/csr/finalize`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      showToast("success", "Certificado activado correctamente");
+      showToast("success", t("toast.certActivated"));
       setCertificateStatus("active");
       setHasSavedCertificates(true);
       setCertificateExpirationDate(
@@ -1577,13 +1577,13 @@ const App = () => {
       const lines = blockers.map((b, i) => `${i + 1}. ${b}`).join("\n");
       showToast(
         "error",
-        `No se puede guardar — te falta:\n${lines}`
+        `${t("toast.cantSave")}\n${lines}`
       );
       return;
     }
 
     if (!context?.account?.id || !boardId) {
-      showToast("error", "No se pudo identificar cuenta/tablero para guardar el mapeo");
+      showToast("error", t("toast.noAccountBoard"));
       return;
     }
 
@@ -1625,7 +1625,7 @@ const App = () => {
       setHasSavedMapping(true);
       setSavedMappingSnapshot(mapping);
       setIsMappingEditMode(false);
-      showToast("success", "Mapeo visual guardado correctamente");
+      showToast("success", t("toast.mappingSaved"));
     } catch (err) {
       const { msg, hint } = friendlyApiError(err);
       showToast("error", `${msg} — ${hint}`);
@@ -2758,7 +2758,7 @@ const App = () => {
                             className="gd-alias-copy-btn"
                             onClick={() => {
                               navigator.clipboard?.writeText(certificateAlias || aliasInput);
-                              showToast("success", "Alias copiado");
+                              showToast("success", t("toast.aliasCopied"));
                             }}
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
