@@ -373,6 +373,24 @@ export const translations = {
     "val.backendFallback.hint": "Si persiste, contactá soporte.",
     "val.unknown.msg": "Error desconocido",
     "val.unknown.hint": "Intentá de nuevo en unos segundos. Si sigue fallando, contactá soporte.",
+    // ── Instrucciones AFIP del Paso 3 (HTML inline; etiquetas del sitio AFIP en español) ──
+    "cert.copy": "Copiar",
+    "cert.s3.adheredTitle": 'Ya tengo adherido el servicio <strong>"Administración de Certificados Digitales"</strong> en ARCA',
+    "cert.s3.firstTime": "<strong>¿Primera vez?</strong> Primero adherí el servicio (una sola vez):",
+    "cert.s3.adhereLi1": "En el menú principal, entrá a <strong>Administrador de Relaciones de Clave Fiscal</strong>.",
+    "cert.s3.adhereLi2": "Click en <strong>Adherir Servicio</strong>.",
+    "cert.s3.adhereLi3": 'Buscá <strong>"Administración de Certificados Digitales"</strong> (AFIP / ARCA).',
+    "cert.s3.adhereLi4": "Confirmá la adhesión. Una vez hecho esto, podés volver al menú principal.",
+    "cert.s3.li1": 'Entrá a <a href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">auth.afip.gob.ar</a> con tu CUIT y clave fiscal.',
+    "cert.s3.li2": "Menú principal → <strong>Administración de Certificados Digitales</strong>.",
+    "cert.s3.li3Lead": "Click en <strong>Agregar alias</strong> y pegá este valor:",
+    "cert.s3.li4": "Adjuntá el <code>.csr</code> que descargaste en el paso anterior.",
+    "cert.s3.li5": "Confirmá y después <strong>descargá el .crt</strong> generado.",
+    // ── Infobox tutorial del Paso 2 (link con href dinámico → fragmentos) ──
+    "cert.s2.tutorTitle": "¿Nunca hiciste este trámite?",
+    "cert.s2.tutorPre": "Te recomendamos abrir ",
+    "cert.s2.tutorLink": "el tutorial en video",
+    "cert.s2.tutorSuf": " antes de seguir. Dura ~4 minutos.",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -732,6 +750,24 @@ export const translations = {
     "val.backendFallback.hint": "If it persists, contact support.",
     "val.unknown.msg": "Unknown error",
     "val.unknown.hint": "Try again in a few seconds. If it keeps failing, contact support.",
+    // ── AFIP step-3 instructions (inline HTML; AFIP site labels kept in Spanish) ──
+    "cert.copy": "Copy",
+    "cert.s3.adheredTitle": 'I already have the <strong>"Administración de Certificados Digitales"</strong> service enabled in ARCA',
+    "cert.s3.firstTime": "<strong>First time?</strong> First enable the service (just once):",
+    "cert.s3.adhereLi1": "In the main menu, go to <strong>Administrador de Relaciones de Clave Fiscal</strong>.",
+    "cert.s3.adhereLi2": "Click <strong>Adherir Servicio</strong>.",
+    "cert.s3.adhereLi3": 'Search for <strong>"Administración de Certificados Digitales"</strong> (AFIP / ARCA).',
+    "cert.s3.adhereLi4": "Confirm the subscription. Once done, you can go back to the main menu.",
+    "cert.s3.li1": 'Go to <a href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">auth.afip.gob.ar</a> with your CUIT and tax code.',
+    "cert.s3.li2": "Main menu → <strong>Administración de Certificados Digitales</strong>.",
+    "cert.s3.li3Lead": "Click <strong>Agregar alias</strong> and paste this value:",
+    "cert.s3.li4": "Attach the <code>.csr</code> you downloaded in the previous step.",
+    "cert.s3.li5": "Confirm and then <strong>download the generated .crt</strong>.",
+    // ── Step-2 tutorial infobox (link with dynamic href → fragments) ──
+    "cert.s2.tutorTitle": "Never done this procedure before?",
+    "cert.s2.tutorPre": "We recommend opening ",
+    "cert.s2.tutorLink": "the video tutorial",
+    "cert.s2.tutorSuf": " before continuing. It takes ~4 minutes.",
   },
 };
 

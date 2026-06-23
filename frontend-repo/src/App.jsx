@@ -2689,9 +2689,9 @@ const App = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 15l.7 2L22 18l-2.3 1-.7 2-.7-2L16 18l2.3-1z"/></svg>
                         </span>
                         <div>
-                          <p className="gd-infobox-title">¿Nunca hiciste este trámite?</p>
+                          <p className="gd-infobox-title">{t("cert.s2.tutorTitle")}</p>
                           <p className="gd-infobox-body">
-                            Te recomendamos abrir <a href={CERT_TUTORIAL_URL} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontWeight:600}}>el tutorial en video</a> antes de seguir. Dura ~4 minutos.
+                            {t("cert.s2.tutorPre")}<a href={CERT_TUTORIAL_URL} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontWeight:600}}>{t("cert.s2.tutorLink")}</a>{t("cert.s2.tutorSuf")}
                           </p>
                         </div>
                       </div>
@@ -2723,34 +2723,29 @@ const App = () => {
                           checked={serviceAdhered}
                           onChange={(e) => setServiceAdhered(e.target.checked)}
                         />
-                        <span className="gd-adhered-title">
-                          Ya tengo adherido el servicio <strong>"Administración de Certificados Digitales"</strong> en ARCA
-                        </span>
+                        <span
+                          className="gd-adhered-title"
+                          dangerouslySetInnerHTML={{ __html: t("cert.s3.adheredTitle") }}
+                        />
                       </label>
                       {!serviceAdhered && (
                         <div className="gd-adhered-body">
-                          <div>
-                            <strong>¿Primera vez?</strong> Primero adherí el servicio (una sola vez):
-                          </div>
+                          <div dangerouslySetInnerHTML={{ __html: t("cert.s3.firstTime") }} />
                           <ol>
-                            <li>En el menú principal, entrá a <strong>Administrador de Relaciones de Clave Fiscal</strong>.</li>
-                            <li>Click en <strong>Adherir Servicio</strong>.</li>
-                            <li>Buscá <strong>"Administración de Certificados Digitales"</strong> (AFIP / ARCA).</li>
-                            <li>Confirmá la adhesión. Una vez hecho esto, podés volver al menú principal.</li>
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi1") }} />
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi2") }} />
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi3") }} />
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi4") }} />
                           </ol>
                         </div>
                       )}
                     </div>
 
                     <ol className="gd-arca-steps">
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li1") }} />
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li2") }} />
                       <li>
-                        Entrá a <a href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">auth.afip.gob.ar</a> con tu CUIT y clave fiscal.
-                      </li>
-                      <li>
-                        Menú principal → <strong>Administración de Certificados Digitales</strong>.
-                      </li>
-                      <li>
-                        Click en <strong>Agregar alias</strong> y pegá este valor:
+                        <span dangerouslySetInnerHTML={{ __html: t("cert.s3.li3Lead") }} />
                         <div className="gd-alias-copy">
                           <code>{certificateAlias || aliasInput}</code>
                           <button
@@ -2762,16 +2757,12 @@ const App = () => {
                             }}
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            Copiar
+                            {t("cert.copy")}
                           </button>
                         </div>
                       </li>
-                      <li>
-                        Adjuntá el <code>.csr</code> que descargaste en el paso anterior.
-                      </li>
-                      <li>
-                        Confirmá y después <strong>descargá el .crt</strong> generado.
-                      </li>
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li4") }} />
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li5") }} />
                     </ol>
 
                     <div className="gd-panel-actions">
