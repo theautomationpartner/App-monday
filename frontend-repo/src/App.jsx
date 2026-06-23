@@ -2868,29 +2868,27 @@ const App = () => {
             {certFlow === "manual" && (
               <div className="cert-manual">
                 <div className="cert-guided-header">
-                  <h3 className="cert-step-title" style={{margin: 0}}>Subí tus archivos .crt y .key</h3>
-                  <button className="btn-text cert-guided-close" onClick={resetCertFlow}>Volver al asistente</button>
+                  <h3 className="cert-step-title" style={{margin: 0}}>{t("cert.manualTitle")}</h3>
+                  <button className="btn-text cert-guided-close" onClick={resetCertFlow}>{t("cert.backToAssistant")}</button>
                 </div>
-                <p className="cert-step-desc">
-                  Si ya tenés ambos archivos generados, adjuntalos. Validamos que sean pareja antes de guardarlos.
-                </p>
+                <p className="cert-step-desc">{t("cert.manualDesc")}</p>
 
                 <div className="cards-row">
                   <div className="upload-card">
                     <div className="upload-card-header">
-                      <h3>Certificado (.crt)</h3>
-                      <p>Archivo de certificado público</p>
+                      <h3>{t("cert.crtTitle")}</h3>
+                      <p>{t("cert.crtDesc")}</p>
                     </div>
                     {crtFile ? (
                       <div className="upload-success">
                         <IconCheck />
                         <span>{crtFile.name}</span>
-                        <button className="btn-text" onClick={() => setCrtFile(null)}>Cambiar</button>
+                        <button className="btn-text" onClick={() => setCrtFile(null)}>{t("cert.change")}</button>
                       </div>
                     ) : (
                       <label className="upload-zone" htmlFor="crt-upload">
                         <IconUpload />
-                        <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                        <span className="upload-zone-text">{t("cert.dropToUpload")}</span>
                         <span className="upload-zone-hint">.crt</span>
                         <input
                           id="crt-upload"
@@ -2905,19 +2903,19 @@ const App = () => {
 
                   <div className="upload-card">
                     <div className="upload-card-header">
-                      <h3>Clave Privada (.key)</h3>
-                      <p>Archivo de clave privada</p>
+                      <h3>{t("cert.keyTitle")}</h3>
+                      <p>{t("cert.keyDesc")}</p>
                     </div>
                     {keyFile ? (
                       <div className="upload-success">
                         <IconCheck />
                         <span>{keyFile.name}</span>
-                        <button className="btn-text" onClick={() => setKeyFile(null)}>Cambiar</button>
+                        <button className="btn-text" onClick={() => setKeyFile(null)}>{t("cert.change")}</button>
                       </div>
                     ) : (
                       <label className="upload-zone" htmlFor="key-upload">
                         <IconUpload />
-                        <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                        <span className="upload-zone-text">{t("cert.dropToUpload")}</span>
                         <span className="upload-zone-hint">.key</span>
                         <input
                           id="key-upload"
@@ -2932,20 +2930,20 @@ const App = () => {
                 </div>
 
                 <div className="form-actions">
-                  <button className="btn-secondary" onClick={resetCertFlow}>Cancelar</button>
+                  <button className="btn-secondary" onClick={resetCertFlow}>{t("common.cancel")}</button>
                   <button
                     className="btn-primary"
                     onClick={handleUploadCertificates}
                     disabled={isLoading || !crtFile || !keyFile}
                   >
-                    {isLoading ? "Subiendo..." : "Guardar certificados"}
+                    {isLoading ? t("cert.uploading") : t("cert.saveCerts")}
                   </button>
                 </div>
 
                 <div className="info-box" style={{marginTop: "16px"}}>
                   <span className="info-box-icon">🔒</span>
                   <span>
-                    <strong>Seguridad:</strong> tu clave privada se cifra con AES-256 antes de guardarse y nunca se expone en texto plano.
+                    <strong>{t("cert.securityLabel")}</strong> {t("cert.securityBody")}
                   </span>
                 </div>
               </div>
@@ -2962,20 +2960,20 @@ const App = () => {
           // Todos los campos son obligatorios ahora (la distinción "opcional"
           // se eliminó — están todos integrados en el flujo de la factura modelo).
           const itemFieldsView = [
-            { id: "fecha_emision",        label: "Fecha de Emisión",       scope: "board",   required: true },
-            { id: "receptor_cuit",        label: "CUIT / DNI Receptor",    scope: "board",   required: true },
-            { id: "condicion_venta",      label: "Condición de Venta",     scope: "board",   required: true },
-            { id: "fecha_servicio_desde", label: "Fecha Servicio Desde",   scope: "board",   required: true },
-            { id: "fecha_servicio_hasta", label: "Fecha Servicio Hasta",   scope: "board",   required: true },
-            { id: "fecha_vto_pago",       label: "Fecha Vto. Pago",        scope: "board",   required: true },
+            { id: "fecha_emision",        label: t("map.f.fechaEmision"),   scope: "board",   required: true },
+            { id: "receptor_cuit",        label: t("map.f.receptorCuit"),   scope: "board",   required: true },
+            { id: "condicion_venta",      label: t("map.f.condicionVenta"), scope: "board",   required: true },
+            { id: "fecha_servicio_desde", label: t("map.f.fechaServDesde"), scope: "board",   required: true },
+            { id: "fecha_servicio_hasta", label: t("map.f.fechaServHasta"), scope: "board",   required: true },
+            { id: "fecha_vto_pago",       label: t("map.f.fechaVtoPago"),   scope: "board",   required: true },
           ];
           const subitemFieldsView = [
-            { id: "concepto",         label: "Concepto / Detalle",  scope: "subitem", required: true },
-            { id: "cantidad",         label: "Cantidad",            scope: "subitem", required: true },
-            { id: "precio_unitario",  label: "Precio Unitario",     scope: "subitem", required: true },
-            { id: "prod_serv",        label: "Prod / Serv",         scope: "subitem", required: true },
-            { id: "unidad_medida",    label: "Unidad de Medida",    scope: "subitem", required: true },
-            { id: "alicuota_iva",     label: "Alícuota IVA %",      scope: "subitem", required: true },
+            { id: "concepto",         label: t("map.f.concepto"),       scope: "subitem", required: true },
+            { id: "cantidad",         label: t("map.f.cantidad"),       scope: "subitem", required: true },
+            { id: "precio_unitario",  label: t("map.f.precioUnitario"), scope: "subitem", required: true },
+            { id: "prod_serv",        label: t("map.f.prodServ"),       scope: "subitem", required: true },
+            { id: "unidad_medida",    label: t("map.f.unidadMedida"),   scope: "subitem", required: true },
+            { id: "alicuota_iva",     label: t("map.f.alicuotaIva"),    scope: "subitem", required: true },
           ];
 
           // Helper: renderiza un select del estilo "pill" (variant Refined).
@@ -3017,10 +3015,8 @@ const App = () => {
           <section className="gd-content">
             <div className="gd-section-head">
               <div>
-                <h2 className="gd-section-title">Mapeo Visual de Factura</h2>
-                <p className="gd-section-sub">
-                  Asociá cada campo de la factura con una columna del tablero de Monday.
-                </p>
+                <h2 className="gd-section-title">{t("map.title")}</h2>
+                <p className="gd-section-sub">{t("map.sub")}</p>
               </div>
               <div className="gd-section-head-actions">
                 <span className={pillKind === "ok" ? "gd-pill-ok" : "gd-pill-warn"}>
