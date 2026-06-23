@@ -269,6 +269,16 @@ export const translations = {
     "map.colCae": "Columna CAE del comprobante",
     "map.colText": "Columna texto",
     "map.colDropdown": "Columna dropdown",
+    "map.voucherType": "Tipo de Comprobante",
+    "map.caeToCancel": "CAE de la factura a anular",
+    "map.colNumeric": "Columna numérica",
+    "map.factRefHint": "Para una factura va vacía; para una NC/ND pegás acá el CAE de la factura que ajusta.",
+    "map.letterLabel": "Letra del Comprobante",
+    "map.invoiceNum": "N° Factura (Pto-Nro)",
+    "map.voucherNum": "N° Comprobante",
+    "map.optionalCols": "Columnas opcionales",
+    "map.optionalColsDesc": "Mapealas solo si las usás. La app las completa o las lee al emitir.",
+    "map.saveInitial": "Guardar Mapeo Visual",
   },
   en: {
     // ── Sidebar / navigation ──
@@ -524,6 +534,16 @@ export const translations = {
     "map.colCae": "Voucher CAE column",
     "map.colText": "Text column",
     "map.colDropdown": "Dropdown column",
+    "map.voucherType": "Voucher Type",
+    "map.caeToCancel": "CAE of the invoice to cancel",
+    "map.colNumeric": "Numeric column",
+    "map.factRefHint": "For an invoice it's empty; for a Credit/Debit Note paste here the CAE of the invoice it adjusts.",
+    "map.letterLabel": "Voucher Letter",
+    "map.invoiceNum": "Invoice No. (PoS-No.)",
+    "map.voucherNum": "Voucher No.",
+    "map.optionalCols": "Optional columns",
+    "map.optionalColsDesc": "Map them only if you use them. The app fills or reads them when issuing.",
+    "map.saveInitial": "Save Visual Mapping",
   },
 };
 

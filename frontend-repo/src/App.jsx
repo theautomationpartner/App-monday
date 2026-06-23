@@ -3475,32 +3475,30 @@ const App = () => {
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">Tipo de Comprobante</div>
-                  {mapSel("tipo_comprobante", "Columna dropdown")}
+                  <div className="rf-invoice-client-label">{t("map.voucherType")}</div>
+                  {mapSel("tipo_comprobante", t("map.colDropdown"))}
                   <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
                     El dropdown del item debe tener las opciones: <b>Factura</b>, <b>Nota de Crédito</b>, <b>Nota de Débito</b>.
                   </div>
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">CAE de la factura a anular</div>
-                  {mapSel("factura_referencia", "Columna numérica")}
-                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
-                    Para una factura va vacía; para una NC/ND pegás acá el CAE de la factura que ajusta.
-                  </div>
+                  <div className="rf-invoice-client-label">{t("map.caeToCancel")}</div>
+                  {mapSel("factura_referencia", t("map.colNumeric"))}
+                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>{t("map.factRefHint")}</div>
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">Letra del Comprobante</div>
-                  {mapSel("letra_comprobante", "Columna dropdown")}
+                  <div className="rf-invoice-client-label">{t("map.letterLabel")}</div>
+                  {mapSel("letra_comprobante", t("map.colDropdown"))}
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">N° Factura (Pto-Nro)</div>
-                  {mapSel("nro_factura", "Columna texto")}
+                  <div className="rf-invoice-client-label">{t("map.invoiceNum")}</div>
+                  {mapSel("nro_factura", t("map.colText"))}
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">N° Comprobante</div>
-                  {mapSel("nro_comprobante", "Columna numérica")}
+                  <div className="rf-invoice-client-label">{t("map.voucherNum")}</div>
+                  {mapSel("nro_comprobante", t("map.colNumeric"))}
                 </div>
               </div>
             </div>
@@ -3512,16 +3510,14 @@ const App = () => {
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Columnas opcionales</div>
-                  <div className="rf-mapping-frame-title">
-                    Mapealas solo si las usás. La app las completa o las lee al emitir.
-                  </div>
+                  <div className="rf-mapping-frame-eyebrow">{t("map.optionalCols")}</div>
+                  <div className="rf-mapping-frame-title">{t("map.optionalColsDesc")}</div>
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">Punto de Venta</div>
-                  {mapSel("punto_venta", "Opcional")}
+                  <div className="rf-invoice-client-label">{t("fiscal.puntoVenta")}</div>
+                  {mapSel("punto_venta", t("map.optional"))}
                 </div>
               </div>
             </div>
@@ -3530,13 +3526,13 @@ const App = () => {
               <div className="form-actions" style={{marginTop: "8px"}}>
                 {!isMappingInitialSetup && (
                   <button type="button" className="btn-secondary" onClick={handleCancelMappingEdit} disabled={isLoading}>
-                    Cancelar
+                    {t("common.cancel")}
                   </button>
                 )}
                 <button className="btn-primary" onClick={handleSaveVisualMapping} disabled={isLoading}>
                   {isLoading
-                    ? "Guardando..."
-                    : (isMappingInitialSetup ? "Guardar Mapeo Visual" : "Guardar cambios")}
+                    ? t("fiscal.saving")
+                    : (isMappingInitialSetup ? t("map.saveInitial") : t("fiscal.saveChanges"))}
                 </button>
               </div>
             )}
