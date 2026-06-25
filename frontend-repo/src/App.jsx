@@ -92,6 +92,36 @@ const COMPROBANTE_STATUS_FLOW = {
   error: "Error - Mirar Comentarios",
 };
 
+// Flujo de status en inglés (board instalado desde el template inglés). Debe
+// coincidir EXACTO con los labels del board EN y con el backend (server.js).
+const COMPROBANTE_STATUS_FLOW_EN = {
+  trigger: "Create Voucher",
+  processing: "Creating Voucher",
+  success: "Voucher Created",
+  error: "Error - See Updates",
+};
+
+function statusFlowFor(language) {
+  return language === "en" ? COMPROBANTE_STATUS_FLOW_EN : COMPROBANTE_STATUS_FLOW;
+}
+
+// Detecta el idioma del board mirando los labels de su columna de status.
+// Si algún label contiene "voucher" (template inglés) → 'en'; si no → 'es'
+// (default seguro: boards español tienen "Comprobante", nunca "voucher").
+function detectBoardLanguage(columns, statusColumnId) {
+  try {
+    const statusCol =
+      (columns || []).find((c) => c.id === statusColumnId) ||
+      (columns || []).find((c) => c.type === "status");
+    if (!statusCol?.settings_str) return "es";
+    const labels = Object.values(JSON.parse(statusCol.settings_str).labels || {});
+    if (labels.join(" ").toLowerCase().includes("voucher")) return "en";
+    return "es";
+  } catch {
+    return "es";
+  }
+}
+
 // IDs fijos de columnas de la plantilla del workspace.
 // Cuando un usuario instala la app y usa la plantilla, estos IDs son siempre iguales.
 const TEMPLATE_MAPPING = {
@@ -401,6 +431,7 @@ const App = () => {
     processing_label: COMPROBANTE_STATUS_FLOW.processing,
     success_label: COMPROBANTE_STATUS_FLOW.success,
     error_label: COMPROBANTE_STATUS_FLOW.error,
+    language: "es",
     // Toggles opcionales (default TRUE para que clientes nuevos tengan el
     // comportamiento "todo automatico" out of the box).
     auto_rename_item: true,    // ej: "Cliente Juan" -> "Factura B N° 0002-00000019"
@@ -899,10 +930,11 @@ const App = () => {
           setBoardConfig({
             status_column_id: data.boardConfig.status_column_id || "",
             invoice_pdf_column_id: invoicePdfCol?.resolved_column_id || "",
-            trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-            processing_label: COMPROBANTE_STATUS_FLOW.processing,
-            success_label: COMPROBANTE_STATUS_FLOW.success,
-            error_label: COMPROBANTE_STATUS_FLOW.error,
+            trigger_label: data.boardConfig.trigger_label || COMPROBANTE_STATUS_FLOW.trigger,
+            processing_label: data.boardConfig.processing_label || COMPROBANTE_STATUS_FLOW.processing,
+            success_label: data.boardConfig.success_label || COMPROBANTE_STATUS_FLOW.success,
+            error_label: data.boardConfig.error_label || COMPROBANTE_STATUS_FLOW.error,
+            language: data.boardConfig.language || "es",
             auto_rename_item: data.boardConfig.auto_rename_item !== false,
             auto_update_status: data.boardConfig.auto_update_status !== false,
           });
@@ -1066,6 +1098,8 @@ const App = () => {
         console.log("[auto-mapeo] Mapeo de plantilla guardado en DB exitosamente");
 
         // También guardar el board config con la columna de status + PDF detectadas
+        const autoLang = detectBoardLanguage(columns, detectedStatusColumnId);
+        const autoFlow = statusFlowFor(autoLang);
         await api.post(`/board-config`, {
           monday_account_id: context.account.id.toString(),
           workspace_id: workspaceId || null,
@@ -1073,9 +1107,11 @@ const App = () => {
           view_id: viewIdFromHref,
           app_feature_id: appFeatureId,
           status_column_id: detectedStatusColumnId,
-          trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-          success_label: COMPROBANTE_STATUS_FLOW.success,
-          error_label: COMPROBANTE_STATUS_FLOW.error,
+          trigger_label: autoFlow.trigger,
+          processing_label: autoFlow.processing,
+          success_label: autoFlow.success,
+          error_label: autoFlow.error,
+          language: autoLang,
           required_columns: detectedRequiredColumns,
         });
         setBoardConfig((prev) => ({
@@ -1603,6 +1639,8 @@ const App = () => {
       });
 
       // 2) Guardar el board-config (incluye los toggles auto_*)
+      const saveLang = detectBoardLanguage(columns, boardConfig.status_column_id);
+      const saveFlow = statusFlowFor(saveLang);
       await api.post(`/board-config`, {
         monday_account_id: context.account.id.toString(),
         workspace_id: workspaceId || null,
@@ -1612,9 +1650,11 @@ const App = () => {
         // status_column_id solo se manda si el toggle esta activo. Si esta
         // OFF, el backend lo persiste como NULL.
         status_column_id: boardConfig.auto_update_status ? boardConfig.status_column_id : null,
-        trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-        success_label: COMPROBANTE_STATUS_FLOW.success,
-        error_label: COMPROBANTE_STATUS_FLOW.error,
+        trigger_label: saveFlow.trigger,
+        processing_label: saveFlow.processing,
+        success_label: saveFlow.success,
+        error_label: saveFlow.error,
+        language: saveLang,
         required_columns: [
           { key: "invoice_pdf", resolved_column_id: boardConfig.invoice_pdf_column_id },
         ],
