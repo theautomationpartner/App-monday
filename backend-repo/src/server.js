@@ -6057,7 +6057,7 @@ async function comprobanteHandler(req, res) {
                         uploadPrev = await uploadPdfToMondayFileColumn({
                             apiToken: mondayToken, itemId,
                             fileColumnId: pdfColPrev, pdfBuffer: pdfBufPrev,
-                            filename: `Factura_${tipoPrev}_Nro_${pvP}-${nroP}.pdf`,
+                            filename: `${readiness.boardConfig?.language === 'en' ? 'Invoice' : 'Factura'}_${tipoPrev}_Nro_${pvP}-${nroP}.pdf`,
                         });
                     } else {
                         uploadPrev = { uploaded: false, reason: pdfColPrev ? 'pdf_gen_failed' : 'no_column_configured' };
@@ -6586,7 +6586,7 @@ async function comprobanteHandler(req, res) {
                             apiToken: mondayToken, itemId,
                             fileColumnId: invoicePdfColumnId,
                             pdfBuffer,
-                            filename: `Factura_${tipo}_Nro_${pvPadded}-${nroCompPadded}.pdf`,
+                            filename: `${readiness.boardConfig?.language === 'en' ? 'Invoice' : 'Factura'}_${tipo}_Nro_${pvPadded}-${nroCompPadded}.pdf`,
                         });
                         markEnd('pdf_upload');
                         console.log('[emit] PDF subido:', JSON.stringify(mondayUpload).slice(0, 300));
@@ -6785,7 +6785,8 @@ async function comprobanteHandler(req, res) {
             // en mapeo visual. Si esta apagado, el item conserva su nombre original.
             const autoRenameItem = readiness.boardConfig?.auto_rename_item !== false;
             if (autoRenameItem && afipResult?.numero_comprobante) {
-                const newClientItemName = `Factura ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim();
+                const docWord = readiness.boardConfig?.language === 'en' ? 'Invoice' : 'Factura';
+                const newClientItemName = `${docWord} ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim();
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
                     newName: newClientItemName,
@@ -7679,7 +7680,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                             apiToken: mondayToken, itemId,
                             fileColumnId: pdfColumnId,
                             pdfBuffer,
-                            filename: `${esND ? 'Nota_Debito' : 'Nota_Credito'}_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                            filename: `${ncLanguage === 'en' ? (esND ? 'Debit_Note' : 'Credit_Note') : (esND ? 'Nota_Debito' : 'Nota_Credito')}_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
                         });
                         console.log('[nc] PDF de la NC subido a Monday');
                     } else {
@@ -7728,7 +7729,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (autoRenameItem && afipResult?.numero_comprobante) {
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
-                    newName: `${docLabel} ${letra} N° ${pvLargo}-${nroLargo}`,
+                    newName: `${ncLanguage === 'en' ? (esND ? 'Debit Note' : 'Credit Note') : docLabel} ${letra} N° ${pvLargo}-${nroLargo}`,
                 }).catch((e) => console.warn('[nc] rename fire-and-forget falló:', e.message));
             }
 

@@ -149,8 +149,15 @@ function getIvaRate(tipo) {
  * y al receptor del comprobante. Mostradas en mayúsculas por preferencia
  * del emisor.
  */
-function condicionLabel(condicion) {
-    const labels = {
+function condicionLabel(condicion, language = 'es') {
+    const labels = language === 'en' ? {
+        [RI]:           'VAT REGISTERED',
+        [MONOTRIBUTO]:  'MONOTRIBUTO TAXPAYER',
+        [EXENTO]:       'VAT EXEMPT',
+        [CF]:           'FINAL CONSUMER',
+        [NO_ALCANZADO]: 'NOT SUBJECT TO VAT',
+        [UNKNOWN]:      'UNCATEGORIZED SUBJECT',
+    } : {
         [RI]:           'IVA RESPONSABLE INSCRIPTO',
         [MONOTRIBUTO]:  'RESPONSABLE MONOTRIBUTO',
         [EXENTO]:       'IVA SUJETO EXENTO',
@@ -188,8 +195,8 @@ function toTitleCase(str) {
         // Separadores: dejar como vienen
         if (/^[\s,;:]+$/.test(token)) return token;
         const upper = token.toUpperCase();
-        // Preservar IVA siempre en mayusculas
-        if (upper === 'IVA') return 'IVA';
+        // Preservar IVA / VAT siempre en mayusculas (siglas fiscales)
+        if (upper === 'IVA' || upper === 'VAT') return upper;
         // Siglas multi-punto (S.A., S.R.L., U.S.A., M.G.M.): mantener mayusculas
         // Heuristica: 2 o mas puntos en el token = sigla compuesta. Un solo
         // punto al final (Av., Sr., Cra.) NO entra aca, va por title case.

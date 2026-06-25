@@ -481,7 +481,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language /
                 L.domicilio, invoiceRules.toTitleCase(company.address || '-'));
             dy += STEP;
             drawKV(doc, contentX, dy, contentW,
-                L.condIva, invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.emisorCondicion || '')));
+                L.condIva, invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.emisorCondicion || '', language)));
             if (company.phone) {
                 dy += STEP;
                 drawKV(doc, contentX, dy, contentW, L.tel, company.phone);
@@ -559,10 +559,13 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language /
             doc.font('Helvetica-Bold').text('CUIT: ', colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text(fmtCuit(draft.receptor_cuit_o_dni) || '-');
             doc.font('Helvetica-Bold').text(L.apellidoNombre, colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.receptor_nombre || L.consumidorFinal));
+            const recNombreRaw = (draft.receptor_nombre || '').trim();
+            const esConsumidorFinalGenerico = !recNombreRaw || recNombreRaw.toLowerCase() === 'consumidor final';
+            doc.font('Helvetica').text(
+                esConsumidorFinalGenerico ? L.consumidorFinal : invoiceRules.toTitleCase(recNombreRaw));
             cy += 12;
             doc.font('Helvetica-Bold').text(L.condFrenteIva, colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.receptorCondicion || '')));
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.receptorCondicion || '', language)));
             doc.font('Helvetica-Bold').text(L.domicilioComercial, colLeft + halfW + 8, cy, { continued: true });
             doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.receptor_domicilio || '-'));
             cy += 12;
