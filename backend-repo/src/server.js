@@ -859,44 +859,52 @@ function getColumnLabel(columnValues, columnId, canonicalLabel) {
 // El mapeo es por board, así que el chequeo aplica a los dos flujos (factura y
 // NC/ND). Devuelve un array de errores legibles (vacío si está OK).
 const REQUIRED_EMIT_MAPPING = [
-    ['razon_social_receptor',  'Razón Social del Receptor'],
-    ['condicion_iva_receptor', 'Condición IVA del Receptor'],
-    ['tipo_comprobante',       'Tipo de Comprobante'],
-    ['factura_referencia',     'CAE de la factura a anular'],
-    ['nro_factura',            'N° Factura (Pto-Nro)'],
-    ['nro_comprobante',        'N° Comprobante'],
-    ['letra_comprobante',      'Letra del Comprobante'],
+    ['razon_social_receptor',  'Razón Social del Receptor', 'Recipient Legal Name'],
+    ['condicion_iva_receptor', 'Condición IVA del Receptor', 'Recipient VAT Condition'],
+    ['tipo_comprobante',       'Tipo de Comprobante', 'Voucher Type'],
+    ['factura_referencia',     'CAE de la factura a anular', 'CAE of the invoice to cancel'],
+    ['nro_factura',            'N° Factura (Pto-Nro)', 'Invoice No. (PoS-No.)'],
+    ['nro_comprobante',        'N° Comprobante', 'Voucher No.'],
+    ['letra_comprobante',      'Letra del Comprobante', 'Voucher Letter'],
 ];
-function checkReceptorWriteBackMapped(mapping) {
+function checkReceptorWriteBackMapped(mapping, language = 'es') {
     const errors = [];
-    for (const [key, label] of REQUIRED_EMIT_MAPPING) {
+    for (const [key, labelEs, labelEn] of REQUIRED_EMIT_MAPPING) {
         if (!mapping?.[key]) {
-            errors.push(`Falta mapear la columna "${label}" en el Mapeo Visual (es obligatoria).`);
+            errors.push(language === 'en'
+                ? `Column "${labelEn}" is not mapped in Visual Mapping (it's required).`
+                : `Falta mapear la columna "${labelEs}" en el Mapeo Visual (es obligatoria).`);
         }
     }
     return errors;
 }
 
-function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
+// `language` ('es' default | 'en'): los bullets de error se inyectan tal cual en
+// el comentario del item, así que se emiten en el idioma del board. La rama 'es'
+// es byte-idéntica a la versión histórica (clientes español intactos).
+function validateItemDataCompleteness({ mainColumns, subitems, mapping, language = 'es' }) {
     const errors = [];
+    const L = (en, es) => language === 'en' ? en : es;
     const VALID_ALICUOTAS = new Set(['0', '2.5', '5', '10.5', '21', '27']);
     const VALID_PROD_SERV = new Set(['servicio', 'producto', 'service', 'product']);
 
     // Columnas de write-back del receptor obligatorias (razón social + cond. IVA).
-    errors.push(...checkReceptorWriteBackMapped(mapping));
+    errors.push(...checkReceptorWriteBackMapped(mapping, language));
 
     const fechaEmision = getColumnTextById(mainColumns, mapping.fecha_emision);
     if (!fechaEmision) {
-        errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_emision, 'Fecha de Emisión')}`);
+        const lbl = getColumnLabel(mainColumns, mapping.fecha_emision, L('Issue Date', 'Fecha de Emisión'));
+        errors.push(L(`Item: missing column ${lbl}`, `Item: falta la columna ${lbl}`));
     }
 
     const condicionVenta = getColumnTextById(mainColumns, mapping.condicion_venta);
     if (!condicionVenta) {
-        errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.condicion_venta, 'Condición de Venta')}`);
+        const lbl = getColumnLabel(mainColumns, mapping.condicion_venta, L('Sale Condition', 'Condición de Venta'));
+        errors.push(L(`Item: missing column ${lbl}`, `Item: falta la columna ${lbl}`));
     }
 
     if (!subitems || subitems.length === 0) {
-        errors.push('El item no tiene subitems (al menos uno es obligatorio)');
+        errors.push(L('The item has no subitems (at least one is required)', 'El item no tiene subitems (al menos uno es obligatorio)'));
         return { ok: false, errors };
     }
 
@@ -914,62 +922,68 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         ? mapping.precio_unitario_usd
         : mapping.precio_unitario;
     const precioLabelForValidation = (monedaParsedForPrice === 'DOL' && mapping.precio_unitario_usd)
-        ? 'Precio Unitario (USD)'
-        : 'Precio Unitario';
+        ? L('Unit Price (USD)', 'Precio Unitario (USD)')
+        : L('Unit Price', 'Precio Unitario');
 
     let hayServicio = false;
     subitems.forEach(sub => {
         const name = sub.name || `#${sub.id}`;
 
         if (!sub.name || !String(sub.name).trim()) {
-            errors.push(`Subitem "${name}": falta el nombre (concepto)`);
+            errors.push(L(`Subitem "${name}": missing the name (description)`, `Subitem "${name}": falta el nombre (concepto)`));
         }
 
         const unidadMedida = getColumnTextById(sub.column_values, mapping.unidad_medida);
         if (!unidadMedida) {
-            errors.push(`Subitem "${name}": falta la columna ${getColumnLabel(sub.column_values, mapping.unidad_medida, 'Unidad de Medida')}`);
+            const lbl = getColumnLabel(sub.column_values, mapping.unidad_medida, L('Unit of Measure', 'Unidad de Medida'));
+            errors.push(L(`Subitem "${name}": missing column ${lbl}`, `Subitem "${name}": falta la columna ${lbl}`));
         }
 
         const cantNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.cantidad));
         if (cantNum === null || cantNum <= 0) {
-            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, mapping.cantidad, 'Cantidad')} inválida (debe ser número > 0)`);
+            const lbl = getColumnLabel(sub.column_values, mapping.cantidad, L('Quantity', 'Cantidad'));
+            errors.push(L(`Subitem "${name}": column ${lbl} invalid (must be a number > 0)`, `Subitem "${name}": columna ${lbl} inválida (debe ser número > 0)`));
         }
 
         const precioNum = toNumberOrNull(getColumnTextById(sub.column_values, precioColumnForValidation));
         if (precioNum === null || precioNum <= 0) {
-            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, precioColumnForValidation, precioLabelForValidation)} inválida (debe ser número > 0)`);
+            const lbl = getColumnLabel(sub.column_values, precioColumnForValidation, precioLabelForValidation);
+            errors.push(L(`Subitem "${name}": column ${lbl} invalid (must be a number > 0)`, `Subitem "${name}": columna ${lbl} inválida (debe ser número > 0)`));
         }
 
         const prodServRaw = getColumnTextById(sub.column_values, mapping.prod_serv) || '';
         const prodServ = prodServRaw.toLowerCase().trim();
         const prodServLabel = getColumnLabel(sub.column_values, mapping.prod_serv, 'Prod/Serv');
         if (!prodServ) {
-            errors.push(`Subitem "${name}": falta la columna ${prodServLabel} — debe decir "producto" o "servicio"`);
+            errors.push(L(`Subitem "${name}": missing column ${prodServLabel} — must say "product" or "service"`, `Subitem "${name}": falta la columna ${prodServLabel} — debe decir "producto" o "servicio"`));
         } else if (!VALID_PROD_SERV.has(prodServ)) {
-            errors.push(`Subitem "${name}": columna ${prodServLabel} debe decir "producto" o "servicio" (actual: "${prodServRaw}")`);
+            errors.push(L(`Subitem "${name}": column ${prodServLabel} must say "product" or "service" (current: "${prodServRaw}")`, `Subitem "${name}": columna ${prodServLabel} debe decir "producto" o "servicio" (actual: "${prodServRaw}")`));
         } else if (prodServ === 'servicio' || prodServ === 'service') {
             hayServicio = true;
         }
 
         const alicuotaRaw = getColumnTextById(sub.column_values, mapping.alicuota_iva) || '';
         const alicuotaNorm = String(alicuotaRaw).replace(/[^0-9.,]/g, '').replace(',', '.').trim();
-        const alicuotaLabel = getColumnLabel(sub.column_values, mapping.alicuota_iva, 'Alícuota IVA %');
+        const alicuotaLabel = getColumnLabel(sub.column_values, mapping.alicuota_iva, L('VAT Rate %', 'Alícuota IVA %'));
         if (!alicuotaNorm) {
-            errors.push(`Subitem "${name}": falta la columna ${alicuotaLabel}`);
+            errors.push(L(`Subitem "${name}": missing column ${alicuotaLabel}`, `Subitem "${name}": falta la columna ${alicuotaLabel}`));
         } else if (!VALID_ALICUOTAS.has(alicuotaNorm)) {
-            errors.push(`Subitem "${name}": columna ${alicuotaLabel} inválida. Valores permitidos: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`);
+            errors.push(L(`Subitem "${name}": column ${alicuotaLabel} invalid. Allowed values: 0, 2.5, 5, 10.5, 21, 27 (current: "${alicuotaRaw}")`, `Subitem "${name}": columna ${alicuotaLabel} inválida. Valores permitidos: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`));
         }
     });
 
     if (hayServicio) {
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_desde)) {
-            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_servicio_desde, 'Fecha Servicio Desde')} (obligatoria cuando hay subitems de servicio)`);
+            const lbl = getColumnLabel(mainColumns, mapping.fecha_servicio_desde, L('Service Date From', 'Fecha Servicio Desde'));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_hasta)) {
-            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_servicio_hasta, 'Fecha Servicio Hasta')} (obligatoria cuando hay subitems de servicio)`);
+            const lbl = getColumnLabel(mainColumns, mapping.fecha_servicio_hasta, L('Service Date To', 'Fecha Servicio Hasta'));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_vto_pago)) {
-            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_vto_pago, 'Fecha Vto. Pago')} (obligatoria cuando hay subitems de servicio)`);
+            const lbl = getColumnLabel(mainColumns, mapping.fecha_vto_pago, L('Payment Due Date', 'Fecha Vto. Pago'));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
         }
     }
 
@@ -982,8 +996,8 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         if (monedaRaw.trim()) {
             const monedaParsed = invoiceRules.parseMoneda(monedaRaw);
             if (!monedaParsed) {
-                const monedaLabel = getColumnLabel(mainColumns, mapping.moneda, 'Moneda');
-                errors.push(`Item: columna ${monedaLabel} tiene un valor no reconocido ("${monedaRaw}"). Debe decir "Pesos" o "Dólares" (acepta cualquier mayuscula/minuscula y singular/plural).`);
+                const monedaLabel = getColumnLabel(mainColumns, mapping.moneda, L('Currency', 'Moneda'));
+                errors.push(L(`Item: column ${monedaLabel} has an unrecognized value ("${monedaRaw}"). It must say "Pesos" or "Dollars" (any case and singular/plural accepted).`, `Item: columna ${monedaLabel} tiene un valor no reconocido ("${monedaRaw}"). Debe decir "Pesos" o "Dólares" (acepta cualquier mayuscula/minuscula y singular/plural).`));
             }
         }
     }
@@ -992,8 +1006,8 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         if (cotRaw.trim()) {
             const cotNum = toNumberOrNull(cotRaw);
             if (cotNum === null || cotNum <= 0) {
-                const cotLabel = getColumnLabel(mainColumns, mapping.cotizacion, 'Tipo de cambio');
-                errors.push(`Item: columna ${cotLabel} debe ser un número mayor a 0 (actual: "${cotRaw}")`);
+                const cotLabel = getColumnLabel(mainColumns, mapping.cotizacion, L('Exchange Rate', 'Tipo de cambio'));
+                errors.push(L(`Item: column ${cotLabel} must be a number greater than 0 (current: "${cotRaw}")`, `Item: columna ${cotLabel} debe ser un número mayor a 0 (actual: "${cotRaw}")`));
             }
         }
     }
@@ -5792,7 +5806,9 @@ async function comprobanteHandler(req, res) {
                     // como lista de columnas faltantes con el nombre real.
                     throw new Error(
                         'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
-                        `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura, Nota de Crédito o Nota de Débito`
+                        (readiness.boardConfig?.language === 'en'
+                            ? `• Choose a value in the ${getColumnLabel(mainColumns, tipoCompColId, 'Voucher Type')} column: Invoice, Credit Note or Debit Note`
+                            : `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura, Nota de Crédito o Nota de Débito`)
                     );
                 }
                 // OJO con el orden: "Factura" se chequea PRIMERO. AFIP tiene
@@ -5877,6 +5893,7 @@ async function comprobanteHandler(req, res) {
                 mainColumns,
                 subitems,
                 mapping: readiness.mapping,
+                language: readiness.boardConfig?.language,
             });
             if (!dataCheck.ok) {
                 console.warn(`[emit] Validación de datos falló:`, dataCheck.errors);
@@ -5901,14 +5918,18 @@ async function comprobanteHandler(req, res) {
                 if (!pvRaw) {
                     throw new Error(
                         'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
-                        `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Punto de Venta')}`
+                        (readiness.boardConfig?.language === 'en'
+                            ? `• Choose the Point of Sale in the ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Point of Sale')} column`
+                            : `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Punto de Venta')}`)
                     );
                 }
                 const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
                 if (!pvNum || pvNum <= 0) {
-                    throw new Error(
-                        `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
-                        `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `The Point of Sale "${pvRaw}" is not valid. It must be a point-of-sale number ` +
+                          `enabled in AFIP for web services (e.g. 1, 5, 0005).`
+                        : `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
+                          `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
                     );
                 }
                 ptoVentaItem = pvNum;
@@ -7109,7 +7130,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // razón social, cond. IVA, tipo comprobante, CAE a anular, N° factura,
             // N° comprobante, letra). Mismo bloqueo que en factura: sin todas
             // mapeadas no se emite. El valor del CAE a anular se valida más abajo.
-            const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping);
+            const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping, ncLanguage);
             if (ncReceptorErrors.length > 0) {
                 throw new Error(
                     `No se puede emitir ${docLabel}:\n` +
