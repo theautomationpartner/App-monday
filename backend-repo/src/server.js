@@ -6776,6 +6776,7 @@ async function comprobanteHandler(req, res) {
                 numero:     afipResult.numero_comprobante,
                 receptorNombre:    draft.receptor_nombre,
                 receptorCondicion: draft.receptorCondicion,
+                language:          readiness.boardConfig?.language,
             }).catch((e) => console.warn('[write-back] columnas comprobante fire-and-forget falló:', e.message));
 
             // Renombrar el item del cliente con el formato del comprobante emitido.
@@ -7645,6 +7646,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 cae:        afipResult.cae,
                 receptorNombre:    ncDraft.receptor_nombre,
                 receptorCondicion: ncDraft.receptorCondicion,
+                language:          ncLanguage,
             }).catch((e) => console.warn('[nc] write-back columnas comprobante falló:', e.message));
 
             // Si el board mapea "Punto de Venta" y el usuario la dejó VACÍA, la
@@ -8435,7 +8437,7 @@ async function writeMondayDropdownColumn({ apiToken, boardId, itemId, columnId, 
 //                                        ("IVA Responsable Inscripto", "Consumidor
 //                                         Final", etc.). El usuario NO la carga: la
 //                                         resuelve la app desde el padrón AFIP.
-async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae, receptorNombre, receptorCondicion }) {
+async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae, receptorNombre, receptorCondicion, language = 'es' }) {
     if (!apiToken || !boardId || !itemId || !mapping) return;
     const pv  = String(puntoVenta ?? '').replace(/\D/g, '');
     const nro = String(numero ?? '').replace(/\D/g, '');
@@ -8478,10 +8480,16 @@ async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, let
     // Razón social del receptor (texto). La app la resuelve desde el padrón AFIP
     // al emitir; acá solo la deja registrada en el item para que el cliente la vea.
     if (mapping.razon_social_receptor && receptorNombre) {
+        // Si es el "Consumidor Final" genérico (cualquier caja), lo escribimos en el
+        // idioma del board; un nombre real (B2B) va tal cual title-cased.
+        const recNombreRaw = String(receptorNombre).trim();
+        const nombreValue = (recNombreRaw.toLowerCase() === 'consumidor final')
+            ? (language === 'en' ? 'Final Consumer' : 'Consumidor Final')
+            : invoiceRules.toTitleCase(recNombreRaw);
         await writeMondayTextColumn({
             apiToken, boardId, itemId,
             columnId: mapping.razon_social_receptor,
-            value: invoiceRules.toTitleCase(String(receptorNombre)),
+            value: nombreValue,
         });
     }
     // Condición frente al IVA del receptor (dropdown). receptorCondicion viene en
@@ -8491,7 +8499,7 @@ async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, let
         await writeMondayDropdownColumn({
             apiToken, boardId, itemId,
             columnId: mapping.condicion_iva_receptor,
-            label: invoiceRules.toTitleCase(invoiceRules.condicionLabel(receptorCondicion)),
+            label: invoiceRules.toTitleCase(invoiceRules.condicionLabel(receptorCondicion, language)),
         });
     }
 }
