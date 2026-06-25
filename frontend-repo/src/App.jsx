@@ -111,7 +111,7 @@ function statusFlowFor(language) {
 function detectBoardLanguage(columns, statusColumnId) {
   try {
     const statusCol =
-      (columns || []).find((c) => c.id === statusColumnId) ||
+      (columns || []).find((c) => c.value === statusColumnId) ||
       (columns || []).find((c) => c.type === "status");
     if (!statusCol?.settings_str) return "es";
     const labels = Object.values(JSON.parse(statusCol.settings_str).labels || {});
@@ -767,7 +767,7 @@ const App = () => {
 
         const cols = boardColumns
           .filter((c) => c.type !== "subtasks" && c.type !== "button" && c.type !== "formula")
-          .map((c) => ({ value: c.id, label: c.title, type: c.type }));
+          .map((c) => ({ value: c.id, label: c.title, type: c.type, settings_str: c.settings_str }));
         setColumns(cols);
 
         // Cargar columnas de subitems
