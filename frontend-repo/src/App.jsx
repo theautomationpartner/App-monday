@@ -108,6 +108,7 @@ function statusFlowFor(language) {
 // Detecta el idioma del board mirando los labels de su columna de status.
 // Si algún label contiene "voucher" (template inglés) → 'en'; si no → 'es'
 // (default seguro: boards español tienen "Comprobante", nunca "voucher").
+// NOTA: `columns` guarda el id en `value` y conserva `settings_str` (ver setColumns).
 function detectBoardLanguage(columns, statusColumnId) {
   try {
     const statusCol =
