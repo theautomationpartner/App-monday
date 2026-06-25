@@ -6019,7 +6019,7 @@ async function comprobanteHandler(req, res) {
                 try {
                     const prevDraft  = existing.rows[0].draft_json || {};
                     const tipoPrev   = prevDraft.tipo_comprobante || 'C';
-                    const pdfBufPrev = await generateFacturaPdfBuffer({ company, draft: prevDraft, afipResult: prev, itemId });
+                    const pdfBufPrev = await generateFacturaPdfBuffer({ company, draft: prevDraft, afipResult: prev, itemId, language: readiness.boardConfig?.language });
                     const pdfColPrev = await getInvoicePdfColumnId({ companyId: company.id, boardId });
                     let uploadPrev;
                     if (pdfColPrev && pdfBufPrev) {
@@ -6525,6 +6525,7 @@ async function comprobanteHandler(req, res) {
                         draft,
                         afipResult,
                         itemId,
+                        language: readiness.boardConfig?.language,
                     });
                     markEnd('pdf_gen');
                     console.log(`[emit] PDF generado, ${pdfBuffer?.length || 0} bytes`);
@@ -7007,6 +7008,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         let successLabel     = COMPROBANTE_STATUS_FLOW.success;
         let errorLabel       = COMPROBANTE_STATUS_FLOW.error;
         let processingLabel  = COMPROBANTE_STATUS_FLOW.processing;
+        let ncLanguage       = 'es'; // idioma del board (para el PDF de la NC/ND)
 
         try {
             // ── 1. Token de Monday ─────────────────────────────────────────────
@@ -7061,7 +7063,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     // Labels custom (si el cliente los cambió en mapeo visual);
                     // fallback al flow del idioma del board. Consistente con
                     // factura y con el reconcile cron, que ya honran estos campos.
-                    const flowNc = resolveStatusFlow(cfgRes.rows[0].language);
+                    ncLanguage = cfgRes.rows[0].language || 'es';
+                    const flowNc = resolveStatusFlow(ncLanguage);
                     successLabel    = cfgRes.rows[0].success_label    || flowNc.success;
                     errorLabel      = cfgRes.rows[0].error_label      || flowNc.error;
                     processingLabel = cfgRes.rows[0].processing_label || flowNc.processing;
@@ -7615,7 +7618,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
 
             // ── 10. Generar PDF ────────────────────────────────────────────────
             try {
-                pdfBuffer = await generateFacturaPdfBuffer({ company, draft: ncDraft, afipResult, itemId });
+                pdfBuffer = await generateFacturaPdfBuffer({ company, draft: ncDraft, afipResult, itemId, language: ncLanguage });
                 console.log(`[nc] PDF generado, ${pdfBuffer?.length || 0} bytes`);
             } catch (pdfErr) {
                 console.error('[nc] ⚠ Error generando PDF:', pdfErr.message);
@@ -9945,8 +9948,19 @@ async function reconcileSingleEmission(row) {
     // 8. Generar PDF
     let pdfBuffer = null;
     try {
+        // Idioma del board para regenerar el PDF en el idioma correcto (default 'es').
+        let reconcileLang = 'es';
+        try {
+            const langRes = await db.query(
+                `SELECT language FROM board_automation_configs
+                 WHERE company_id=$1 AND board_id=$2
+                 ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
+                [row.company_id, row.board_id]
+            );
+            reconcileLang = langRes.rows[0]?.language || 'es';
+        } catch { /* default es */ }
         pdfBuffer = await generateFacturaPdfBuffer({
-            company, draft, afipResult, itemId: row.item_id,
+            company, draft, afipResult, itemId: row.item_id, language: reconcileLang,
         });
         console.log(`${tag} PDF generado (${pdfBuffer?.length || 0} bytes)`);
     } catch (pdfErr) {
