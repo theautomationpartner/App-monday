@@ -2451,7 +2451,8 @@ async function ensureBoardAutomationConfigsExtras() {
         ALTER TABLE board_automation_configs
             ADD COLUMN IF NOT EXISTS auto_rename_item BOOLEAN DEFAULT TRUE,
             ADD COLUMN IF NOT EXISTS auto_update_status BOOLEAN DEFAULT TRUE,
-            ADD COLUMN IF NOT EXISTS processing_label TEXT
+            ADD COLUMN IF NOT EXISTS processing_label TEXT,
+            ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'es'
     `);
     // Hacer status_column_id nullable. ALTER COLUMN no es idempotente en si
     // (no hay IF NOT NULL), pero si la columna ya es nullable no rompe nada.
