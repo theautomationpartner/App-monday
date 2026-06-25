@@ -2972,7 +2972,7 @@ async function fetchAppViewId(apiToken, boardId) {
 
 // Deja (una sola vez) el comentario-invitación en el item al cruzar el umbral.
 // Idempotente por cuenta: nudge_comment_sent_at marca que ya se hizo.
-async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
+async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId, language = 'es' }) {
     try {
         if (!accountId || !apiToken || !itemId) return;
         await ensureAccountReviewPromptsTable();
@@ -2992,17 +2992,25 @@ async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId }) {
 
         const slug = await fetchAccountSlug(apiToken);
         const viewId = await fetchAppViewId(apiToken, boardId);
-        let cta = ' Abrila desde el ícono de la app en tu tablero.';
+        const isEnN = language === 'en';
+        let cta = isEnN
+            ? ' Open it from the app icon on your board.'
+            : ' Abrila desde el ícono de la app en tu tablero.';
         if (slug && boardId) {
             const url = viewId
                 ? `https://${slug}.monday.com/boards/${boardId}/views/${viewId}`
                 : `https://${slug}.monday.com/boards/${boardId}`;
-            cta = `<br><br><a href="${url}">👉 Abrir Factura ARCA</a>`;
+            cta = isEnN
+                ? `<br><br><a href="${url}">👉 Open Factura ARCA</a>`
+                : `<br><br><a href="${url}">👉 Abrir Factura ARCA</a>`;
         }
-        const body =
-            `🎉 ¡Ya emitiste ${count} comprobantes con <b>Factura ARCA</b>! ` +
-            `¿Nos contás cómo viene tu experiencia? Abrí la vista <b>Facturación Electrónica</b> ` +
-            `y dejanos tu opinión — nos ayuda un montón a seguir mejorando. 🙌${cta}`;
+        const body = isEnN
+            ? `🎉 You've already issued ${count} vouchers with <b>Factura ARCA</b>! ` +
+              `How's your experience going? Open the <b>Electronic Invoicing</b> view ` +
+              `and leave us your feedback — it helps us a lot to keep improving. 🙌${cta}`
+            : `🎉 ¡Ya emitiste ${count} comprobantes con <b>Factura ARCA</b>! ` +
+              `¿Nos contás cómo viene tu experiencia? Abrí la vista <b>Facturación Electrónica</b> ` +
+              `y dejanos tu opinión — nos ayuda un montón a seguir mejorando. 🙌${cta}`;
 
         await postMondayUpdate({ apiToken, itemId, body });
         await db.query(
@@ -6069,7 +6077,9 @@ async function comprobanteHandler(req, res) {
                 console.warn(`[emit] claim falló item ${itemId} — ya hay una emisión en curso, abortando sin tocar la fila`);
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
-                    body: '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
+                    body: readiness?.boardConfig?.language === 'en'
+                        ? "⏳ An invoice is already being issued for this item. Wait for it to finish — don't trigger the recipe again."
+                        : '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
                 }).catch(() => {});
                 return;
             }
@@ -6639,7 +6649,7 @@ async function comprobanteHandler(req, res) {
             // Pedido de calificación (FIRE-AND-FORGET) — al llegar a 3 éxitos deja
             // UN comentario en el item invitando a calificar. Nunca rompe la emisión.
             if (afipResult?.cae) {
-                maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId })
+                maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: readiness?.boardConfig?.language })
                     .catch((err) => console.warn('[review-nudge] fire-and-forget falló:', err.message));
             }
 
@@ -6722,10 +6732,13 @@ async function comprobanteHandler(req, res) {
                     // ya tiene CAE valido en AFIP/DB.
                     console.warn('[write-back] CAE fire-and-forget falló:', e.message);
                     try {
-                        const warnBody =
-                            `⚠️ El CAE se emitió correctamente pero no pudimos escribirlo en la ` +
-                            `columna del item. Copialo del PDF si vas a emitir una Nota de Crédito ` +
-                            `o Débito sobre esta factura.<br/><br/><b>CAE:</b> ${afipResult.cae}`;
+                        const warnBody = readiness?.boardConfig?.language === 'en'
+                            ? `⚠️ The CAE was issued successfully but we couldn't write it to the ` +
+                              `item column. Copy it from the PDF if you'll issue a Credit or Debit ` +
+                              `Note against this invoice.<br/><br/><b>CAE:</b> ${afipResult.cae}`
+                            : `⚠️ El CAE se emitió correctamente pero no pudimos escribirlo en la ` +
+                              `columna del item. Copialo del PDF si vas a emitir una Nota de Crédito ` +
+                              `o Débito sobre esta factura.<br/><br/><b>CAE:</b> ${afipResult.cae}`;
                         await postMondayUpdate({ apiToken: mondayToken, itemId, body: warnBody });
                     } catch (warnErr) {
                         console.warn('[write-back] no se pudo postear aviso de CAE:', warnErr.message);
@@ -6788,7 +6801,7 @@ async function comprobanteHandler(req, res) {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId && boardId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind });
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind, language: readiness?.boardConfig?.language });
 
                     // Si NO es idempotencia → marcar el item como "Error".
                     // Si SI es idempotencia → la fila DB ya esta en success, pero
@@ -7450,7 +7463,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 console.warn(`[nc] claim falló item ${itemId} — ya hay una ${docAbbr} en curso, abortando sin tocar la fila`);
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
-                    body: `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`,
+                    body: ncLanguage === 'en'
+                        ? `⏳ A ${esND ? 'Debit Note' : 'Credit Note'} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`
+                        : `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`,
                 }).catch(() => {});
                 return;
             }
@@ -7650,19 +7665,30 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             const pvLargo  = String(ncDraft?.punto_venta || '').padStart(4, '0');
             const nroLargo = String(afipResult?.numero_comprobante || '').padStart(8, '0');
             const facturaNroLargo = String(facturaCbteNro).padStart(8, '0');
-            let okBody = `✅ <b>${docLabel} emitida</b><br/><br/>` +
-                `Comprobante: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
-                `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>`;
+            const isEnNc = ncLanguage === 'en';
+            const docLabelLoc = isEnNc ? (esND ? 'Debit Note' : 'Credit Note') : docLabel;
+            let okBody = isEnNc
+                ? `✅ <b>${docLabelLoc} issued</b><br/><br/>` +
+                  `Voucher: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
+                  `CAE: ${afipResult.cae} (exp. ${afipResult.cae_vencimiento || '—'})<br/>`
+                : `✅ <b>${docLabel} emitida</b><br/><br/>` +
+                  `Comprobante: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
+                  `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>`;
             if (esND) {
-                okBody +=
-                    `Importe: ${ncLines.importeTotal.toFixed(2)}<br/>` +
-                    `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
+                okBody += isEnNc
+                    ? `Amount: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`
+                    : `Importe: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
             } else {
                 const saldoRestante = Number((saldo - ncLines.importeTotal).toFixed(2));
-                okBody +=
-                    `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
-                    `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
-                    ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
+                okBody += isEnNc
+                    ? `Credited amount: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
+                      ` — remaining balance to credit: ${saldoRestante.toFixed(2)}.`
+                    : `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
+                      ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
             }
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
@@ -7703,7 +7729,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             }
 
             // Pedido de calificación (FIRE-AND-FORGET) — mismo nudge que en factura.
-            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId })
+            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: ncLanguage })
                 .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
 
             console.log(`[nc] ── OK item ${itemId} ── ${docAbbr} ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
@@ -7723,7 +7749,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel });
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel, language: ncLanguage });
                     // Si NO es idempotencia → "Error". Si SI es idempotencia → restaurar a
                     // "Comprobante Creado" (la NC/ND ya existe en success; el status habia
                     // pasado a "Creando" antes del claim y quedaria colgado en amarillo si
@@ -7782,7 +7808,7 @@ app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, (req, res
 // Cuando el handler de factura delega a NC/ND y la delegacion falla en el path
 // que vuelve al catch del wrapper, displayKind permite decir "Nota de Credito"
 // en lugar del generico "comprobante".
-function buildErrorComment(err, displayKind = 'comprobante') {
+function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
     const msg = err?.message || 'Error desconocido';
     const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
 
@@ -7959,24 +7985,191 @@ function buildErrorComment(err, displayKind = 'comprobante') {
         },
     ];
 
-    const known = KNOWN_ERRORS.find(e => e.match.test(msg));
+    // Versión en inglés de KNOWN_ERRORS para boards en inglés. MISMOS `match`
+    // (la app tira los errores en español, así que el regex matchea igual); solo
+    // cambia el texto user-facing. Las partes dinámicas (mainMsg, subitemDetails)
+    // se reusan tal cual.
+    const KNOWN_ERRORS_EN = [
+        {
+            match: /Item incompleto/i,
+            title: 'Missing item data',
+            detail: subitemDetails.length > 0
+                ? 'Fill in these columns (empty or with invalid data) and trigger the recipe again:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
+                : 'There are required fields missing in the item or its subitems.',
+            solucion: "Open the item, fill in the columns marked with ❌ and retry. If a column is missing, check the <b>Visual Mapping</b> in the app's configuration view.",
+        },
+        {
+            match: /falta.*mapeo|falta.*configurar.*mapeo|falta.*mapping/i,
+            title: 'Column mapping not configured',
+            detail: "The board doesn't have configured which column corresponds to each invoice field.",
+            solucion: "Open the app's view → <b>Visual Mapping</b> section → select the columns and save.",
+        },
+        {
+            match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0/i,
+            title: 'Incomplete or missing subitems',
+            detail: subitemDetails.length > 0
+                ? 'The following subitems have empty or invalid fields:<br/>' +
+                  subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
+                : 'No subitems found with Description, Quantity and Unit Price filled in.',
+            solucion: 'Check each subitem and fill in the required fields: <b>Description</b>, <b>Quantity</b> (number) and <b>Unit Price</b> (number). If there are none, create at least one.',
+        },
+        {
+            match: /Configuración incompleta/i,
+            title: 'Incomplete configuration',
+            detail: mainMsg,
+            solucion: "Open the app's view → complete the pending steps in <b>Visual Mapping</b>. Make sure to map all required columns.",
+        },
+        {
+            match: /faltan certificados|certificados.*afip|falta.*crt|falta.*key/i,
+            title: 'Missing AFIP certificates',
+            detail: 'No digital certificates were found to authenticate with AFIP.',
+            solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the .crt file and the private key (.key).",
+        },
+        {
+            match: /certificados.*expirados|expir/i,
+            title: 'AFIP certificates expired',
+            detail: 'The digital certificates are expired and AFIP rejects the authentication.',
+            solucion: "Generate new certificates in AFIP/ARCA and upload them in the app's view → <b>ARCA Certificates</b> section.",
+        },
+        {
+            match: /tipo de factura incorrecto/i,
+            title: 'Incorrect invoice type',
+            detail: "The issuer's or recipient's tax data doesn't match the invoice type that was attempted.",
+            solucion: "Check two things:<br/>&nbsp;&nbsp;1) In the app, open <b>Tax Details</b> and confirm your company's <b>VAT Condition</b> is set correctly (Registered, Monotributo, etc.).<br/>&nbsp;&nbsp;2) In the item, confirm the <b>recipient CUIT</b> is correct. The app automatically asks AFIP for the recipient's condition to decide whether A, B or C applies.",
+        },
+        {
+            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)/i,
+            title: 'This item already has a voucher',
+            detail: mainMsg,
+            solucion: 'Each item corresponds to <b>a single voucher</b>. To issue another — or the Credit Note for this invoice — create a <b>new item</b> on the board. The Credit Note references the invoice by its CAE.',
+        },
+        {
+            match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
+            title: 'Invalid recipient CUIT / DNI',
+            detail: 'The recipient CUIT / DNI field is empty or has the wrong format.',
+            solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with exactly 11 numeric digits (e.g. 20327446348). No dashes or spaces.',
+        },
+        {
+            match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
+            title: 'Error querying the AFIP registry',
+            detail: "The recipient CUIT's VAT condition couldn't be verified on AFIP's servers.",
+            solucion: 'Check that the recipient CUIT is correct. If it is, retry in a few minutes (it may be a temporary AFIP outage).',
+        },
+        {
+            match: /empresa no encontrada|no encontrada.*cuenta/i,
+            title: 'Company not configured',
+            detail: 'The tax data of the issuing company was not found.',
+            solucion: "Open the app's view → <b>Tax Details</b> section → fill in Legal Name, CUIT, Point of Sale and save.",
+        },
+        {
+            match: /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|network.*error|terminated/i,
+            title: 'Temporary connection failure with AFIP',
+            detail: 'It was a network glitch, not a problem with your data. The voucher was <b>not issued</b> (no duplicate).',
+            solucion: 'Trigger the recipe again. If it keeps failing, wait a few minutes and retry.',
+        },
+        {
+            match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
+            title: 'AFIP is not responding correctly',
+            detail: "AFIP's servers didn't respond in time or returned an error. <b>This is not a configuration problem on your end</b>, it's on AFIP's side.",
+            solucion: "Wait a few minutes and try again. AFIP usually has brief outages or maintenance. If it's still failing after 30 minutes, contact the app's support.",
+        },
+        {
+            match: /token.*monday|no hay token|sessionToken/i,
+            title: 'monday authentication error',
+            detail: "The app couldn't access the board data.",
+            solucion: "Close the app's view and reopen it. If the error persists, uninstall the app from the board and reinstall it from the monday Marketplace.",
+        },
+        {
+            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta/i,
+            title: 'Service dates required',
+            detail: mainMsg,
+            solucion: 'Fill in the <b>Service Date From</b> and <b>Service Date To</b> columns in the item. They are required when the subitems include services.',
+        },
+        {
+            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva/i,
+            title: "C voucher doesn't carry VAT",
+            detail: mainMsg,
+            solucion: "C vouchers (Invoice or Credit Note) don't break out VAT because the issuer is Monotributo or Exempt. Open the item's subitems and set the <b>VAT Rate %</b> column to <b>0</b> on all of them. Then retry.",
+        },
+        {
+            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida/i,
+            title: 'Invalid VAT rate',
+            detail: subitemDetails.length > 0
+                ? 'The subitems have different VAT rates:<br/>' +
+                  subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
+                : mainMsg,
+            solucion: 'All subitems of an invoice must have the <b>same VAT rate</b>. Check the VAT Rate % column and make sure all subitems have the same value (0, 2.5, 5, 10.5, 21 or 27).',
+        },
+        {
+            match: /tipo de comprobante no reconocido/i,
+            title: 'Voucher Type not recognized',
+            detail: mainMsg,
+            solucion: "The item's <b>Voucher Type</b> column must say <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Fix the value and trigger the recipe again.",
+        },
+        {
+            match: /cae de referencia|columna del cae|no se encontró ninguna factura/i,
+            title: "Couldn't identify the invoice to cancel",
+            detail: mainMsg,
+            solucion: "In the Credit Note item, paste the 14-digit <b>CAE</b> of the invoice you want to cancel into the CAE column. You get it from that invoice's PDF or from the comment the app left when it was issued.",
+        },
+        {
+            match: /item de nota de (cr[eé]dito|d[eé]bito) no tiene sub[ií]tems/i,
+            title: 'The Credit Note has no lines to credit',
+            detail: mainMsg,
+            solucion: 'Add what you want to credit as <b>subitems</b> of the item — each line with Description, Quantity and Price. The Credit Note is issued for the sum of those subitems.',
+        },
+        {
+            match: /supera el saldo disponible de la factura/i,
+            title: 'The Credit Note exceeds the invoice balance',
+            detail: mainMsg,
+            solucion: "You can't credit more than what was invoiced. Lower the subitem amounts so the total doesn't exceed the <b>available balance</b> shown above.",
+        },
+        {
+            match: /alícuota iva de la nota de crédito.*no coincide/i,
+            title: "The Credit Note's VAT rate doesn't match the invoice",
+            detail: mainMsg,
+            solucion: 'The Credit Note is credited with the same VAT that was invoiced. Adjust the <b>VAT Rate %</b> column of the subitems to match the original invoice.',
+        },
+        {
+            match: AFIP_IDEMPOTENT_ERROR_PATTERN,
+            title: 'A voucher was already issued for this item',
+            detail: mainMsg,
+            solucion: 'Each board item corresponds to <b>a single voucher</b>. To issue another, <b>create a new item</b> on the board and trigger it from there. This avoids duplicating vouchers in AFIP.',
+        },
+    ];
+
+    const isEn = language === 'en';
+    const errorsArr = isEn ? KNOWN_ERRORS_EN : KNOWN_ERRORS;
+    const known = errorsArr.find(e => e.match.test(msg));
+    const A = isEn
+        ? { issue: "Couldn't issue", cause: 'Cause:', fix: 'How to fix it:',
+            fallback: "Review the item data and retry. If the error persists, contact the app's support with the item name." }
+        : { issue: 'No se pudo emitir', cause: 'Causa:', fix: 'Cómo solucionarlo:',
+            fallback: 'Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.' };
 
     if (known) {
-        return `<b>❌ No se pudo emitir ${kindArticle(kind)}</b><br/><br/>` +
-            `<b>Causa:</b> ${known.title}<br/>${known.detail}<br/><br/>` +
-            `<b>Cómo solucionarlo:</b> ${known.solucion}`;
+        return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
+            `<b>${A.cause}</b> ${known.title}<br/>${known.detail}<br/><br/>` +
+            `<b>${A.fix}</b> ${known.solucion}`;
     }
 
-    return `<b>❌ No se pudo emitir ${kindArticle(kind)}</b><br/><br/>` +
-        `<b>Causa:</b> ${mainMsg}<br/><br/>` +
-        `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.`;
+    return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
+        `<b>${A.cause}</b> ${mainMsg}<br/><br/>` +
+        `<b>${A.fix}</b> ${A.fallback}`;
 }
 
 // M6: helper para concordancia gramatical del comprobante en mensajes user-facing.
 //   'Factura' / 'Nota de Crédito' / 'Nota de Débito' → "la Factura" / "la Nota de ..."
 //   'comprobante' (default) → "el comprobante"
-function kindArticle(kind) {
+function kindArticle(kind, language = 'es') {
     const k = String(kind || 'comprobante').trim();
+    if (language === 'en') {
+        if (/^factura/i.test(k)) return 'the invoice';
+        if (/cr[eé]dito/i.test(k)) return 'the credit note';
+        if (/d[eé]bito/i.test(k)) return 'the debit note';
+        return 'the voucher';
+    }
     if (/^factura/i.test(k) || /^nota de/i.test(k)) return `la ${k}`;
     return `el ${k}`;
 }
@@ -7986,8 +8179,8 @@ function kindArticle(kind) {
  * displayKind es el nombre user-facing del comprobante ('Factura' / 'Nota de Crédito' /
  * 'Nota de Débito'); default 'comprobante' para call sites legacy.
  */
-async function postMondayErrorComment({ apiToken, itemId, error, displayKind }) {
-    const body = buildErrorComment(error, displayKind);
+async function postMondayErrorComment({ apiToken, itemId, error, displayKind, language = 'es' }) {
+    const body = buildErrorComment(error, displayKind, language);
     const mutation = `
         mutation {
             create_update(item_id: ${itemId}, body: ${JSON.stringify(body)}) {
