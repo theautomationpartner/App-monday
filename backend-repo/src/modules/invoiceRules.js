@@ -243,8 +243,8 @@ function parseMoneda(raw) {
     if (/^pes(o)?(s)?$/.test(normalized) || normalized === 'ars') {
         return 'PES';
     }
-    // Dolares: aceptamos "dol", "dolar", "dolares" + "usd" + codigos AFIP
-    if (/^dol(a)?(r)?(es)?$/.test(normalized) || normalized === 'usd') {
+    // Dolares: aceptamos "dol", "dolar", "dolares", "dollar(s)" (EN) + "usd" + codigos AFIP
+    if (/^dol(a)?(r)?(es)?$/.test(normalized) || /^dollar(s)?$/.test(normalized) || normalized === 'usd') {
         return 'DOL';
     }
     return null; // no reconocido

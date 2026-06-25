@@ -879,7 +879,7 @@ function checkReceptorWriteBackMapped(mapping) {
 function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
     const errors = [];
     const VALID_ALICUOTAS = new Set(['0', '2.5', '5', '10.5', '21', '27']);
-    const VALID_PROD_SERV = new Set(['servicio', 'producto']);
+    const VALID_PROD_SERV = new Set(['servicio', 'producto', 'service', 'product']);
 
     // Columnas de write-back del receptor obligatorias (razón social + cond. IVA).
     errors.push(...checkReceptorWriteBackMapped(mapping));
@@ -946,7 +946,7 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
             errors.push(`Subitem "${name}": falta la columna ${prodServLabel} — debe decir "producto" o "servicio"`);
         } else if (!VALID_PROD_SERV.has(prodServ)) {
             errors.push(`Subitem "${name}": columna ${prodServLabel} debe decir "producto" o "servicio" (actual: "${prodServRaw}")`);
-        } else if (prodServ === 'servicio') {
+        } else if (prodServ === 'servicio' || prodServ === 'service') {
             hayServicio = true;
         }
 
@@ -5733,14 +5733,14 @@ async function comprobanteHandler(req, res) {
                 // factura se emitiría como Nota de Crédito → comprobante fiscal
                 // incorrecto. Anclando al inicio con /^\s*factura/i nos aseguramos
                 // que cualquier "Factura ..." cae acá, no en NC.
-                if (/^\s*factura/i.test(tipoComp)) {
-                    // tipoComp empieza con "Factura" (incluye FCE) → emitir factura.
-                } else if (/cr[eé]dito/i.test(tipoComp)) {
+                if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
+                    // tipoComp empieza con "Factura"/"Invoice" (incluye FCE) → emitir factura.
+                } else if (/cr[eé]dito/i.test(tipoComp) || /credit/i.test(tipoComp)) {
                     displayKind = 'Nota de Crédito';
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Crédito`);
                     await emitNotaHandler(req, res, 'NC');
                     return;
-                } else if (/d[eé]bito/i.test(tipoComp)) {
+                } else if (/d[eé]bito/i.test(tipoComp) || /debit/i.test(tipoComp)) {
                     displayKind = 'Nota de Débito';
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Débito`);
                     await emitNotaHandler(req, res, 'ND');
@@ -5748,7 +5748,7 @@ async function comprobanteHandler(req, res) {
                 } else {
                     throw new Error(
                         `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
-                        `Tiene que ser "Factura", "Nota de Crédito" o "Nota de Débito".`
+                        `Tiene que ser "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" o "Nota de Débito"/"Debit Note".`
                     );
                 }
             }
@@ -6859,7 +6859,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
     const esND      = clase === 'ND';
     const docLabel  = esND ? 'Nota de Débito' : 'Nota de Crédito';
     const docAbbr   = esND ? 'ND' : 'NC';
-    const tipoRegex = esND ? /d[eé]bito/i : /cr[eé]dito/i;
+    const tipoRegex = esND ? /d[eé]bito|debit/i : /cr[eé]dito|credit/i;
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
     const inputFields   = payload?.inputFields || {};
