@@ -256,7 +256,7 @@ function buildAutoMappingFromColumns(itemCols, subitemCols) {
 }
 
 const App = () => {
-  const { t, setLang } = useT();
+  const { t, lang, setLang } = useT();
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
   const [activeSection, setActiveSection] = useState("datos");
@@ -762,7 +762,7 @@ const App = () => {
         console.log("[mapeo] Columnas cargadas:", boardColumns.length, boardColumns.map(c => c.title));
 
         if (!boardColumns.length) {
-          setColumnsLoadError("La query respondió sin columnas. Verificá que el board esté accesible.");
+          setColumnsLoadError(t("err.noColumns"));
           return;
         }
 
@@ -1397,7 +1397,7 @@ const App = () => {
       });
       const csrPem = res.data?.csrPem || "";
       const aliasUsed = res.data?.alias || aliasFinal;
-      if (!csrPem) throw new Error("El servidor no devolvió el CSR");
+      if (!csrPem) throw new Error(t("err.csrEmpty"));
 
       setLastGeneratedCsrPem(csrPem);
       setCertificateAlias(aliasUsed);
@@ -1432,7 +1432,7 @@ const App = () => {
         responseType: "text"
       });
       const csrPem = typeof res.data === "string" ? res.data : "";
-      if (!csrPem) throw new Error("No se recibió el CSR del servidor");
+      if (!csrPem) throw new Error(t("err.csrEmptyRedownload"));
       setLastGeneratedCsrPem(csrPem);
       const aliasSafe = (certificateAlias || "monday-facturacion").replace(/[^a-zA-Z0-9_-]/g, "_");
       downloadBlob(csrPem, `${aliasSafe}.csr`);
@@ -1885,7 +1885,7 @@ const App = () => {
               {completedSections === totalSections ? (
                 <>{t("header.allSet")}</>
               ) : nextStepItem ? (
-                <>{t("header.youStillNeedPre")}<span className="gd-header-accent">{nextStepItem.label.toLowerCase()}</span>{t("header.youStillNeedSuf")}</>
+                <>{t("header.youStillNeedPre")}<span className="gd-header-accent">{t(nextStepItem.labelKey).toLowerCase()}</span>{t("header.youStillNeedSuf")}</>
               ) : (
                 <>{t("header.almostReady")}</>
               )}
@@ -2273,16 +2273,16 @@ const App = () => {
                       </div>
                       <div className="invoice-mockup-data">
                         <div className="invoice-mockup-name">
-                          {(fiscal.nombreFantasia || fiscal.razonSocial || "TU EMPRESA S.A.").toUpperCase()}
+                          {(fiscal.nombreFantasia || fiscal.razonSocial || t("map.previewSampleCompany")).toUpperCase()}
                         </div>
                         <div className="invoice-mockup-line">
-                          <strong>Razón Social:</strong> {(fiscal.razonSocial || "Tu Empresa S.A.")}
+                          <strong>{t("map.mockRazonSocial")}</strong> {(fiscal.razonSocial || t("map.previewSampleCompany"))}
                         </div>
                         <div className="invoice-mockup-line">
-                          <strong>Domicilio:</strong> {fiscal.domicilio || "Av. Ejemplo 1234, CABA"}
+                          <strong>{t("map.mockDomicilio")}</strong> {fiscal.domicilio || t("map.previewSampleAddress")}
                         </div>
                         <div className="invoice-mockup-line">
-                          <strong>CUIT:</strong> {fiscal.cuit || "20-12345678-9"}
+                          <strong>{t("map.mockCuit")}</strong> {fiscal.cuit || "20-12345678-9"}
                         </div>
                       </div>
                     </div>
@@ -3202,7 +3202,7 @@ const App = () => {
                       </span>
                     )}
                     <span className="gd-confirm-hint">
-                      {t("map.statusColHelpPre")}"{COMPROBANTE_STATUS_FLOW.processing}"{t("map.statusColHelpMid")}"{COMPROBANTE_STATUS_FLOW.success}"{t("map.statusColHelpSuf")}
+                      {t("map.statusColHelpPre")}"{statusFlowFor(lang).processing}"{t("map.statusColHelpMid")}"{statusFlowFor(lang).success}"{t("map.statusColHelpSuf")}
                     </span>
                   </div>
                 </div>
@@ -3401,9 +3401,9 @@ const App = () => {
                 {/* Header de la factura */}
                 <div className="rf-invoice-head">
                   <div>
-                    <div className="rf-invoice-title">FACTURA <span className="rf-invoice-type">X</span></div>
+                    <div className="rf-invoice-title">{t("map.modelInvoiceHeader")} <span className="rf-invoice-type">X</span></div>
                     <div className="rf-invoice-sub">
-                      {(fiscal.razonSocial || "Tu Empresa S.A.")} · CUIT {fiscal.cuit || "—"}
+                      {(fiscal.razonSocial || t("map.previewSampleCompany"))} · CUIT {fiscal.cuit || "—"}
                     </div>
                   </div>
                   <div className="rf-invoice-meta">
