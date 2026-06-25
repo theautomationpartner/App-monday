@@ -7,7 +7,7 @@ import "monday-ui-react-core/dist/main.css";
 import "./App.css";
 import WelcomePage from "./WelcomePage";
 import iconoFacturacion from "./assets/icono-facturacion.svg";
-import { useT, LanguageSwitcher } from "./i18n.jsx";
+import { useT } from "./i18n.jsx";
 
 const monday = mondaySdk();
 
@@ -255,7 +255,7 @@ function buildAutoMappingFromColumns(itemCols, subitemCols) {
 }
 
 const App = () => {
-  const { t } = useT();
+  const { t, setLang } = useT();
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
   const [activeSection, setActiveSection] = useState("datos");
@@ -960,6 +960,16 @@ const App = () => {
     const safety = setTimeout(() => setIsInitialDataReady(true), 10000);
     return () => clearTimeout(safety);
   }, [isInitialDataReady]);
+
+  // Auto-detección de idioma de la UI: el idioma del BOARD manda. Apenas cargan
+  // las columnas, detectamos el idioma del status (mismo helper que usa el guardado
+  // de config) y ponemos la UI en ese idioma — board español → UI español, board
+  // inglés → UI inglés. Reemplaza al switch manual. setLang persiste en localStorage,
+  // así las páginas legales (/terms, /privacy) abren en el mismo idioma.
+  useEffect(() => {
+    if (!columns || columns.length === 0) return;
+    setLang(detectBoardLanguage(columns, boardConfig.status_column_id));
+  }, [columns, boardConfig.status_column_id, setLang]);
 
   // Auto-mapeo por plantilla: si no hay mapeo guardado y las columnas coinciden
   // con los IDs fijos de la plantilla, guardar el mapeo automáticamente en la DB.
@@ -1831,10 +1841,6 @@ const App = () => {
             );
           })}
         </nav>
-
-        <div className="gd-sidebar-lang">
-          <LanguageSwitcher />
-        </div>
 
         <div className="gd-sidebar-footer">
           <span className={`status-dot ${context ? "online" : ""}`} />
