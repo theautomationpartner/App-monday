@@ -4142,6 +4142,11 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
         required_columns,
         auto_rename_item,
         auto_update_status,
+        language,
+        trigger_label,
+        processing_label,
+        success_label,
+        error_label,
     } = req.body;
 
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
@@ -4151,6 +4156,17 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
     // si por algun motivo no vienen estos flags en el body (ej: deploys parciales).
     const autoRenameItem    = auto_rename_item    === false ? false : true;
     const autoUpdateStatus  = auto_update_status  === false ? false : true;
+
+    // Idioma del board: lo manda el frontend tras detectarlo de los labels del
+    // status. Default 'es'. Los 4 labels: los que mande el frontend o, si no
+    // manda, el flujo del idioma. Frontend viejo (no manda language ni labels)
+    // → 'es' + flujo español de SIEMPRE → clientes existentes intactos.
+    const lang = language === 'en' ? 'en' : 'es';
+    const flow = resolveStatusFlow(lang);
+    const triggerLabel    = trigger_label    || flow.trigger;
+    const processingLabel = processing_label || flow.processing;
+    const successLabel    = success_label    || flow.success;
+    const errorLabel      = error_label      || flow.error;
 
     if (!accountId || !board_id) {
         return res.status(400).json({ error: 'monday_account_id y board_id son obligatorios' });
@@ -4184,12 +4200,14 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                  view_id = $4,
                  app_feature_id = $5,
                  trigger_label = $6,
-                 success_label = $7,
-                 error_label = $8,
-                 required_columns_json = $9,
-                 workspace_id = $10,
-                 auto_rename_item = $11,
-                 auto_update_status = $12,
+                 processing_label = $7,
+                 success_label = $8,
+                 error_label = $9,
+                 language = $10,
+                 required_columns_json = $11,
+                 workspace_id = $12,
+                 auto_rename_item = $13,
+                 auto_update_status = $14,
                  updated_at = CURRENT_TIMESTAMP
              WHERE company_id = $1
                AND board_id = $2
@@ -4200,9 +4218,11 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 status_column_id ? String(status_column_id) : null,
                 view_id || null,
                 app_feature_id || null,
-                COMPROBANTE_STATUS_FLOW.trigger,
-                COMPROBANTE_STATUS_FLOW.success,
-                COMPROBANTE_STATUS_FLOW.error,
+                triggerLabel,
+                processingLabel,
+                successLabel,
+                errorLabel,
+                lang,
                 JSON.stringify(required_columns),
                 workspaceId,
                 autoRenameItem,
@@ -4223,12 +4243,14 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 app_feature_id,
                 status_column_id,
                 trigger_label,
+                processing_label,
                 success_label,
                 error_label,
+                language,
                 required_columns_json,
                 auto_rename_item,
                 auto_update_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *`,
             [
                 company.id,
@@ -4237,9 +4259,11 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 view_id || null,
                 app_feature_id || null,
                 status_column_id ? String(status_column_id) : null,
-                COMPROBANTE_STATUS_FLOW.trigger,
-                COMPROBANTE_STATUS_FLOW.success,
-                COMPROBANTE_STATUS_FLOW.error,
+                triggerLabel,
+                processingLabel,
+                successLabel,
+                errorLabel,
+                lang,
                 JSON.stringify(required_columns),
                 autoRenameItem,
                 autoUpdateStatus,
