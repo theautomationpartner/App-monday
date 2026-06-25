@@ -753,13 +753,14 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
         const boardCfgResult = await db.query(
             `SELECT status_column_id, trigger_label, success_label, error_label,
                     processing_label, required_columns_json,
-                    auto_rename_item, auto_update_status
+                    auto_rename_item, auto_update_status, language
              FROM board_automation_configs
              WHERE company_id=$1 AND board_id=$2
              ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
             [company.id, String(boardId)]
         );
         boardConfig = boardCfgResult.rows[0] || null;
+        applyStatusFlowDefaults(boardConfig);
         if (!boardConfig) {
             missing.push('board_config');
         } else {
@@ -1061,6 +1062,37 @@ const COMPROBANTE_STATUS_FLOW = {
     success: 'Comprobante Creado',
     error: 'Error - Mirar Comentarios',
 };
+
+// Flujo de status en inglés, para boards instalados desde el template inglés.
+// Los strings DEBEN coincidir EXACTO con los labels del board EN (si no, monday
+// crea labels basura por create_labels_if_missing). El error usa "See Updates"
+// porque los comentarios viven en la pestaña "Updates" de monday.
+const COMPROBANTE_STATUS_FLOW_EN = {
+    trigger: 'Create Voucher',
+    processing: 'Creating Voucher',
+    success: 'Voucher Created',
+    error: 'Error - See Updates',
+};
+
+// Resuelve el flujo de status por idioma del board. Default = español: cualquier
+// valor que no sea 'en' (incluido NULL/undefined de clientes legacy) cae al flujo
+// español de SIEMPRE → comportamiento byte-idéntico para clientes existentes.
+function resolveStatusFlow(language) {
+    return language === 'en' ? COMPROBANTE_STATUS_FLOW_EN : COMPROBANTE_STATUS_FLOW;
+}
+
+// Rellena SOLO los labels NULL del boardConfig con el flujo del idioma. Preserva
+// cualquier label custom que el cliente ya tenga guardado. Centraliza la lógica
+// de idioma en un solo lugar para no tocar los ~18 sitios que escriben status.
+function applyStatusFlowDefaults(cfg) {
+    if (!cfg) return cfg;
+    const flow = resolveStatusFlow(cfg.language);
+    cfg.trigger_label    = cfg.trigger_label    || flow.trigger;
+    cfg.processing_label = cfg.processing_label || flow.processing;
+    cfg.success_label    = cfg.success_label    || flow.success;
+    cfg.error_label      = cfg.error_label      || flow.error;
+    return cfg;
+}
 
 function parseAuthorizationToken(req) {
     const authHeader = req.headers.authorization || req.headers.Authorization;
@@ -3922,8 +3954,8 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
             try {
                 const boardConfigResult = await db.query(
                     `SELECT status_column_id, trigger_label, success_label, error_label,
-                            required_columns_json, updated_at,
-                            auto_rename_item, auto_update_status
+                            processing_label, required_columns_json, updated_at,
+                            auto_rename_item, auto_update_status, language
                      FROM board_automation_configs
                      WHERE company_id = $1
                        AND board_id = $2
@@ -3936,12 +3968,14 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
 
                 if (boardConfigResult.rows.length > 0) {
                     const row = boardConfigResult.rows[0];
+                    const flow = resolveStatusFlow(row.language);
                     boardConfig = {
                         status_column_id: row.status_column_id || '',
-                        trigger_label: row.trigger_label || COMPROBANTE_STATUS_FLOW.trigger,
-                        processing_label: COMPROBANTE_STATUS_FLOW.processing,
-                        success_label: row.success_label || COMPROBANTE_STATUS_FLOW.success,
-                        error_label: row.error_label || COMPROBANTE_STATUS_FLOW.error,
+                        trigger_label: row.trigger_label || flow.trigger,
+                        processing_label: row.processing_label || flow.processing,
+                        success_label: row.success_label || flow.success,
+                        error_label: row.error_label || flow.error,
+                        language: row.language || 'es',
                         required_columns: row.required_columns_json || [],
                         // Default TRUE para no afectar a clientes existentes que
                         // no tienen estos flags grabados aun (NULL o no existe).
@@ -4049,8 +4083,8 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
 
         const result = await db.query(
             `SELECT id, status_column_id, trigger_label, success_label, error_label,
-                    required_columns_json, updated_at,
-                    auto_rename_item, auto_update_status
+                    processing_label, required_columns_json, updated_at,
+                    auto_rename_item, auto_update_status, language
              FROM board_automation_configs
              WHERE company_id = $1
                AND board_id = $2
@@ -4066,15 +4100,17 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
         }
 
         const row = result.rows[0];
+        const flow = resolveStatusFlow(row.language);
         return res.json({
             hasConfig: true,
             config: {
                 id: row.id,
                 status_column_id: row.status_column_id || '',
-                trigger_label: row.trigger_label || COMPROBANTE_STATUS_FLOW.trigger,
-                processing_label: COMPROBANTE_STATUS_FLOW.processing,
-                success_label: row.success_label || COMPROBANTE_STATUS_FLOW.success,
-                error_label: row.error_label || COMPROBANTE_STATUS_FLOW.error,
+                trigger_label: row.trigger_label || flow.trigger,
+                processing_label: row.processing_label || flow.processing,
+                success_label: row.success_label || flow.success,
+                error_label: row.error_label || flow.error,
+                language: row.language || 'es',
                 required_columns: row.required_columns_json || [],
                 // Default TRUE para no afectar a clientes que no tienen estos
                 // flags todavia: el comportamiento sigue siendo el de siempre.
@@ -6987,7 +7023,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             try {
                 const cfgRes = await db.query(
                     `SELECT status_column_id, auto_update_status, auto_rename_item,
-                            success_label, error_label, processing_label
+                            success_label, error_label, processing_label, language
                      FROM board_automation_configs
                      WHERE company_id=$1 AND board_id=$2
                      ORDER BY updated_at DESC NULLS LAST, id DESC
@@ -6999,11 +7035,12 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     autoUpdateStatus = cfgRes.rows[0].auto_update_status !== false;
                     autoRenameItem   = cfgRes.rows[0].auto_rename_item !== false;
                     // Labels custom (si el cliente los cambió en mapeo visual);
-                    // fallback al flow estándar. Consistente con factura y con
-                    // el reconcile cron, que ya honra estos campos.
-                    successLabel    = cfgRes.rows[0].success_label    || COMPROBANTE_STATUS_FLOW.success;
-                    errorLabel      = cfgRes.rows[0].error_label      || COMPROBANTE_STATUS_FLOW.error;
-                    processingLabel = cfgRes.rows[0].processing_label || COMPROBANTE_STATUS_FLOW.processing;
+                    // fallback al flow del idioma del board. Consistente con
+                    // factura y con el reconcile cron, que ya honran estos campos.
+                    const flowNc = resolveStatusFlow(cfgRes.rows[0].language);
+                    successLabel    = cfgRes.rows[0].success_label    || flowNc.success;
+                    errorLabel      = cfgRes.rows[0].error_label      || flowNc.error;
+                    processingLabel = cfgRes.rows[0].processing_label || flowNc.processing;
                 }
             } catch (cfgErr) {
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
