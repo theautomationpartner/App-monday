@@ -6801,7 +6801,14 @@ async function comprobanteHandler(req, res) {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId && boardId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind, language: readiness?.boardConfig?.language });
+                    // Releemos la config acá: `readiness` del try está FUERA DE SCOPE
+                    // en el catch (es `const` dentro del try). La usamos tanto para el
+                    // idioma del comentario como para el status. (Bug histórico: el
+                    // comentario referenciaba `readiness` → ReferenceError → el feedback
+                    // de error fallaba en silencio y el item no mostraba nada.)
+                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
+
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind, language: readinessForErr?.boardConfig?.language });
 
                     // Si NO es idempotencia → marcar el item como "Error".
                     // Si SI es idempotencia → la fila DB ya esta en success, pero
@@ -6810,7 +6817,6 @@ async function comprobanteHandler(req, res) {
                     // no quede colgado en amarillo. (Antes solo evitabamos pisar
                     // a "Error" — defensa IDVTA-153 — pero olvidabamos revertir
                     // el "Creando" intermedio.)
-                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
                     const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
                     const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
                     if (errAutoUpdateStatus && errStatusColId) {
@@ -6824,7 +6830,9 @@ async function comprobanteHandler(req, res) {
                         });
                     }
                 }
-            } catch (_) {}
+            } catch (feedbackErr) {
+                console.warn('[emit] no se pudo postear feedback de error al item:', feedbackErr?.message);
+            }
 
             // Persistir el error en la DB — NUNCA si es idempotencia: la fila es
             // una factura exitosa y pisarla con status='error' la corrompe (era
@@ -7762,7 +7770,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                         });
                     }
                 }
-            } catch (_) {}
+            } catch (feedbackErr) {
+                console.warn('[nc] no se pudo postear feedback de error al item:', feedbackErr?.message);
+            }
 
             // Persistir el error en la DB + audit board — NUNCA si es idempotencia:
             // la fila es success y pisarla corrompe la emisión (el cron Fase 3 la
