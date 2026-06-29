@@ -7356,9 +7356,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // se puede emitir. El encabezado (receptor, moneda, condición) lo
             // hereda de la factura.
             if (!ncSubitems || ncSubitems.length === 0) {
-                throw new Error(
-                    `El item de ${docLabel} no tiene subítems. Cargá como subítems ` +
-                    `las líneas de lo que querés ${esND ? 'debitar' : 'acreditar'} (concepto, cantidad y precio).`
+                throw new Error(ncLanguage === 'en'
+                    ? `The ${esND ? 'Debit Note' : 'Credit Note'} item has no subitems. Add the lines you want ` +
+                      `to ${esND ? 'debit' : 'credit'} as subitems (description, quantity and price).`
+                    : `El item de ${docLabel} no tiene subítems. Cargá como subítems ` +
+                      `las líneas de lo que querés ${esND ? 'debitar' : 'acreditar'} (concepto, cantidad y precio).`
                 );
             }
             // Columna de precio: si la factura era en moneda extranjera, la NC
@@ -7391,10 +7393,12 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     facturaAlicuota = ALICUOTA_ID_TO_PCT[facturaDraft.alicuota_iva_id] ?? null;
                 }
                 if (facturaAlicuota != null && String(facturaAlicuota) !== String(ncLines.alicuotaElegida)) {
-                    throw new Error(
-                        `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
-                        `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
-                        `alícuota IVA que la factura que anula.`
+                    throw new Error(ncLanguage === 'en'
+                        ? `The Credit Note's VAT rate (${ncLines.alicuotaElegida}%) doesn't match the invoice's ` +
+                          `(${facturaAlicuota}%). The Credit Note must use the same VAT rate as the invoice it cancels.`
+                        : `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
+                          `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
+                          `alícuota IVA que la factura que anula.`
                     );
                 }
             }
@@ -7536,11 +7540,15 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                          WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                         [company.id, boardId, itemId, clase]
                     ).catch(() => {});
-                    throw new Error(
-                        `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
-                        `disponible de la factura.\n` +
-                        `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
-                        `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+                    throw new Error(ncLanguage === 'en'
+                        ? `The Credit Note (${ncLines.importeTotal.toFixed(2)}) exceeds the available ` +
+                          `invoice balance.\n` +
+                          `Invoiced total: ${facturaTotal.toFixed(2)} · Already credited / in progress: ` +
+                          `${yaAcreditado.toFixed(2)} · Available balance: ${saldo.toFixed(2)}.`
+                        : `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
+                          `disponible de la factura.\n` +
+                          `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
+                          `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
                     );
                 }
                 console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado/en curso=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
@@ -8148,19 +8156,19 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "In the Credit Note item, paste the 14-digit <b>CAE</b> of the invoice you want to cancel into the CAE column. You get it from that invoice's PDF or from the comment the app left when it was issued.",
         },
         {
-            match: /item de nota de (cr[eé]dito|d[eé]bito) no tiene sub[ií]tems/i,
+            match: /(credit|debit) note item has no subitems/i,
             title: 'The Credit Note has no lines to credit',
             detail: mainMsg,
             solucion: 'Add what you want to credit as <b>subitems</b> of the item — each line with Description, Quantity and Price. The Credit Note is issued for the sum of those subitems.',
         },
         {
-            match: /supera el saldo disponible de la factura/i,
+            match: /exceeds the available invoice balance/i,
             title: 'The Credit Note exceeds the invoice balance',
             detail: mainMsg,
             solucion: "You can't credit more than what was invoiced. Lower the subitem amounts so the total doesn't exceed the <b>available balance</b> shown above.",
         },
         {
-            match: /alícuota iva de la nota de crédito.*no coincide/i,
+            match: /vat rate.*doesn't match the invoice/i,
             title: "The Credit Note's VAT rate doesn't match the invoice",
             detail: mainMsg,
             solucion: 'The Credit Note is credited with the same VAT that was invoiced. Adjust the <b>VAT Rate %</b> column of the subitems to match the original invoice.',
