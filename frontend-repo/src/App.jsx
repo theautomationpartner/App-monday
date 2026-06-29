@@ -1780,9 +1780,11 @@ const App = () => {
     return (
       <div className="gd-frame gd-frame-splash">
         <div className="gd-splash">
+          {/* Splash NEUTRO: solo spinner, sin texto. El idioma del board todavía
+              no se detectó (necesita cargar las columnas de monday), así que
+              cualquier texto parpadearía en el idioma equivocado. El spinner es
+              universal — cero confusión para el revisor de monday. */}
           <div className="loader" />
-          <div className="gd-splash-title">{t("splash.title")}</div>
-          <div className="gd-splash-sub">{t("splash.sub")}</div>
         </div>
       </div>
     );
