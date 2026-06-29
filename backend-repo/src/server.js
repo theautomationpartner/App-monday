@@ -789,8 +789,32 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
     return { ready: missing.length === 0, missing, company, certificate, mapping, boardConfig };
 }
 
-function formatMissingConfigError(missing) {
-    const labels = {
+function formatMissingConfigError(missing, language = 'es') {
+    const isEn = language === 'en';
+    const labels = isEn ? {
+        'datos_fiscales':                  'Company tax details',
+        'datos_fiscales.business_name':    'Legal name',
+        'datos_fiscales.cuit':              'Issuer CUIT',
+        'datos_fiscales.punto_venta':       'Point of sale',
+        'certificados_afip':                'AFIP certificates (.crt + .key)',
+        'certificados_afip.expirados':      'Expired AFIP certificates',
+        'mapeo_columnas':                        'Visual column mapping',
+        'mapeo_columnas.fecha_emision':          'Issue Date column (item)',
+        'mapeo_columnas.receptor_cuit':          'Recipient CUIT/DNI column (item)',
+        'mapeo_columnas.condicion_venta':        'Sale Condition column (item)',
+        'mapeo_columnas.fecha_servicio_desde':   'Service Date From column (item)',
+        'mapeo_columnas.fecha_servicio_hasta':   'Service Date To column (item)',
+        'mapeo_columnas.fecha_vto_pago':         'Payment Due Date column (item)',
+        'mapeo_columnas.concepto':               'Description / name column (subitem)',
+        'mapeo_columnas.cantidad':               'Quantity column (subitem)',
+        'mapeo_columnas.precio_unitario':        'Unit Price column (subitem)',
+        'mapeo_columnas.prod_serv':              'Prod/Serv column (subitem)',
+        'mapeo_columnas.unidad_medida':          'Unit of Measure column (subitem)',
+        'mapeo_columnas.alicuota_iva':           'VAT Rate % column (subitem)',
+        'board_config':                          'Board automation configuration',
+        'board_config.status_column_id':         'Board status column',
+        'board_config.invoice_pdf_column':       'Voucher PDF column (File type, item)',
+    } : {
         'datos_fiscales':                  'Datos fiscales de la empresa',
         'datos_fiscales.business_name':    'Razón social',
         'datos_fiscales.cuit':              'CUIT del emisor',
@@ -816,11 +840,15 @@ function formatMissingConfigError(missing) {
     };
     const list = missing.map(k => {
         if (k.startsWith('board_config.columnas_pendientes:')) {
-            return `Columnas requeridas sin resolver: ${k.split(':')[1]}`;
+            return isEn
+                ? `Required columns unresolved: ${k.split(':')[1]}`
+                : `Columnas requeridas sin resolver: ${k.split(':')[1]}`;
         }
         return labels[k] || k;
     });
-    return `Configuración incompleta. Falta: ${list.join(' · ')}`;
+    return isEn
+        ? `Incomplete configuration. Missing: ${list.join(' · ')}`
+        : `Configuración incompleta. Falta: ${list.join(' · ')}`;
 }
 
 /**
@@ -5790,7 +5818,7 @@ async function comprobanteHandler(req, res) {
                 || await validateEmissionReadiness({ mondayAccountId: accountId, boardId });
             if (!readiness.ready) {
                 console.warn(`[emit] Pre-flight falló:`, readiness.missing);
-                throw new Error(formatMissingConfigError(readiness.missing));
+                throw new Error(formatMissingConfigError(readiness.missing, readiness.boardConfig?.language));
             }
 
             // ── 2b-ter. Ruteo por Tipo de Comprobante ──────────────────────────
@@ -7167,9 +7195,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // mapeadas no se emite. El valor del CAE a anular se valida más abajo.
             const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping, ncLanguage);
             if (ncReceptorErrors.length > 0) {
-                throw new Error(
-                    `No se puede emitir ${docLabel}:\n` +
-                    ncReceptorErrors.map(e => `• ${e}`).join('\n')
+                throw new Error(ncLanguage === 'en'
+                    ? `Can't issue the ${esND ? 'Debit Note' : 'Credit Note'}:\n` +
+                      ncReceptorErrors.map(e => `• ${e}`).join('\n')
+                    : `No se puede emitir ${docLabel}:\n` +
+                      ncReceptorErrors.map(e => `• ${e}`).join('\n')
                 );
             }
 
@@ -7183,9 +7213,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (ncMapping.tipo_comprobante) {
                 const tipoCompRaw = (getColumnTextById(ncItemColumns, ncMapping.tipo_comprobante) || '').trim();
                 if (tipoCompRaw && !tipoRegex.test(tipoCompRaw)) {
-                    throw new Error(
-                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                        `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
+                    throw new Error(ncLanguage === 'en'
+                        ? `The item is marked as "${tipoCompRaw}" in the Voucher Type column, ` +
+                          `not as a ${esND ? 'Debit Note' : 'Credit Note'}. Make sure you're triggering the recipe on the right item.`
+                        : `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
+                          `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
                     );
                 }
             }
@@ -7194,10 +7226,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // columna mapeada `factura_referencia`. Esa columna es OBLIGATORIA:
             // sin ella mapeada no se puede emitir una Nota de Crédito.
             if (!ncMapping.factura_referencia) {
-                throw new Error(
-                    'El tablero no tiene mapeada la columna del CAE de referencia. ' +
-                    'Configurala en el Mapeo Visual de la app (sección "Columnas opcionales") ' +
-                    `para poder emitir ${docLabel === 'Nota de Débito' ? 'Notas de Débito' : 'Notas de Crédito'}.`
+                throw new Error(ncLanguage === 'en'
+                    ? `The board doesn't have the reference CAE column mapped. ` +
+                      `Configure it in the app's Visual Mapping ("Optional columns" section) ` +
+                      `to issue ${esND ? 'Debit Notes' : 'Credit Notes'}.`
+                    : 'El tablero no tiene mapeada la columna del CAE de referencia. ' +
+                      'Configurala en el Mapeo Visual de la app (sección "Columnas opcionales") ' +
+                      `para poder emitir ${docLabel === 'Nota de Débito' ? 'Notas de Débito' : 'Notas de Crédito'}.`
                 );
             }
             // Lectura robusta del CAE: la columna puede ser numérica o de texto.
@@ -7206,16 +7241,22 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 // Distinguir "vacía" de "valor inválido" para un mensaje útil.
                 const rawShown = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
                 if (!rawShown) {
-                    throw new Error(
-                        'La columna del CAE de referencia está vacía. Pegá ahí el CAE ' +
-                        `(14 dígitos) de la factura que esta ${docLabel} debe anular — lo ` +
-                        'encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.'
+                    throw new Error(ncLanguage === 'en'
+                        ? `The reference CAE column is empty. Paste there the CAE ` +
+                          `(14 digits) of the invoice this ${esND ? 'Debit Note' : 'Credit Note'} must cancel — you'll ` +
+                          `find it in the invoice PDF or in the comment the app left when issuing it.`
+                        : 'La columna del CAE de referencia está vacía. Pegá ahí el CAE ' +
+                          `(14 dígitos) de la factura que esta ${docLabel} debe anular — lo ` +
+                          'encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.'
                     );
                 }
-                throw new Error(
-                    `El CAE de referencia "${rawShown}" no es válido: el CAE de AFIP tiene ` +
-                    `14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). ` +
-                    `La columna puede ser numérica o de texto, las dos sirven.`
+                throw new Error(ncLanguage === 'en'
+                    ? `The reference CAE "${rawShown}" is not valid: the AFIP CAE has ` +
+                      `14 digits. Copy it exactly from the invoice PDF (or the app comment). ` +
+                      `The column can be numeric or text, both work.`
+                    : `El CAE de referencia "${rawShown}" no es válido: el CAE de AFIP tiene ` +
+                      `14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). ` +
+                      `La columna puede ser numérica o de texto, las dos sirven.`
                 );
             }
             const byCae = await db.query(
@@ -7230,10 +7271,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             );
             const factura = byCae.rows[0] || null;
             if (!factura) {
-                throw new Error(
-                    `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
-                    `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
-                    `desde este mismo tablero.`
+                throw new Error(ncLanguage === 'en'
+                    ? `No invoice issued by the app was found with CAE ${caeRef}. ` +
+                      `Check that the CAE is copied correctly and that the invoice was issued ` +
+                      `from this same board.`
+                    : `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
+                      `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
+                      `desde este mismo tablero.`
                 );
             }
             console.log(`[nc] factura resuelta por CAE ${caeRef} → emisión id=${factura.id}`);
@@ -7254,14 +7298,18 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             }
             const facturaPtoVta   = factura.attempted_pto_vta;
             if (!facturaAfip.cae || !facturaCbteNro || !facturaCbteTipo || !facturaPtoVta) {
-                throw new Error(
-                    'La factura de este item no tiene los datos completos (CAE / número / tipo / ' +
-                    `punto de venta) para poder referenciarla en una ${docLabel}.`
+                throw new Error(ncLanguage === 'en'
+                    ? `The invoice on this item doesn't have complete data (CAE / number / type / ` +
+                      `point of sale) to reference it in a ${esND ? 'Debit Note' : 'Credit Note'}.`
+                    : 'La factura de este item no tiene los datos completos (CAE / número / tipo / ' +
+                      `punto de venta) para poder referenciarla en una ${docLabel}.`
                 );
             }
             const letra = facturaDraft.tipo_comprobante;  // 'A' | 'B' | 'C'
             if (!['A', 'B', 'C'].includes(letra)) {
-                throw new Error(`No se pudo determinar la letra de la factura original (tipo='${letra}').`);
+                throw new Error(ncLanguage === 'en'
+                    ? `Couldn't determine the letter of the original invoice (type='${letra}').`
+                    : `No se pudo determinar la letra de la factura original (tipo='${letra}').`);
             }
 
             // El usuario NO elige el punto de venta de la NC: se emite SIEMPRE desde
@@ -7280,11 +7328,15 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 } else {
                     const pvSel = parseInt(pvSelRaw.replace(/\D/g, ''), 10);
                     if (pvSel && pvSel !== Number(facturaPtoVta)) {
-                        throw new Error(
-                            `Seleccionaste el Punto de Venta ${pvSel}, pero esta ${docLabel} anula la ` +
-                            `Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
-                            `que es del Punto de Venta ${facturaPtoVta}. La ${docAbbr} se emite desde el MISMO punto de venta que ` +
-                            `la factura — cambiá el Punto de Venta a ${facturaPtoVta} o dejá esa columna vacía.`
+                        throw new Error(ncLanguage === 'en'
+                            ? `You selected Point of Sale ${pvSel}, but this ${esND ? 'Debit Note' : 'Credit Note'} cancels ` +
+                              `Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
+                              `which is from Point of Sale ${facturaPtoVta}. The ${docAbbr} is issued from the SAME point of sale as ` +
+                              `the invoice — change the Point of Sale to ${facturaPtoVta} or leave that column empty.`
+                            : `Seleccionaste el Punto de Venta ${pvSel}, pero esta ${docLabel} anula la ` +
+                              `Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
+                              `que es del Punto de Venta ${facturaPtoVta}. La ${docAbbr} se emite desde el MISMO punto de venta que ` +
+                              `la factura — cambiá el Punto de Venta a ${facturaPtoVta} o dejá esa columna vacía.`
                         );
                     }
                 }
@@ -8091,7 +8143,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Check each subitem and fill in the required fields: <b>Description</b>, <b>Quantity</b> (number) and <b>Unit Price</b> (number). If there are none, create at least one.',
         },
         {
-            match: /Configuración incompleta/i,
+            match: /Configuración incompleta|incomplete configuration/i,
             title: 'Incomplete configuration',
             detail: mainMsg,
             solucion: "Open the app's view → complete the pending steps in <b>Visual Mapping</b>. Make sure to map all required columns.",
@@ -8169,7 +8221,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "C vouchers (Invoice or Credit Note) don't break out VAT because the issuer is Monotributo or Exempt. Open the item's subitems and set the <b>VAT Rate %</b> column to <b>0</b> on all of them. Then retry.",
         },
         {
-            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida/i,
+            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida|missing vat rate|different vat rates|invalid vat rate/i,
             title: 'Invalid VAT rate',
             detail: subitemDetails.length > 0
                 ? 'The subitems have different VAT rates:<br/>' +
@@ -8184,7 +8236,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "The item's <b>Voucher Type</b> column must say <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Fix the value and trigger the recipe again.",
         },
         {
-            match: /cae de referencia|columna del cae|no se encontró ninguna factura/i,
+            match: /cae de referencia|columna del cae|no se encontró ninguna factura|reference cae|no invoice.*found with cae/i,
             title: "Couldn't identify the invoice to cancel",
             detail: mainMsg,
             solucion: "In the Credit Note item, paste the 14-digit <b>CAE</b> of the invoice you want to cancel into the CAE column. You get it from that invoice's PDF or from the comment the app left when it was issued.",
