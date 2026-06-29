@@ -14,16 +14,26 @@ import { useState } from "react";
 import step1 from "./assets/onboarding/step-1-datos.png";
 import step2 from "./assets/onboarding/step-2-certificados.png";
 import step3 from "./assets/onboarding/step-3-mapeo.png";
+import step1En from "./assets/onboarding/step-1-datos-en.png";
+import step2En from "./assets/onboarding/step-2-certificados-en.png";
+import step3En from "./assets/onboarding/step-3-mapeo-en.png";
 import { useT } from "./i18n.jsx";
 
-const STEPS = [
+// Capturas por idioma del board: EN muestra el app en inglés, ES en español.
+const STEPS_ES = [
   { n: 1, titleKey: "fiscal.title", descKey: "welcome.step1Desc", img: step1 },
   { n: 2, titleKey: "cert.title", descKey: "welcome.step2Desc", img: step2 },
   { n: 3, titleKey: "menu.mapping", descKey: "welcome.step3Desc", img: step3 },
 ];
+const STEPS_EN = [
+  { n: 1, titleKey: "fiscal.title", descKey: "welcome.step1Desc", img: step1En },
+  { n: 2, titleKey: "cert.title", descKey: "welcome.step2Desc", img: step2En },
+  { n: 3, titleKey: "menu.mapping", descKey: "welcome.step3Desc", img: step3En },
+];
 
 export default function WelcomePage({ onStart }) {
-  const { t } = useT();
+  const { t, lang } = useT();
+  const STEPS = lang === "en" ? STEPS_EN : STEPS_ES;
   const [zoomImg, setZoomImg] = useState(null);
 
   return (
