@@ -7,6 +7,7 @@ import "monday-ui-react-core/dist/main.css";
 import "./App.css";
 import WelcomePage from "./WelcomePage";
 import iconoFacturacion from "./assets/icono-facturacion.svg";
+import { useT } from "./i18n.jsx";
 
 const monday = mondaySdk();
 
@@ -77,9 +78,9 @@ const IconCheck = () => (
 );
 
 const MENU_ITEMS = [
-  { id: "datos", label: "Datos Fiscales", icon: <IconBuilding /> },
-  { id: "certificados", label: "Certificados ARCA", icon: <IconCert /> },
-  { id: "mapping_v2", label: "Mapeo Visual", icon: <IconList /> },
+  { id: "datos", label: "Datos Fiscales", labelKey: "menu.datos", icon: <IconBuilding /> },
+  { id: "certificados", label: "Certificados ARCA", labelKey: "menu.certificados", icon: <IconCert /> },
+  { id: "mapping_v2", label: "Mapeo Visual", labelKey: "menu.mapping", icon: <IconList /> },
 ];
 
 
@@ -90,6 +91,37 @@ const COMPROBANTE_STATUS_FLOW = {
   success: "Comprobante Creado",
   error: "Error - Mirar Comentarios",
 };
+
+// Flujo de status en inglés (board instalado desde el template inglés). Debe
+// coincidir EXACTO con los labels del board EN y con el backend (server.js).
+const COMPROBANTE_STATUS_FLOW_EN = {
+  trigger: "Create Voucher",
+  processing: "Creating Voucher",
+  success: "Voucher Created",
+  error: "Error - See Updates",
+};
+
+function statusFlowFor(language) {
+  return language === "en" ? COMPROBANTE_STATUS_FLOW_EN : COMPROBANTE_STATUS_FLOW;
+}
+
+// Detecta el idioma del board mirando los labels de su columna de status.
+// Si algún label contiene "voucher" (template inglés) → 'en'; si no → 'es'
+// (default seguro: boards español tienen "Comprobante", nunca "voucher").
+// NOTA: `columns` guarda el id en `value` y conserva `settings_str` (ver setColumns).
+function detectBoardLanguage(columns, statusColumnId) {
+  try {
+    const statusCol =
+      (columns || []).find((c) => c.value === statusColumnId) ||
+      (columns || []).find((c) => c.type === "status");
+    if (!statusCol?.settings_str) return "es";
+    const labels = Object.values(JSON.parse(statusCol.settings_str).labels || {});
+    if (labels.join(" ").toLowerCase().includes("voucher")) return "en";
+    return "es";
+  } catch {
+    return "es";
+  }
+}
 
 // IDs fijos de columnas de la plantilla del workspace.
 // Cuando un usuario instala la app y usa la plantilla, estos IDs son siempre iguales.
@@ -224,6 +256,7 @@ function buildAutoMappingFromColumns(itemCols, subitemCols) {
 }
 
 const App = () => {
+  const { t, lang, setLang } = useT();
   const [context, setContext] = useState(null);
   const [locationData, setLocationData] = useState(null);
   const [activeSection, setActiveSection] = useState("datos");
@@ -254,25 +287,25 @@ const App = () => {
   const validateFiscal = (f) => {
     const cuitDigits = String(f.cuit || "").replace(/\D/g, "");
     if (!f.razonSocial?.trim()) {
-      return { msg: "Falta la razón social", hint: "Cargá la razón social registrada en AFIP (la que figura en tu constancia)." };
+      return { msg: t("val.razonSocial.msg"), hint: t("val.razonSocial.hint") };
     }
     if (!f.nombreFantasia?.trim()) {
-      return { msg: "Falta el nombre de fantasía", hint: "Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné lo mismo que la razón social." };
+      return { msg: t("val.fantasia.msg"), hint: t("val.fantasia.hint") };
     }
     if (cuitDigits.length !== 11) {
-      return { msg: "CUIT inválido", hint: "El CUIT debe tener 11 dígitos. Sin guiones ni puntos. Ejemplo: 20123456789." };
+      return { msg: t("val.cuit.msg"), hint: t("val.cuit.hint") };
     }
     if (!f.puntoVenta || parseInt(f.puntoVenta) < 1) {
-      return { msg: "Falta el punto de venta", hint: "Ingresá el número de punto de venta habilitado en AFIP/ARCA. Es un número (ej: 1, 2, 5)." };
+      return { msg: t("val.puntoVenta.msg"), hint: t("val.puntoVenta.hint") };
     }
     if (!f.fechaInicio) {
-      return { msg: "Falta la fecha de inicio de actividades", hint: "La fecha que figura en tu constancia de inscripción de AFIP." };
+      return { msg: t("val.fechaInicio.msg"), hint: t("val.fechaInicio.hint") };
     }
     if (!f.domicilio?.trim()) {
-      return { msg: "Falta el domicilio comercial", hint: "El domicilio fiscal registrado en AFIP. Aparece en el PDF de la factura." };
+      return { msg: t("val.domicilio.msg"), hint: t("val.domicilio.hint") };
     }
     if (f.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email)) {
-      return { msg: "Email con formato inválido", hint: "Revisá que tenga el formato correcto, ej: ventas@empresa.com.ar" };
+      return { msg: t("val.email.msg"), hint: t("val.email.hint") };
     }
     return null;
   };
@@ -284,23 +317,23 @@ const App = () => {
     const backendMsg = err?.response?.data?.error;
     const status = err?.response?.status;
     const map = {
-      MISSING_TRADE_NAME:   { msg: "Falta el nombre de fantasía",     hint: "Cargálo arriba del CUIT. Puede ser igual a la razón social si no tenés uno comercial." },
-      MISSING_FISCAL_DATA:  { msg: "Faltan datos fiscales",            hint: "Cargá razón social, CUIT y punto de venta antes de continuar." },
-      INVALID_EMAIL:        { msg: "Email con formato inválido",       hint: "Tiene que tener un @ y un dominio válido (ej: ventas@empresa.com)." },
-      INVALID_WEBSITE:      { msg: "Sitio web con formato inválido",   hint: "Empezá con http:// o https:// (ej: https://empresa.com)." },
-      INVALID_LOGO_MIME:    { msg: "Formato de logo no soportado",     hint: "Usá PNG, JPG, SVG o WebP. Otros formatos no se aceptan." },
-      LOGO_TOO_LARGE:       { msg: "El logo es muy grande",            hint: "Reducilo a menos de 500 KB (podés comprimirlo en tinypng.com)." },
-      KEY_CRT_MISMATCH:     { msg: "El .crt y el .key no son pareja",  hint: "Bajaste el cert correspondiente a otra solicitud. Volvé a generar el CSR y descargá el .crt nuevo de ARCA." },
-      CRT_EXPIRED:          { msg: "El certificado venció",            hint: "Generá uno nuevo en ARCA con el mismo alias y volvé a subirlo." },
-      NO_PENDING_CSR:       { msg: "No hay una solicitud pendiente",   hint: "Generá primero el CSR desde el paso 1 antes de subir el .crt." },
+      MISSING_TRADE_NAME:   { msg: t("val.MISSING_TRADE_NAME.msg"),   hint: t("val.MISSING_TRADE_NAME.hint") },
+      MISSING_FISCAL_DATA:  { msg: t("val.MISSING_FISCAL_DATA.msg"),  hint: t("val.MISSING_FISCAL_DATA.hint") },
+      INVALID_EMAIL:        { msg: t("val.INVALID_EMAIL.msg"),        hint: t("val.INVALID_EMAIL.hint") },
+      INVALID_WEBSITE:      { msg: t("val.INVALID_WEBSITE.msg"),      hint: t("val.INVALID_WEBSITE.hint") },
+      INVALID_LOGO_MIME:    { msg: t("val.INVALID_LOGO_MIME.msg"),    hint: t("val.INVALID_LOGO_MIME.hint") },
+      LOGO_TOO_LARGE:       { msg: t("val.LOGO_TOO_LARGE.msg"),       hint: t("val.LOGO_TOO_LARGE.hint") },
+      KEY_CRT_MISMATCH:     { msg: t("val.KEY_CRT_MISMATCH.msg"),     hint: t("val.KEY_CRT_MISMATCH.hint") },
+      CRT_EXPIRED:          { msg: t("val.CRT_EXPIRED.msg"),          hint: t("val.CRT_EXPIRED.hint") },
+      NO_PENDING_CSR:       { msg: t("val.NO_PENDING_CSR.msg"),       hint: t("val.NO_PENDING_CSR.hint") },
     };
     if (code && map[code]) return map[code];
-    if (status === 401)    return { msg: "Tu sesión expiró",        hint: "Cerrá la pestaña de monday y volvé a abrir la app." };
-    if (status === 403)    return { msg: "No tenés permisos",       hint: "Pedíle al admin de monday que te de permisos sobre este tablero." };
-    if (status === 404)    return { msg: "No se encontró la empresa", hint: "Cargá primero los Datos Fiscales antes de hacer esta acción." };
-    if (status === 413)    return { msg: "El archivo es muy grande", hint: "Subí uno más liviano." };
-    if (backendMsg)        return { msg: backendMsg,                  hint: "Si persiste, contactá soporte." };
-    return { msg: err?.message || "Error desconocido", hint: "Intentá de nuevo en unos segundos. Si sigue fallando, contactá soporte." };
+    if (status === 401)    return { msg: t("val.401.msg"), hint: t("val.401.hint") };
+    if (status === 403)    return { msg: t("val.403.msg"), hint: t("val.403.hint") };
+    if (status === 404)    return { msg: t("val.404.msg"), hint: t("val.404.hint") };
+    if (status === 413)    return { msg: t("val.413.msg"), hint: t("val.413.hint") };
+    if (backendMsg)        return { msg: backendMsg,        hint: t("val.backendFallback.hint") };
+    return { msg: err?.message || t("val.unknown.msg"), hint: t("val.unknown.hint") };
   };
 
   const [isLoading, setIsLoading] = useState(false);
@@ -321,6 +354,10 @@ const App = () => {
   // muestra. Si la fetch falla (ej: backend viejo sin /api/usage), queda null
   // y el banner no se renderiza — degrada gracefully.
   const [usage, setUsage] = useState(null);
+  // Gate de calificación (review prompt). reviewGate: null | { step, attempt }.
+  const [reviewGate, setReviewGate] = useState(null);
+  const [reviewFeedback, setReviewFeedback] = useState("");
+  const reviewShownRef = useRef(false);
   const [sessionToken, setSessionToken] = useState("");
   // Datos Fiscales usa modo vista/edición (Stripe-style). El resto de las
   // secciones todavía usa el patrón viejo de lock — se migran en próximas etapas.
@@ -395,6 +432,7 @@ const App = () => {
     processing_label: COMPROBANTE_STATUS_FLOW.processing,
     success_label: COMPROBANTE_STATUS_FLOW.success,
     error_label: COMPROBANTE_STATUS_FLOW.error,
+    language: "es",
     // Toggles opcionales (default TRUE para que clientes nuevos tengan el
     // comportamiento "todo automatico" out of the box).
     auto_rename_item: true,    // ej: "Cliente Juan" -> "Factura B N° 0002-00000019"
@@ -554,6 +592,38 @@ const App = () => {
     return () => { cancelled = true; };
   }, [sessionToken]);
 
+  // Gate de calificación: si el backend (vía /api/usage) marca la cuenta como
+  // elegible, mostramos el mini-diálogo 👍/👎 una vez por carga. El 'shown'
+  // cuenta para el tope de vida (máx 2) y arranca el cooldown en el backend.
+  useEffect(() => {
+    if (!usage?.show_review_prompt || reviewShownRef.current) return;
+    reviewShownRef.current = true;
+    setReviewGate({ step: "gate", attempt: usage.review_prompt_attempt || 1 });
+  }, [usage]);
+
+  const reviewChooseUp = () => setReviewGate((g) => ({ ...g, step: "happy" }));
+  const reviewChooseDown = () => setReviewGate((g) => ({ ...g, step: "improve" }));
+  const reviewOpenRating = () => {
+    try { monday.execute("openAppRatingPopup"); }
+    catch (e) { console.warn("openAppRatingPopup:", e); }
+    api.post("/review-prompt/response", { event: "rated" }).catch(() => {});
+    setReviewGate(null);
+  };
+  const reviewSubmitFeedback = () => {
+    api.post("/review-prompt/response", {
+      event: "feedback", feedback: reviewFeedback,
+    }).catch(() => {});
+    setReviewGate((g) => ({ ...g, step: "done" }));
+  };
+  // "Ahora no" / "En otro momento" / "Cancelar": postergó → recién reaparece a
+  // los 60 días (esto cuenta para el tope de vida 2).
+  const reviewDismiss = () => {
+    api.post("/review-prompt/response", { event: "dismiss" }).catch(() => {});
+    setReviewGate(null);
+  };
+  // Cerrar después de votar (👍/👎 ya quedó registrado): solo cierra, sin contar.
+  const reviewClose = () => setReviewGate(null);
+
   // Notifica a monday cuando el usuario completa el setup de la app
   // (datos fiscales + certificados + mapeo). Se dispara una vez por sesión.
   // Requerido por el review (Product checklist): "implementa el método de
@@ -584,7 +654,7 @@ const App = () => {
         setApiError("");
       } catch (err) {
         setApiStatus("error");
-        setApiError(err?.message || "No se pudo conectar al backend");
+        setApiError(err?.message || t("debug.cantConnect"));
       }
     };
 
@@ -692,13 +762,13 @@ const App = () => {
         console.log("[mapeo] Columnas cargadas:", boardColumns.length, boardColumns.map(c => c.title));
 
         if (!boardColumns.length) {
-          setColumnsLoadError("La query respondió sin columnas. Verificá que el board esté accesible.");
+          setColumnsLoadError(t("err.noColumns"));
           return;
         }
 
         const cols = boardColumns
           .filter((c) => c.type !== "subtasks" && c.type !== "button" && c.type !== "formula")
-          .map((c) => ({ value: c.id, label: c.title, type: c.type }));
+          .map((c) => ({ value: c.id, label: c.title, type: c.type, settings_str: c.settings_str }));
         setColumns(cols);
 
         // Cargar columnas de subitems
@@ -861,10 +931,11 @@ const App = () => {
           setBoardConfig({
             status_column_id: data.boardConfig.status_column_id || "",
             invoice_pdf_column_id: invoicePdfCol?.resolved_column_id || "",
-            trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-            processing_label: COMPROBANTE_STATUS_FLOW.processing,
-            success_label: COMPROBANTE_STATUS_FLOW.success,
-            error_label: COMPROBANTE_STATUS_FLOW.error,
+            trigger_label: data.boardConfig.trigger_label || COMPROBANTE_STATUS_FLOW.trigger,
+            processing_label: data.boardConfig.processing_label || COMPROBANTE_STATUS_FLOW.processing,
+            success_label: data.boardConfig.success_label || COMPROBANTE_STATUS_FLOW.success,
+            error_label: data.boardConfig.error_label || COMPROBANTE_STATUS_FLOW.error,
+            language: data.boardConfig.language || "es",
             auto_rename_item: data.boardConfig.auto_rename_item !== false,
             auto_update_status: data.boardConfig.auto_update_status !== false,
           });
@@ -890,6 +961,16 @@ const App = () => {
     const safety = setTimeout(() => setIsInitialDataReady(true), 10000);
     return () => clearTimeout(safety);
   }, [isInitialDataReady]);
+
+  // Auto-detección de idioma de la UI: el idioma del BOARD manda. Apenas cargan
+  // las columnas, detectamos el idioma del status (mismo helper que usa el guardado
+  // de config) y ponemos la UI en ese idioma — board español → UI español, board
+  // inglés → UI inglés. Reemplaza al switch manual. setLang persiste en localStorage,
+  // así las páginas legales (/terms, /privacy) abren en el mismo idioma.
+  useEffect(() => {
+    if (!columns || columns.length === 0) return;
+    setLang(detectBoardLanguage(columns, boardConfig.status_column_id));
+  }, [columns, boardConfig.status_column_id, setLang]);
 
   // Auto-mapeo por plantilla: si no hay mapeo guardado y las columnas coinciden
   // con los IDs fijos de la plantilla, guardar el mapeo automáticamente en la DB.
@@ -1028,6 +1109,8 @@ const App = () => {
         console.log("[auto-mapeo] Mapeo de plantilla guardado en DB exitosamente");
 
         // También guardar el board config con la columna de status + PDF detectadas
+        const autoLang = detectBoardLanguage(columns, detectedStatusColumnId);
+        const autoFlow = statusFlowFor(autoLang);
         await api.post(`/board-config`, {
           monday_account_id: context.account.id.toString(),
           workspace_id: workspaceId || null,
@@ -1035,9 +1118,11 @@ const App = () => {
           view_id: viewIdFromHref,
           app_feature_id: appFeatureId,
           status_column_id: detectedStatusColumnId,
-          trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-          success_label: COMPROBANTE_STATUS_FLOW.success,
-          error_label: COMPROBANTE_STATUS_FLOW.error,
+          trigger_label: autoFlow.trigger,
+          processing_label: autoFlow.processing,
+          success_label: autoFlow.success,
+          error_label: autoFlow.error,
+          language: autoLang,
           required_columns: detectedRequiredColumns,
         });
         setBoardConfig((prev) => ({
@@ -1048,7 +1133,7 @@ const App = () => {
         console.log("[auto-mapeo] Board config de plantilla guardado en DB exitosamente");
 
         monday.execute("notice", {
-          message: "Mapeo automático configurado para la plantilla de facturación",
+          message: t("notice.autoMapConfigured"),
           type: "success",
           duration: 4000,
         });
@@ -1132,12 +1217,12 @@ const App = () => {
     }
     const allowed = ["image/png", "image/jpeg", "image/jpg", "image/svg+xml", "image/webp"];
     if (!allowed.includes(file.type)) {
-      showToast("error", "Formato de imagen no permitido. Usá PNG, JPG, SVG o WebP.");
+      showToast("error", t("toast.imgFormat"));
       return;
     }
     const MAX_BYTES = 1024 * 1024;
     if (file.size > MAX_BYTES) {
-      showToast("error", "El logo supera el tamaño máximo (1 MB).");
+      showToast("error", t("toast.logoTooBig"));
       return;
     }
     setLogoFile(file);
@@ -1223,7 +1308,7 @@ const App = () => {
         setRemoveLogoOnSave(false);
       }
 
-      showToast("success", "Datos fiscales guardados correctamente");
+      showToast("success", t("toast.fiscalSaved"));
       setHasSavedFiscalData(true);
       setSavedFiscalSnapshot(fiscal);
       setIsFiscalEditMode(false);
@@ -1238,7 +1323,7 @@ const App = () => {
 
   const handleUploadCertificates = async () => {
     if (!crtFile || !keyFile || !context) {
-        showToast("error", "Seleccioná ambos archivos (.crt y .key)");
+        showToast("error", t("toast.selectBothFiles"));
         return;
     }
 
@@ -1256,7 +1341,7 @@ const App = () => {
       const res = await api.post(`/certificates`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      showToast("success", "Certificados subidos correctamente");
+      showToast("success", t("toast.certsUploaded"));
       setHasSavedCertificates(true);
       setCertificateStatus("active");
       setCertFlow(null);
@@ -1312,13 +1397,13 @@ const App = () => {
       });
       const csrPem = res.data?.csrPem || "";
       const aliasUsed = res.data?.alias || aliasFinal;
-      if (!csrPem) throw new Error("El servidor no devolvió el CSR");
+      if (!csrPem) throw new Error(t("err.csrEmpty"));
 
       setLastGeneratedCsrPem(csrPem);
       setCertificateAlias(aliasUsed);
       setCertificateStatus("pending_crt");
       downloadBlob(csrPem, `${aliasUsed}.csr`);
-      showToast("success", "Solicitud generada y descargada");
+      showToast("success", t("toast.requestGenerated"));
       setGuidedStep(3);
     } catch (err) {
       const { msg, hint } = friendlyApiError(err);
@@ -1347,7 +1432,7 @@ const App = () => {
         responseType: "text"
       });
       const csrPem = typeof res.data === "string" ? res.data : "";
-      if (!csrPem) throw new Error("No se recibió el CSR del servidor");
+      if (!csrPem) throw new Error(t("err.csrEmptyRedownload"));
       setLastGeneratedCsrPem(csrPem);
       const aliasSafe = (certificateAlias || "monday-facturacion").replace(/[^a-zA-Z0-9_-]/g, "_");
       downloadBlob(csrPem, `${aliasSafe}.csr`);
@@ -1362,7 +1447,7 @@ const App = () => {
   // Paso 4 del flujo guiado: sube el .crt que ARCA generó a partir del CSR.
   const handleFinalizeCsr = async () => {
     if (!finalCrtFile || !context) {
-      showToast("error", "Seleccioná el archivo .crt que descargaste de ARCA");
+      showToast("error", t("toast.selectCrt"));
       return;
     }
     setIsLoading(true);
@@ -1374,7 +1459,7 @@ const App = () => {
       const res = await api.post(`/certificates/csr/finalize`, formData, {
         headers: { "Content-Type": "multipart/form-data" }
       });
-      showToast("success", "Certificado activado correctamente");
+      showToast("success", t("toast.certActivated"));
       setCertificateStatus("active");
       setHasSavedCertificates(true);
       setCertificateExpirationDate(
@@ -1424,10 +1509,10 @@ const App = () => {
   })();
   const certDaysBadge = (() => {
     if (certDaysRemaining === null) return null;
-    if (certDaysRemaining < 0) return { cls: "expired", text: "Vencido" };
-    if (certDaysRemaining < 30) return { cls: "warning", text: `Vence en ${certDaysRemaining} días` };
-    if (certDaysRemaining < 90) return { cls: "notice", text: `${certDaysRemaining} días restantes` };
-    return { cls: "ok", text: `${certDaysRemaining} días restantes` };
+    if (certDaysRemaining < 0) return { cls: "expired", text: t("cert.badge.expired") };
+    if (certDaysRemaining < 30) return { cls: "warning", text: `${t("cert.badge.expiresInPre")}${certDaysRemaining}${t("cert.badge.daysSuffix")}` };
+    if (certDaysRemaining < 90) return { cls: "notice", text: `${certDaysRemaining}${t("cert.badge.daysRemaining")}` };
+    return { cls: "ok", text: `${certDaysRemaining}${t("cert.badge.daysRemaining")}` };
   })();
 
   const fiscalFormCompleted =
@@ -1499,39 +1584,39 @@ const App = () => {
       setTimeout(() => setMissingMappingFields([]), 5000);
       // Construir labels legibles a partir de los IDs canónicos
       const labelMap = {
-        fecha_emision:        "Fecha de Emisión",
-        receptor_cuit:        "CUIT / DNI Receptor",
-        condicion_venta:      "Condición de Venta",
-        fecha_servicio_desde: "Fecha Servicio Desde",
-        fecha_servicio_hasta: "Fecha Servicio Hasta",
-        fecha_vto_pago:       "Fecha Vto. Pago",
-        concepto:             "Concepto / Producto",
-        cantidad:             "Cantidad",
-        precio_unitario:      "Precio Unitario",
-        prod_serv:            "Prod/Serv",
-        unidad_medida:        "Unidad de Medida",
-        alicuota_iva:         "Alícuota IVA %",
-        cae_comprobante:      "CAE del Comprobante",
-        razon_social_receptor:  "Razón Social del Receptor",
-        condicion_iva_receptor: "Condición IVA del Receptor",
-        tipo_comprobante:     "Tipo de Comprobante",
-        factura_referencia:   "CAE de la factura a anular",
-        nro_factura:          "N° Factura (Pto-Nro)",
-        nro_comprobante:      "N° Comprobante",
-        letra_comprobante:    "Letra del Comprobante",
+        fecha_emision:        t("map.f.fechaEmision"),
+        receptor_cuit:        t("map.f.receptorCuit"),
+        condicion_venta:      t("map.f.condicionVenta"),
+        fecha_servicio_desde: t("map.f.fechaServDesde"),
+        fecha_servicio_hasta: t("map.f.fechaServHasta"),
+        fecha_vto_pago:       t("map.f.fechaVtoPago"),
+        concepto:             t("map.f.concepto"),
+        cantidad:             t("map.f.cantidad"),
+        precio_unitario:      t("map.f.precioUnitario"),
+        prod_serv:            t("map.f.prodServ"),
+        unidad_medida:        t("map.f.unidadMedida"),
+        alicuota_iva:         t("map.f.alicuotaIva"),
+        cae_comprobante:      t("map.f.caeComprobante"),
+        razon_social_receptor:  t("map.f.razonSocialReceptor"),
+        condicion_iva_receptor: t("map.f.condicionIvaReceptor"),
+        tipo_comprobante:     t("map.f.tipoComprobante"),
+        factura_referencia:   t("map.f.facturaReferencia"),
+        nro_factura:          t("map.f.nroFactura"),
+        nro_comprobante:      t("map.f.nroComprobante"),
+        letra_comprobante:    t("map.f.letraComprobante"),
       };
-      missingFields.forEach((f) => blockers.push(`Mapear "${labelMap[f] || f}"`));
+      missingFields.forEach((f) => blockers.push(`${t("blocker.map")} "${labelMap[f] || f}"`));
     } else {
       setMissingMappingFields([]);
     }
 
     // Validar columnas de operación según los toggles activos
     if (!boardConfig.invoice_pdf_column_id) {
-      blockers.push('Seleccionar la columna donde subir el PDF (en "Columna Comprobante PDF")');
+      blockers.push(t("blocker.pdfColumn"));
     }
     // status_column_id solo es obligatoria si auto_update_status está ON
     if (boardConfig.auto_update_status && !boardConfig.status_column_id) {
-      blockers.push('Seleccionar la columna de estado (porque activaste "Cambiar el estado del item")');
+      blockers.push(t("blocker.statusColumn"));
     }
 
     if (blockers.length > 0) {
@@ -1539,13 +1624,13 @@ const App = () => {
       const lines = blockers.map((b, i) => `${i + 1}. ${b}`).join("\n");
       showToast(
         "error",
-        `No se puede guardar — te falta:\n${lines}`
+        `${t("toast.cantSave")}\n${lines}`
       );
       return;
     }
 
     if (!context?.account?.id || !boardId) {
-      showToast("error", "No se pudo identificar cuenta/tablero para guardar el mapeo");
+      showToast("error", t("toast.noAccountBoard"));
       return;
     }
 
@@ -1565,6 +1650,8 @@ const App = () => {
       });
 
       // 2) Guardar el board-config (incluye los toggles auto_*)
+      const saveLang = detectBoardLanguage(columns, boardConfig.status_column_id);
+      const saveFlow = statusFlowFor(saveLang);
       await api.post(`/board-config`, {
         monday_account_id: context.account.id.toString(),
         workspace_id: workspaceId || null,
@@ -1574,9 +1661,11 @@ const App = () => {
         // status_column_id solo se manda si el toggle esta activo. Si esta
         // OFF, el backend lo persiste como NULL.
         status_column_id: boardConfig.auto_update_status ? boardConfig.status_column_id : null,
-        trigger_label: COMPROBANTE_STATUS_FLOW.trigger,
-        success_label: COMPROBANTE_STATUS_FLOW.success,
-        error_label: COMPROBANTE_STATUS_FLOW.error,
+        trigger_label: saveFlow.trigger,
+        processing_label: saveFlow.processing,
+        success_label: saveFlow.success,
+        error_label: saveFlow.error,
+        language: saveLang,
         required_columns: [
           { key: "invoice_pdf", resolved_column_id: boardConfig.invoice_pdf_column_id },
         ],
@@ -1587,7 +1676,7 @@ const App = () => {
       setHasSavedMapping(true);
       setSavedMappingSnapshot(mapping);
       setIsMappingEditMode(false);
-      showToast("success", "Mapeo visual guardado correctamente");
+      showToast("success", t("toast.mappingSaved"));
     } catch (err) {
       const { msg, hint } = friendlyApiError(err);
       showToast("error", `${msg} — ${hint}`);
@@ -1659,12 +1748,8 @@ const App = () => {
     return (
       <div className="gd-frame gd-frame-splash">
         <div className="gd-splash" style={{ maxWidth: 480 }}>
-          <div className="gd-splash-title">Acceso de solo lectura</div>
-          <div className="gd-splash-sub">
-            Como viewer en monday no tenés permisos para usar ARCA Facturación.
-            Pedile a un administrador del workspace que te asigne permisos de
-            miembro para configurar y emitir facturas.
-          </div>
+          <div className="gd-splash-title">{t("readonly.title")}</div>
+          <div className="gd-splash-sub">{t("readonly.sub")}</div>
         </div>
       </div>
     );
@@ -1696,8 +1781,8 @@ const App = () => {
       <div className="gd-frame gd-frame-splash">
         <div className="gd-splash">
           <div className="loader" />
-          <div className="gd-splash-title">Cargando tu app…</div>
-          <div className="gd-splash-sub">Conectando con monday y trayendo tu configuración.</div>
+          <div className="gd-splash-title">{t("splash.title")}</div>
+          <div className="gd-splash-sub">{t("splash.sub")}</div>
         </div>
       </div>
     );
@@ -1721,15 +1806,15 @@ const App = () => {
       {/* ─── SIDEBAR (checklist guiado, marca TAP) ─── */}
       <aside className="gd-sidebar">
         <div className="gd-sidebar-brand">
-          <img className="gd-sidebar-logo" src={iconoFacturacion} alt="Facturación AFIP" />
+          <img className="gd-sidebar-logo" src={iconoFacturacion} alt={t("brand.title")} />
           <div>
-            <div className="gd-sidebar-brand-title">Facturación AFIP</div>
+            <div className="gd-sidebar-brand-title">{t("brand.title")}</div>
             <div className="gd-sidebar-brand-sub">Monday App</div>
           </div>
         </div>
 
         <nav className="gd-checklist">
-          <div className="gd-checklist-heading">Configuración</div>
+          <div className="gd-checklist-heading">{t("sidebar.config")}</div>
           {MENU_ITEMS.map((item) => {
             const s = sectionStatus[item.id] || "incomplete";
             const isActive = activeSection === item.id;
@@ -1748,9 +1833,9 @@ const App = () => {
                   ) : null}
                 </span>
                 <span className="gd-check-body">
-                  <span className="gd-check-label">{item.label}</span>
+                  <span className="gd-check-label">{t(item.labelKey)}</span>
                   <span className={`gd-check-status ${s}`}>
-                    {s === "complete" ? "Listo" : s === "pending" ? "En progreso" : "Pendiente"}
+                    {s === "complete" ? t("status.complete") : s === "pending" ? t("status.pending") : t("status.incomplete")}
                   </span>
                 </span>
               </button>
@@ -1760,7 +1845,7 @@ const App = () => {
 
         <div className="gd-sidebar-footer">
           <span className={`status-dot ${context ? "online" : ""}`} />
-          <span>{context ? "Backend conectado" : "Sin contexto Monday"}</span>
+          <span>{context ? t("sidebar.connected") : t("sidebar.noContext")}</span>
         </div>
       </aside>
 
@@ -1779,12 +1864,12 @@ const App = () => {
           const planLabels = { free: 'Free', small: 'Small', medium: 'Medium', large: 'Large', enterprise: 'Enterprise' };
           const planLabel = planLabels[plan_id] || plan_id;
           let counterText;
-          if (status === 'cancelled') counterText = 'Suscripción cancelada';
-          else if (status === 'trial_expired') counterText = 'Trial finalizado';
-          else if (limit == null) counterText = 'Comprobantes ilimitados este mes';
-          else counterText = `${used}/${limit} comprobantes este mes`;
+          if (status === 'cancelled') counterText = t("usage.cancelled");
+          else if (status === 'trial_expired') counterText = t("usage.trialExpired");
+          else if (limit == null) counterText = t("usage.unlimited");
+          else counterText = `${used}/${limit} ${t("usage.vouchersThisMonth")}`;
           let cta = null;
-          if (!allowed) cta = (status === 'cancelled' || status === 'trial_expired') ? 'Renová tu plan' : 'Upgradeá tu plan';
+          if (!allowed) cta = (status === 'cancelled' || status === 'trial_expired') ? t("usage.renewPlan") : t("usage.upgradePlan");
           return (
             <div className={`usage-banner usage-banner-${level}`}>
               <span className="usage-plan-pill">Plan {planLabel}{is_trial ? ' · Trial' : ''}</span>
@@ -1795,19 +1880,17 @@ const App = () => {
         })()}
         <div className="gd-header">
           <div className="gd-header-main">
-            <div className="gd-header-kicker">Monday App · Facturación Electrónica AFIP</div>
+            <div className="gd-header-kicker">{t("header.kicker")}</div>
             <h1 className="gd-header-title">
               {completedSections === totalSections ? (
-                <>Todo listo. Tu app está facturando.</>
+                <>{t("header.allSet")}</>
               ) : nextStepItem ? (
-                <>Te falta <span className="gd-header-accent">{nextStepItem.label.toLowerCase()}</span> para empezar a facturar</>
+                <>{t("header.youStillNeedPre")}<span className="gd-header-accent">{t(nextStepItem.labelKey).toLowerCase()}</span>{t("header.youStillNeedSuf")}</>
               ) : (
-                <>Casi listo</>
+                <>{t("header.almostReady")}</>
               )}
             </h1>
-            <p className="gd-header-sub">
-              Configurá tu app una vez. Después cada cambio de estado en el tablero dispara una factura AFIP automática.
-            </p>
+            <p className="gd-header-sub">{t("header.sub")}</p>
             <a
               href={HOW_TO_USE_URL}
               target="_blank"
@@ -1833,7 +1916,7 @@ const App = () => {
                 <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
                 <line x1="12" y1="17" x2="12.01" y2="17" />
               </svg>
-              Cómo usar la app
+              {t("header.howToUse")}
             </a>
           </div>
           <div className="gd-header-progress">
@@ -1853,7 +1936,7 @@ const App = () => {
                 <span className="mono">{completedSections}</span><span>/{totalSections}</span>
               </div>
             </div>
-            <div className="gd-header-progress-label">pasos completos</div>
+            <div className="gd-header-progress-label">{t("header.stepsComplete")}</div>
           </div>
         </div>
 
@@ -1862,9 +1945,9 @@ const App = () => {
             <div className="gd-meta-strip">
               <span className="gd-build-tag">Build: {APP_BUILD_VERSION}</span>
               <span>
-                {apiStatus === "ok"       && <>Backend conectado correctamente ({API_URL})</>}
-                {apiStatus === "checking" && <>Verificando conexión backend...</>}
-                {apiStatus === "error"    && <>⚠ Backend sin conexión ({API_URL}) — {apiError}</>}
+                {apiStatus === "ok"       && <>{t("debug.backendOk")} ({API_URL})</>}
+                {apiStatus === "checking" && <>{t("debug.backendChecking")}</>}
+                {apiStatus === "error"    && <>⚠ {t("debug.backendError")} ({API_URL}) — {apiError}</>}
               </span>
             </div>
           )}
@@ -1872,8 +1955,62 @@ const App = () => {
         {isLoading && (
             <div className="loading-overlay">
                 <div className="loader"></div>
-                <p>Procesando datos de forma segura...</p>
+                <p>{t("common.processingSecurely")}</p>
             </div>
+        )}
+
+        {reviewGate && (
+          <div className="review-overlay" role="dialog" aria-modal="true">
+            <div className="review-modal">
+              <div className="review-accent" />
+              {reviewGate.step === "gate" && (
+                <div className="review-body">
+                  <div className="review-emoji">🎉</div>
+                  <h2 className="review-title">{t("review.gateTitle")}</h2>
+                  <p className="review-text">{t("review.gateSub")}</p>
+                  <div className="review-choices">
+                    <button className="review-choice" onClick={reviewChooseUp}>
+                      <span className="review-ico">👍</span><span>{t("review.good")}</span>
+                    </button>
+                    <button className="review-choice bad" onClick={reviewChooseDown}>
+                      <span className="review-ico">🛠️</span><span>{t("review.improve")}</span>
+                    </button>
+                  </div>
+                  <button className="review-ghost" onClick={reviewDismiss}>{t("review.notNow")}</button>
+                </div>
+              )}
+              {reviewGate.step === "happy" && (
+                <div className="review-body review-center">
+                  <div className="review-emoji">⭐</div>
+                  <h2 className="review-title">{t("review.happyTitle")}</h2>
+                  <p className="review-text">{t("review.happySub")}</p>
+                  <button className="review-primary" onClick={reviewOpenRating}>{t("review.rateOnMonday")}</button>
+                  <button className="review-ghost" onClick={reviewDismiss}>{t("review.later")}</button>
+                </div>
+              )}
+              {reviewGate.step === "improve" && (
+                <div className="review-body">
+                  <div className="review-emoji">🙏</div>
+                  <h2 className="review-title">{t("review.improveTitle")}</h2>
+                  <p className="review-text">{t("review.improveSub")}</p>
+                  <textarea className="review-input" rows={3} placeholder={t("review.feedbackPh")}
+                    value={reviewFeedback} onChange={(e) => setReviewFeedback(e.target.value)} />
+                  <button className="review-primary green" onClick={reviewSubmitFeedback} disabled={!reviewFeedback.trim()}>
+                    {t("review.sendFeedback")}
+                  </button>
+                  <button className="review-ghost" onClick={reviewDismiss}>{t("common.cancel")}</button>
+                </div>
+              )}
+              {reviewGate.step === "done" && (
+                <div className="review-body review-center">
+                  <div className="review-check">✓</div>
+                  <h2 className="review-title">{t("review.doneTitle")}</h2>
+                  <p className="review-text">{t("review.doneSub")}</p>
+                  <button className="review-primary" onClick={reviewClose}>{t("common.close")}</button>
+                </div>
+              )}
+            </div>
+          </div>
         )}
 
         {/* ═══ SECCIÓN: DATOS FISCALES ═══ */}
@@ -1887,17 +2024,15 @@ const App = () => {
           <section className="gd-content">
             <div className="gd-section-head">
               <div>
-                <h2 className="gd-section-title">Datos Fiscales</h2>
+                <h2 className="gd-section-title">{t("fiscal.title")}</h2>
                 <p className="gd-section-sub">
-                  {hasSavedFiscalData
-                    ? "Esto es lo que AFIP va a ver en tus comprobantes."
-                    : "Completá la información de tu empresa para la facturación electrónica."}
+                  {hasSavedFiscalData ? t("fiscal.subSaved") : t("fiscal.subSetup")}
                 </p>
               </div>
               {!inEditMode && (
                 <button type="button" className="btn-secondary section-edit-btn" onClick={handleEnterFiscalEdit}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
-                  Editar
+                  {t("common.edit")}
                 </button>
               )}
             </div>
@@ -1907,28 +2042,28 @@ const App = () => {
               <>
                 <div className="gd-card">
                   <div className="gd-card-head">
-                    <span className="h-eyebrow">Identidad fiscal</span>
-                    <span className="gd-dim">Obligatorio</span>
+                    <span className="h-eyebrow">{t("fiscal.identityTitle")}</span>
+                    <span className="gd-dim">{t("common.required")}</span>
                   </div>
                   <div className="gd-data-grid">
                     <div className="data-row">
-                      <span className="data-label">Razón Social</span>
+                      <span className="data-label">{t("fiscal.razonSocial")}</span>
                       <span className={`data-value ${!fiscal.razonSocial ? "empty" : ""}`}>{fiscal.razonSocial || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">Nombre de Fantasía</span>
+                      <span className="data-label">{t("fiscal.nombreFantasia")}</span>
                       <span className={`data-value ${!fiscal.nombreFantasia ? "empty" : ""}`}>{fiscal.nombreFantasia || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">Punto de Venta</span>
+                      <span className="data-label">{t("fiscal.puntoVenta")}</span>
                       <span className={`data-value mono ${!fiscal.puntoVenta ? "empty" : ""}`}>{fiscal.puntoVenta || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">CUIT</span>
+                      <span className="data-label">{t("fiscal.cuit")}</span>
                       <span className={`data-value mono ${!fiscal.cuit ? "empty" : ""}`}>{fiscal.cuit || "—"}</span>
                     </div>
                     <div className="data-row">
-                      <span className="data-label">Inicio de actividades</span>
+                      <span className="data-label">{t("fiscal.startDateShort")}</span>
                       <span className={`data-value mono ${!fiscal.fechaInicio ? "empty" : ""}`}>
                         {fiscal.fechaInicio
                           ? formatDateAR(fiscal.fechaInicio)
@@ -1936,7 +2071,7 @@ const App = () => {
                       </span>
                     </div>
                     <div className="data-row full-width">
-                      <span className="data-label">Domicilio Comercial</span>
+                      <span className="data-label">{t("fiscal.domicilio")}</span>
                       <span className={`data-value ${!fiscal.domicilio ? "empty" : ""}`}>{fiscal.domicilio || "—"}</span>
                     </div>
                   </div>
@@ -1944,32 +2079,32 @@ const App = () => {
 
                 <div className="gd-card">
                   <div className="gd-card-head">
-                    <span className="h-eyebrow">Marca & contacto · opcional</span>
-                    <span className="gd-dim">Se imprime en el PDF</span>
+                    <span className="h-eyebrow">{t("fiscal.brandContact")}</span>
+                    <span className="gd-dim">{t("fiscal.printedOnPdf")}</span>
                   </div>
                   {hasContactData ? (
                     <div className="gd-brand-row">
                       <div className={`gd-logo-slot ${displayLogoUrl ? "has-logo" : ""}`}>
                         {displayLogoUrl ? (
-                          <img src={displayLogoUrl} alt="Logo de la empresa" />
+                          <img src={displayLogoUrl} alt={t("common.companyLogoAlt")} />
                         ) : (
                           <>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                            <span>Sin logo</span>
+                            <span>{t("fiscal.logoNone")}</span>
                           </>
                         )}
                       </div>
                       <div className="gd-data-grid compact">
                         <div className="data-row">
-                          <span className="data-label">Teléfono</span>
+                          <span className="data-label">{t("fiscal.phone")}</span>
                           <span className={`data-value mono ${!fiscal.telefono ? "empty" : ""}`}>{fiscal.telefono || "—"}</span>
                         </div>
                         <div className="data-row">
-                          <span className="data-label">Email</span>
+                          <span className="data-label">{t("fiscal.email")}</span>
                           <span className={`data-value ${!fiscal.email ? "empty" : ""}`}>{fiscal.email || "—"}</span>
                         </div>
                         <div className="data-row full-width">
-                          <span className="data-label">Sitio web</span>
+                          <span className="data-label">{t("fiscal.website")}</span>
                           <span className={`data-value ${!fiscal.sitioWeb ? "empty" : ""}`}>
                             {fiscal.sitioWeb
                               ? <a href={fiscal.sitioWeb} target="_blank" rel="noreferrer">{fiscal.sitioWeb}</a>
@@ -1979,9 +2114,7 @@ const App = () => {
                       </div>
                     </div>
                   ) : (
-                    <div className="data-view-empty full-width">
-                      Aún no configuraste datos de contacto ni logo. Apretá <em>Editar</em> para agregarlos.
-                    </div>
+                    <div className="data-view-empty full-width">{t("fiscal.noContactYet")}</div>
                   )}
                 </div>
               </>
@@ -1990,30 +2123,30 @@ const App = () => {
             <div className="gd-card">
             <div className="form-grid">
               <div className="form-group">
-                <label className="form-label">Razón Social</label>
+                <label className="form-label">{t("fiscal.razonSocial")}</label>
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Ej: Mi Empresa S.A."
+                  placeholder={t("fiscal.razonSocialPh")}
                   value={fiscal.razonSocial}
                   onChange={(e) => handleFiscalChange("razonSocial", e.target.value)}
                 />
               </div>
 
               <div className="form-group">
-                <label className="form-label">Nombre de Fantasía</label>
+                <label className="form-label">{t("fiscal.nombreFantasia")}</label>
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Ej: Kiosco El Sol"
+                  placeholder={t("fiscal.nombreFantasiaPh")}
                   value={fiscal.nombreFantasia}
                   onChange={(e) => handleFiscalChange("nombreFantasia", e.target.value)}
                 />
-                <p className="form-hint">Es el nombre comercial que aparece en negrita arriba del PDF. Si no tenés, poné tu razón social.</p>
+                <p className="form-hint">{t("fiscal.nombreFantasiaHint")}</p>
               </div>
 
               <div className="form-group">
-                <label className="form-label">CUIT</label>
+                <label className="form-label">{t("fiscal.cuit")}</label>
                 <input
                   className="form-input"
                   type="text"
@@ -2024,7 +2157,7 @@ const App = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Punto de Venta</label>
+                <label className="form-label">{t("fiscal.puntoVenta")}</label>
                 <input
                   className="form-input"
                   type="text"
@@ -2035,7 +2168,7 @@ const App = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Fecha de Inicio de Actividades</label>
+                <label className="form-label">{t("fiscal.fechaInicio")}</label>
                 <input
                   className="form-input"
                   type="date"
@@ -2045,11 +2178,11 @@ const App = () => {
               </div>
 
               <div className="form-group full-width">
-                <label className="form-label">Domicilio Comercial</label>
+                <label className="form-label">{t("fiscal.domicilio")}</label>
                 <input
                   className="form-input"
                   type="text"
-                  placeholder="Av. Corrientes 1234, CABA"
+                  placeholder={t("fiscal.domicilioPh")}
                   value={fiscal.domicilio}
                   onChange={(e) => handleFiscalChange("domicilio", e.target.value)}
                 />
@@ -2059,15 +2192,13 @@ const App = () => {
 
             {/* ─── Subsección opcional: contacto y branding ─── */}
             <div className="subsection-header">
-              <h2 className="subsection-title">Datos de contacto y marca <span className="subsection-tag">opcional</span></h2>
-              <p className="subsection-subtitle">
-                Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.
-              </p>
+              <h2 className="subsection-title">{t("fiscal.contactTitle")} <span className="subsection-tag">{t("common.optional")}</span></h2>
+              <p className="subsection-subtitle">{t("fiscal.contactSub")}</p>
             </div>
 
             <div className="form-grid">
               <div className="form-group">
-                <label className="form-label">Teléfono</label>
+                <label className="form-label">{t("fiscal.phone")}</label>
                 <input
                   className="form-input"
                   type="tel"
@@ -2078,41 +2209,41 @@ const App = () => {
               </div>
 
               <div className="form-group">
-                <label className="form-label">Email</label>
+                <label className="form-label">{t("fiscal.email")}</label>
                 <input
                   className="form-input"
                   type="email"
-                  placeholder="contacto@miempresa.com"
+                  placeholder={t("fiscal.emailPh")}
                   value={fiscal.email}
                   onChange={(e) => handleFiscalChange("email", e.target.value)}
                 />
               </div>
 
               <div className="form-group full-width">
-                <label className="form-label">Sitio web</label>
+                <label className="form-label">{t("fiscal.website")}</label>
                 <input
                   className="form-input"
                   type="url"
-                  placeholder="https://miempresa.com"
+                  placeholder={t("fiscal.websitePh")}
                   value={fiscal.sitioWeb}
                   onChange={(e) => handleFiscalChange("sitioWeb", e.target.value)}
                 />
               </div>
 
               <div className="form-group full-width">
-                <label className="form-label">Logo de la empresa</label>
+                <label className="form-label">{t("fiscal.logo")}</label>
                 <div className="logo-uploader">
                   <div className="logo-uploader-row">
                     <div className="logo-preview">
                       {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) ? (
-                        <img src={logoPreviewUrl || savedLogoDataUrl} alt="Logo de la empresa" />
+                        <img src={logoPreviewUrl || savedLogoDataUrl} alt={t("common.companyLogoAlt")} />
                       ) : (
-                        <span className="logo-preview-empty">Sin logo</span>
+                        <span className="logo-preview-empty">{t("fiscal.logoNone")}</span>
                       )}
                     </div>
                     <div className="logo-uploader-actions">
                       <label className="btn-secondary logo-upload-btn">
-                        {(logoPreviewUrl || savedLogoDataUrl) ? "Cambiar imagen" : "Subir imagen"}
+                        {(logoPreviewUrl || savedLogoDataUrl) ? t("fiscal.logoChange") : t("fiscal.logoUpload")}
                         <input
                           type="file"
                           accept="image/png,image/jpeg,image/svg+xml,image/webp"
@@ -2122,36 +2253,36 @@ const App = () => {
                       </label>
                       {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) && (
                         <button type="button" className="btn-secondary" onClick={handleRemoveLogo}>
-                          Quitar
+                          {t("fiscal.logoRemove")}
                         </button>
                       )}
-                      <p className="logo-uploader-hint">PNG, JPG, SVG o WebP. Hasta 1 MB.</p>
+                      <p className="logo-uploader-hint">{t("fiscal.logoHint")}</p>
                     </div>
                   </div>
 
                   {/* Mockup en vivo: cómo va a quedar en la cabecera de la factura. */}
                   <div className="logo-mockup-wrap">
-                    <span className="logo-mockup-label">Vista previa en la factura:</span>
+                    <span className="logo-mockup-label">{t("map.invoicePreviewLabel")}</span>
                     <div className="invoice-mockup">
                       <div className="invoice-mockup-logo">
                         {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) ? (
                           <img src={logoPreviewUrl || savedLogoDataUrl} alt="" />
                         ) : (
-                          <span className="invoice-mockup-logo-empty">Tu logo<br/>acá</span>
+                          <span className="invoice-mockup-logo-empty" dangerouslySetInnerHTML={{ __html: t("map.yourLogoHere") }} />
                         )}
                       </div>
                       <div className="invoice-mockup-data">
                         <div className="invoice-mockup-name">
-                          {(fiscal.nombreFantasia || fiscal.razonSocial || "TU EMPRESA S.A.").toUpperCase()}
+                          {(fiscal.nombreFantasia || fiscal.razonSocial || t("map.previewSampleCompany")).toUpperCase()}
                         </div>
                         <div className="invoice-mockup-line">
-                          <strong>Razón Social:</strong> {(fiscal.razonSocial || "Tu Empresa S.A.")}
+                          <strong>{t("map.mockRazonSocial")}</strong> {(fiscal.razonSocial || t("map.previewSampleCompany"))}
                         </div>
                         <div className="invoice-mockup-line">
-                          <strong>Domicilio:</strong> {fiscal.domicilio || "Av. Ejemplo 1234, CABA"}
+                          <strong>{t("map.mockDomicilio")}</strong> {fiscal.domicilio || t("map.previewSampleAddress")}
                         </div>
                         <div className="invoice-mockup-line">
-                          <strong>CUIT:</strong> {fiscal.cuit || "20-12345678-9"}
+                          <strong>{t("map.mockCuit")}</strong> {fiscal.cuit || "20-12345678-9"}
                         </div>
                       </div>
                     </div>
@@ -2161,9 +2292,7 @@ const App = () => {
                       const hasLogo = Boolean(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl));
                       if (!hasLogo) {
                         return (
-                          <p className="logo-feedback neutral">
-                            Subí tu logo para verlo en la vista previa.
-                          </p>
+                          <p className="logo-feedback neutral">{t("logo.fb.neutral")}</p>
                         );
                       }
                       if (!logoNaturalSize) return null;
@@ -2172,20 +2301,18 @@ const App = () => {
                       if (minDim < 200) {
                         return (
                           <p className="logo-feedback warn">
-                            ⚠ La imagen es chica ({logoNaturalSize.width}×{logoNaturalSize.height} px). Puede verse borrosa al imprimir. Recomendamos al menos 300×300 px.
+                            {t("logo.fb.smallPre")}{logoNaturalSize.width}×{logoNaturalSize.height}{t("logo.fb.smallSuf")}
                           </p>
                         );
                       }
                       if (ratio > 3 || ratio < 0.34) {
                         return (
-                          <p className="logo-feedback info">
-                            ℹ Imagen muy alargada — el cuadro de la factura es casi cuadrado, así que puede quedar reducida.
-                          </p>
+                          <p className="logo-feedback info">{t("logo.fb.tooWide")}</p>
                         );
                       }
                       return (
                         <p className="logo-feedback ok">
-                          ✓ Se va a ver bien en la factura ({logoNaturalSize.width}×{logoNaturalSize.height} px).
+                          {t("logo.fb.okPre")}{logoNaturalSize.width}×{logoNaturalSize.height}{t("logo.fb.okSuf")}
                         </p>
                       );
                     })()}
@@ -2201,19 +2328,19 @@ const App = () => {
               <div className="form-actions">
                 {!isInitialSetup && (
                   <button type="button" className="btn-secondary" onClick={handleCancelFiscalEdit} disabled={isLoading}>
-                    Cancelar
+                    {t("common.cancel")}
                   </button>
                 )}
                 <button className="btn-primary" onClick={handleSaveFiscal} disabled={isLoading}>
                   {isLoading
-                    ? "Guardando..."
-                    : (isInitialSetup ? "Guardar Datos Fiscales" : "Guardar cambios")}
+                    ? t("fiscal.saving")
+                    : (isInitialSetup ? t("fiscal.saveInitial") : t("fiscal.saveChanges"))}
                 </button>
               </div>
             )}
 
             {isFetchingSavedData && (
-              <p className="fetching-text">Cargando datos guardados...</p>
+              <p className="fetching-text">{t("fiscal.loadingSaved")}</p>
             )}
           </section>
           );
@@ -2226,19 +2353,19 @@ const App = () => {
               <div>
                 <h2 className="gd-section-title">
                   {certFlow === "guided"
-                    ? "Obtené tu certificado ARCA"
+                    ? t("cert.titleGuided")
                     : certFlow === "manual"
-                      ? "Subir certificado manualmente"
-                      : "Certificados ARCA"}
+                      ? t("cert.titleManual")
+                      : t("cert.title")}
                 </h2>
                 <p className="gd-section-sub">
                   {certFlow === "guided"
-                    ? "Asistente paso a paso. No necesitás usar terminal ni OpenSSL."
+                    ? t("cert.subGuided")
                     : certFlow === "manual"
-                      ? "Si ya generaste tu .crt y .key por fuera, subilos directamente."
+                      ? t("cert.subManual")
                       : certificateStatus === "active"
-                        ? "Certificado digital de AFIP que firma tus comprobantes."
-                        : "Para facturar necesitás un certificado digital de ARCA. Te guiamos paso a paso."}
+                        ? t("cert.subActive")
+                        : t("cert.subSetup")}
                 </p>
               </div>
               <div className="gd-section-head-actions">
@@ -2249,7 +2376,7 @@ const App = () => {
                     onClick={handleStartCertRenewal}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6.7L21 8M21 3v5h-5M21 12a9 9 0 0 1-15 6.7L3 16M3 21v-5h5"/></svg>
-                    Renovar
+                    {t("cert.renew")}
                   </button>
                 )}
                 {CERT_TUTORIAL_URL && (
@@ -2258,12 +2385,12 @@ const App = () => {
                     href={CERT_TUTORIAL_URL}
                     target="_blank"
                     rel="noreferrer"
-                    title="Abrir tutorial en video"
+                    title={t("cert.watchTutorialTitle")}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                       <polygon points="5 3 19 12 5 21 5 3" />
                     </svg>
-                    Ver tutorial
+                    {t("cert.watchTutorial")}
                   </a>
                 )}
               </div>
@@ -2280,11 +2407,11 @@ const App = () => {
                     </svg>
                   </div>
                   <div className="cert-active-hero-text">
-                    <h2 className="cert-active-hero-title">Certificado activo</h2>
+                    <h2 className="cert-active-hero-title">{t("cert.activeTitle")}</h2>
                     <p className="cert-active-hero-sub">
-                      Tu app está lista para emitir facturas en ARCA.
+                      {t("cert.activeSub")}
                       {certDaysBadge && (
-                        <> Vence en <strong>{certificateExpirationDate}</strong> · {certDaysBadge.text.toLowerCase()}.</>
+                        <> {t("cert.expiresOn")} <strong>{certificateExpirationDate}</strong> · {certDaysBadge.text.toLowerCase()}.</>
                       )}
                     </p>
                   </div>
@@ -2293,12 +2420,12 @@ const App = () => {
                 <div className="data-view">
                   {certificateAlias && (
                     <div className="data-row">
-                      <span className="data-label">Alias</span>
+                      <span className="data-label">{t("cert.alias")}</span>
                       <span className="data-value">{certificateAlias}</span>
                     </div>
                   )}
                   <div className={`data-row ${!certificateAlias ? "full-width" : ""}`}>
-                    <span className="data-label">Vencimiento</span>
+                    <span className="data-label">{t("cert.expiration")}</span>
                     <span className={`data-value ${!certificateExpirationDate ? "empty" : ""}`}>
                       {certificateExpirationDate || "—"}
                       {certDaysBadge && (
@@ -2309,7 +2436,7 @@ const App = () => {
                     </span>
                   </div>
                   <div className="data-row full-width">
-                    <span className="data-label">Última actualización</span>
+                    <span className="data-label">{t("cert.lastUpdate")}</span>
                     <span className={`data-value ${!certificateUpdatedAt ? "empty" : ""}`}>
                       {certificateUpdatedAt
                         ? new Date(certificateUpdatedAt).toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" })
@@ -2320,7 +2447,7 @@ const App = () => {
 
                 <div className="cert-secondary-actions">
                   <button type="button" className="cert-secondary-link" onClick={() => setCertFlow("manual")}>
-                    También podés subir nuevos archivos .crt y .key manualmente
+                    {t("cert.uploadManualLink")}
                   </button>
                 </div>
               </>
@@ -2332,11 +2459,11 @@ const App = () => {
                 <div className="cert-pending-header">
                   <span className="cert-pending-dot" />
                   <div>
-                    <h2 className="cert-active-title">Solicitud pendiente</h2>
+                    <h2 className="cert-active-title">{t("cert.pendingTitle")}</h2>
                     <p className="cert-active-sub">
-                      Generaste una solicitud
-                      {certificateUpdatedAt ? <> el {new Date(certificateUpdatedAt).toLocaleDateString("es-AR")}</> : null}.
-                      Falta subir el archivo <code>.crt</code> que te da ARCA para terminar.
+                      {t("cert.pendingBody1")}
+                      {certificateUpdatedAt ? <>{t("cert.pendingBodyOn")}{new Date(certificateUpdatedAt).toLocaleDateString("es-AR")}</> : null}
+                      {t("cert.pendingBody2")}<code>.crt</code>{t("cert.pendingBody3")}
                     </p>
                   </div>
                 </div>
@@ -2347,15 +2474,15 @@ const App = () => {
                     className="cert-action-card primary"
                     onClick={() => { setCertFlow("guided"); setGuidedStep(4); }}
                   >
-                    <div className="cert-action-card-badge">✨ Recomendado</div>
+                    <div className="cert-action-card-badge">{t("cert.recommended")}</div>
                     <div className="cert-action-card-icon">
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0073ea" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
                       </svg>
                     </div>
-                    <div className="cert-action-card-title">Subir certificado .crt de ARCA</div>
-                    <div className="cert-action-card-desc">Terminá el trámite que empezaste — solo te queda adjuntar el archivo que te dio ARCA.</div>
-                    <span className="cert-action-card-cta">Continuar →</span>
+                    <div className="cert-action-card-title">{t("cert.uploadCrtTitle")}</div>
+                    <div className="cert-action-card-desc">{t("cert.uploadCrtDesc")}</div>
+                    <span className="cert-action-card-cta">{t("cert.continue")}</span>
                   </button>
 
                   <button
@@ -2368,9 +2495,9 @@ const App = () => {
                         <path d="M14 2H6a2 2 0 0 0-2 2v16c0 1.1.9 2 2 2h12a2 2 0 0 0 2-2V8l-6-6z"/><path d="M14 3v5h5"/>
                       </svg>
                     </div>
-                    <div className="cert-action-card-title">Subir archivos manualmente</div>
-                    <div className="cert-action-card-desc">Si ya tenés tu <code>.crt</code> y <code>.key</code> generados por fuera.</div>
-                    <span className="cert-action-card-cta alt">Subir archivos →</span>
+                    <div className="cert-action-card-title">{t("cert.uploadManualTitle")}</div>
+                    <div className="cert-action-card-desc" dangerouslySetInnerHTML={{ __html: t("cert.manualEntryDesc") }} />
+                    <span className="cert-action-card-cta alt">{t("cert.uploadFiles")}</span>
                   </button>
                 </div>
 
@@ -2379,8 +2506,8 @@ const App = () => {
                     <div className="cert-reset-confirm-header">
                       <span className="cert-reset-confirm-icon">⚠</span>
                       <div>
-                        <strong id="cert-reset-title">¿Empezar una nueva solicitud?</strong>
-                        <p>La solicitud actual se reemplaza y vas a tener que hacer todo el trámite de nuevo en ARCA.</p>
+                        <strong id="cert-reset-title">{t("cert.resetTitle")}</strong>
+                        <p>{t("cert.resetBody")}</p>
                       </div>
                     </div>
                     <div className="cert-reset-confirm-actions">
@@ -2389,7 +2516,7 @@ const App = () => {
                         className="cert-helper-btn"
                         onClick={() => setShowResetConfirm(false)}
                       >
-                        Cancelar
+                        {t("common.cancel")}
                       </button>
                       <button
                         type="button"
@@ -2400,7 +2527,7 @@ const App = () => {
                           setGuidedStep(1);
                         }}
                       >
-                        Sí, empezar de nuevo
+                        {t("cert.resetConfirm")}
                       </button>
                     </div>
                   </div>
@@ -2408,7 +2535,7 @@ const App = () => {
                   <div className="cert-pending-helpers">
                     <button type="button" className="cert-helper-btn" onClick={handleRedownloadCsr} disabled={isLoading}>
                       <span>📥</span>
-                      <span>Re-descargar la solicitud (.csr)</span>
+                      <span>{t("cert.redownloadCsr")}</span>
                     </button>
                     <button
                       type="button"
@@ -2416,7 +2543,7 @@ const App = () => {
                       onClick={() => setShowResetConfirm(true)}
                     >
                       <span>↻</span>
-                      <span>Empezar una nueva solicitud</span>
+                      <span>{t("cert.startNewRequest")}</span>
                     </button>
                   </div>
                 )}
@@ -2431,28 +2558,26 @@ const App = () => {
                   className="cert-entry-hero"
                   onClick={() => { setCertFlow("guided"); setGuidedStep(1); }}
                 >
-                  <div className="cert-entry-hero-badge">✨ Recomendado</div>
+                  <div className="cert-entry-hero-badge">{t("cert.recommended")}</div>
                   <div className="cert-entry-hero-icon">
                     <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#0073ea" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                       <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                     </svg>
                   </div>
-                  <h2 className="cert-entry-hero-title">Obtené tu certificado ARCA con nuestro asistente</h2>
-                  <p className="cert-entry-hero-desc">
-                    La forma más rápida y segura. <strong>Sin tener que usar comandos técnicos</strong> — generamos la solicitud por vos, la subís al portal de ARCA y listo.
-                  </p>
+                  <h2 className="cert-entry-hero-title">{t("cert.heroTitle")}</h2>
+                  <p className="cert-entry-hero-desc">{t("cert.heroDesc")}</p>
                   <ul className="cert-entry-hero-features">
-                    <li><span className="cert-entry-check">✓</span> Guía paso a paso dentro de la app</li>
-                    <li><span className="cert-entry-check">✓</span> Sólo subís un archivo al final</li>
-                    <li><span className="cert-entry-check">✓</span> Tu clave privada queda cifrada automáticamente</li>
+                    <li><span className="cert-entry-check">✓</span> {t("cert.feature1")}</li>
+                    <li><span className="cert-entry-check">✓</span> {t("cert.feature2")}</li>
+                    <li><span className="cert-entry-check">✓</span> {t("cert.feature3")}</li>
                   </ul>
-                  <span className="cert-entry-hero-cta">Empezar ahora →</span>
+                  <span className="cert-entry-hero-cta">{t("cert.startNow")}</span>
                 </button>
 
                 <div className="cert-entry-alt">
-                  <span>¿Ya generaste tu <code>.crt</code> y <code>.key</code> por fuera?</span>
+                  <span>{t("cert.altQ")}</span>
                   <button className="btn-text" onClick={() => setCertFlow("manual")}>
-                    Subirlos manualmente →
+                    {t("cert.uploadThemManually")}
                   </button>
                 </div>
               </div>
@@ -2464,10 +2589,10 @@ const App = () => {
                 <div className="cert-guided-header">
                   <ol className="cert-stepper">
                     {[
-                      { n: 1, title: "Confirmar datos",      desc: "Revisamos tu razón social y CUIT" },
-                      { n: 2, title: "Descargar solicitud",  desc: "Generamos un .csr con tu clave privada cifrada" },
-                      { n: 3, title: "Subir a ARCA",         desc: "Pegás el alias y el .csr en AFIP" },
-                      { n: 4, title: "Subir certificado",    desc: "Adjuntás el .crt que te devuelve AFIP" },
+                      { n: 1, title: t("cert.step1Title"), desc: t("cert.step1Desc") },
+                      { n: 2, title: t("cert.step2Title"), desc: t("cert.step2Desc") },
+                      { n: 3, title: t("cert.step3Title"), desc: t("cert.step3Desc") },
+                      { n: 4, title: t("cert.step4Title"), desc: t("cert.step4Desc") },
                     ].map((s) => (
                       <li
                         key={s.n}
@@ -2489,10 +2614,8 @@ const App = () => {
                   const missingFiscalData = !fiscal.razonSocial || !fiscal.cuit;
                   return (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Confirmá los datos</h3>
-                    <p className="cert-step-desc">
-                      Estos datos se firman en la solicitud. Si hay algo mal, corregilo en Datos Fiscales antes.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s1Title")}</h3>
+                    <p className="cert-step-desc">{t("cert.s1Desc")}</p>
 
                     {isRenewing && (
                       <div className="gd-infobox warn">
@@ -2500,10 +2623,8 @@ const App = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         </span>
                         <div>
-                          <p className="gd-infobox-title">Estás renovando tu certificado</p>
-                          <p className="gd-infobox-body">
-                            Al generar la nueva solicitud, el actual queda reemplazado y no vas a poder facturar hasta completar el paso 4. Usá un alias distinto al anterior — ARCA no permite repetirlos.
-                          </p>
+                          <p className="gd-infobox-title">{t("cert.s1RenewTitle")}</p>
+                          <p className="gd-infobox-body">{t("cert.s1RenewBody")}</p>
                         </div>
                       </div>
                     )}
@@ -2514,24 +2635,22 @@ const App = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                         </span>
                         <div>
-                          <p className="gd-infobox-title">Faltan datos fiscales</p>
-                          <p className="gd-infobox-body">
-                            Completá razón social y CUIT en la sección "Datos Fiscales" antes de generar la solicitud.
-                          </p>
+                          <p className="gd-infobox-title">{t("cert.s1MissingTitle")}</p>
+                          <p className="gd-infobox-body">{t("cert.s1MissingBody")}</p>
                         </div>
                       </div>
                     ) : (
                       <div className="gd-confirm-grid">
                         <div className="gd-confirm-row">
-                          <span className="gd-confirm-label">Razón Social</span>
+                          <span className="gd-confirm-label">{t("fiscal.razonSocial")}</span>
                           <span className="gd-confirm-value">{fiscal.razonSocial}</span>
                         </div>
                         <div className="gd-confirm-row">
-                          <span className="gd-confirm-label">CUIT</span>
+                          <span className="gd-confirm-label">{t("fiscal.cuit")}</span>
                           <span className="gd-confirm-value mono">{fiscal.cuit}</span>
                         </div>
                         <div className="gd-confirm-row full">
-                          <span className="gd-confirm-label">Alias del certificado</span>
+                          <span className="gd-confirm-label">{t("cert.aliasLabel")}</span>
                           <input
                             className="gd-input"
                             type="text"
@@ -2539,9 +2658,7 @@ const App = () => {
                             onChange={(e) => setAliasInput(e.target.value)}
                             placeholder="monday-facturacion"
                           />
-                          <span className="gd-confirm-hint">
-                            Tiene que ser único en ARCA. Prepoblado con el mes actual.
-                          </span>
+                          <span className="gd-confirm-hint">{t("cert.aliasHint")}</span>
                         </div>
                       </div>
                     )}
@@ -2551,23 +2668,21 @@ const App = () => {
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
                       </span>
                       <div>
-                        <p className="gd-infobox-title">Tu clave privada queda cifrada</p>
-                        <p className="gd-infobox-body">
-                          Se genera y guarda con AES-256. No vas a tener que manejarla nunca.
-                        </p>
+                        <p className="gd-infobox-title">{t("cert.keyEncTitle")}</p>
+                        <p className="gd-infobox-body">{t("cert.keyEncBody")}</p>
                       </div>
                     </div>
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={resetCertFlow} disabled={isLoading}>
-                        Cancelar
+                        {t("common.cancel")}
                       </button>
                       <button
                         className="btn-primary"
                         onClick={handleGenerateCsr}
                         disabled={isLoading || missingFiscalData || !aliasInput.trim()}
                       >
-                        {isLoading ? "Generando..." : "Generar solicitud"}
+                        {isLoading ? t("cert.generating") : t("cert.generateRequest")}
                         {!isLoading && <span aria-hidden="true">&nbsp;→</span>}
                       </button>
                     </div>
@@ -2584,10 +2699,11 @@ const App = () => {
                     : "2.1";
                   return (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Descargá tu solicitud</h3>
-                    <p className="cert-step-desc">
-                      Este archivo <code>.csr</code> lo vas a subir al portal de ARCA en el siguiente paso.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s2Title")}</h3>
+                    <p
+                      className="cert-step-desc"
+                      dangerouslySetInnerHTML={{ __html: t("cert.s2Desc") }}
+                    />
 
                     <div className="gd-download-slot">
                       <div className="gd-download-file">
@@ -2596,12 +2712,12 @@ const App = () => {
                         </span>
                         <div className="gd-download-file-info">
                           <div className="gd-download-name">{csrFilename}</div>
-                          <div className="gd-download-meta">{csrSizeKb} KB · listo para subir a ARCA</div>
+                          <div className="gd-download-meta">{csrSizeKb} KB · {t("cert.s2ReadyToUpload")}</div>
                         </div>
                       </div>
                       <button className="btn-secondary" onClick={handleRedownloadCsr} disabled={isLoading}>
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                        Descargar otra vez
+                        {t("cert.downloadAgain")}
                       </button>
                     </div>
 
@@ -2611,9 +2727,9 @@ const App = () => {
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M12 3l1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3z"/><path d="M19 15l.7 2L22 18l-2.3 1-.7 2-.7-2L16 18l2.3-1z"/></svg>
                         </span>
                         <div>
-                          <p className="gd-infobox-title">¿Nunca hiciste este trámite?</p>
+                          <p className="gd-infobox-title">{t("cert.s2.tutorTitle")}</p>
                           <p className="gd-infobox-body">
-                            Te recomendamos abrir <a href={CERT_TUTORIAL_URL} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontWeight:600}}>el tutorial en video</a> antes de seguir. Dura ~4 minutos.
+                            {t("cert.s2.tutorPre")}<a href={CERT_TUTORIAL_URL} target="_blank" rel="noreferrer" style={{color:"var(--accent)",fontWeight:600}}>{t("cert.s2.tutorLink")}</a>{t("cert.s2.tutorSuf")}
                           </p>
                         </div>
                       </div>
@@ -2621,10 +2737,10 @@ const App = () => {
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(1)} disabled={isLoading}>
-                        Volver
+                        {t("common.back")}
                       </button>
                       <button className="btn-primary" onClick={() => setGuidedStep(3)}>
-                        Ya lo tengo&nbsp;<span aria-hidden="true">→</span>
+                        {t("cert.gotIt")}&nbsp;<span aria-hidden="true">→</span>
                       </button>
                     </div>
                   </div>
@@ -2634,10 +2750,8 @@ const App = () => {
                 {/* ─── PASO 3: Instrucciones ARCA ─── */}
                 {guidedStep === 3 && (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Subí el <code>.csr</code> a ARCA</h3>
-                    <p className="cert-step-desc">
-                      Seguí estos pasos en el portal de AFIP.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s3Title")}</h3>
+                    <p className="cert-step-desc">{t("cert.s3Desc")}</p>
 
                     {/* Collapsible de primera vez: adherir el servicio */}
                     <div className="gd-adhered-collapsible">
@@ -2647,34 +2761,29 @@ const App = () => {
                           checked={serviceAdhered}
                           onChange={(e) => setServiceAdhered(e.target.checked)}
                         />
-                        <span className="gd-adhered-title">
-                          Ya tengo adherido el servicio <strong>"Administración de Certificados Digitales"</strong> en ARCA
-                        </span>
+                        <span
+                          className="gd-adhered-title"
+                          dangerouslySetInnerHTML={{ __html: t("cert.s3.adheredTitle") }}
+                        />
                       </label>
                       {!serviceAdhered && (
                         <div className="gd-adhered-body">
-                          <div>
-                            <strong>¿Primera vez?</strong> Primero adherí el servicio (una sola vez):
-                          </div>
+                          <div dangerouslySetInnerHTML={{ __html: t("cert.s3.firstTime") }} />
                           <ol>
-                            <li>En el menú principal, entrá a <strong>Administrador de Relaciones de Clave Fiscal</strong>.</li>
-                            <li>Click en <strong>Adherir Servicio</strong>.</li>
-                            <li>Buscá <strong>"Administración de Certificados Digitales"</strong> (AFIP / ARCA).</li>
-                            <li>Confirmá la adhesión. Una vez hecho esto, podés volver al menú principal.</li>
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi1") }} />
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi2") }} />
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi3") }} />
+                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi4") }} />
                           </ol>
                         </div>
                       )}
                     </div>
 
                     <ol className="gd-arca-steps">
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li1") }} />
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li2") }} />
                       <li>
-                        Entrá a <a href="https://auth.afip.gob.ar/contribuyente_/login.xhtml" target="_blank" rel="noreferrer">auth.afip.gob.ar</a> con tu CUIT y clave fiscal.
-                      </li>
-                      <li>
-                        Menú principal → <strong>Administración de Certificados Digitales</strong>.
-                      </li>
-                      <li>
-                        Click en <strong>Agregar alias</strong> y pegá este valor:
+                        <span dangerouslySetInnerHTML={{ __html: t("cert.s3.li3Lead") }} />
                         <div className="gd-alias-copy">
                           <code>{certificateAlias || aliasInput}</code>
                           <button
@@ -2682,25 +2791,21 @@ const App = () => {
                             className="gd-alias-copy-btn"
                             onClick={() => {
                               navigator.clipboard?.writeText(certificateAlias || aliasInput);
-                              showToast("success", "Alias copiado");
+                              showToast("success", t("toast.aliasCopied"));
                             }}
                           >
                             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-                            Copiar
+                            {t("cert.copy")}
                           </button>
                         </div>
                       </li>
-                      <li>
-                        Adjuntá el <code>.csr</code> que descargaste en el paso anterior.
-                      </li>
-                      <li>
-                        Confirmá y después <strong>descargá el .crt</strong> generado.
-                      </li>
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li4") }} />
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li5") }} />
                     </ol>
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(2)} disabled={isLoading}>
-                        Volver
+                        {t("common.back")}
                       </button>
                       <a
                         className="btn-secondary"
@@ -2709,10 +2814,10 @@ const App = () => {
                         rel="noreferrer"
                       >
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                        Abrir ARCA
+                        {t("cert.openArca")}
                       </a>
                       <button className="btn-primary" onClick={() => setGuidedStep(4)}>
-                        Ya tengo el .crt&nbsp;<span aria-hidden="true">→</span>
+                        {t("cert.gotCrt")}&nbsp;<span aria-hidden="true">→</span>
                       </button>
                     </div>
                   </div>
@@ -2721,23 +2826,21 @@ const App = () => {
                 {/* ─── PASO 4: Subir .crt ─── */}
                 {guidedStep === 4 && (
                   <div className="cert-step-panel">
-                    <h3 className="cert-step-title">Subí el certificado</h3>
-                    <p className="cert-step-desc">
-                      Adjuntá el <code>.crt</code> que descargaste de ARCA.
-                    </p>
+                    <h3 className="cert-step-title">{t("cert.s4Title")}</h3>
+                    <p className="cert-step-desc">{t("cert.s4Desc")}</p>
 
                     <div className="gd-upload-dropzone-wrap">
                       {finalCrtFile ? (
                         <label className="gd-upload-dropzone has-file" htmlFor="crt-final-upload">
                           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-                          <span className="gd-upload-main">Archivo seleccionado</span>
+                          <span className="gd-upload-main">{t("cert.fileSelected")}</span>
                           <span className="gd-upload-filename">{finalCrtFile.name}</span>
                           <button
                             type="button"
                             className="gd-upload-change"
                             onClick={(e) => { e.preventDefault(); setFinalCrtFile(null); }}
                           >
-                            Cambiar archivo
+                            {t("cert.changeFile")}
                           </button>
                           <input
                             id="crt-final-upload"
@@ -2750,8 +2853,8 @@ const App = () => {
                       ) : (
                         <label className="gd-upload-dropzone" htmlFor="crt-final-upload">
                           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-                          <span className="gd-upload-main">Arrastrá el archivo o hacé clic</span>
-                          <span className="gd-upload-hint">.crt · hasta 200 KB</span>
+                          <span className="gd-upload-main">{t("cert.dropOrClick")}</span>
+                          <span className="gd-upload-hint">{t("cert.crtUpTo200")}</span>
                           <input
                             id="crt-final-upload"
                             type="file"
@@ -2765,14 +2868,14 @@ const App = () => {
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(3)} disabled={isLoading}>
-                        Volver
+                        {t("common.back")}
                       </button>
                       <button
                         className="btn-primary"
                         onClick={handleFinalizeCsr}
                         disabled={isLoading || !finalCrtFile}
                       >
-                        {isLoading ? "Validando..." : "Activar certificado"}
+                        {isLoading ? t("cert.validating") : t("cert.activateCert")}
                       </button>
                     </div>
                   </div>
@@ -2783,9 +2886,9 @@ const App = () => {
             {/* Alt-path: ofrecer subida manual fuera del wizard guiado */}
             {certFlow === "guided" && (
               <div className="gd-alt-path">
-                <span>¿Ya generaste <code className="mono" style={{background:"var(--ink-100)", padding:"1px 6px", borderRadius:"4px", fontSize:"12px"}}>.crt</code> y <code className="mono" style={{background:"var(--ink-100)", padding:"1px 6px", borderRadius:"4px", fontSize:"12px"}}>.key</code> por fuera?</span>
+                <span>{t("cert.altQ")}</span>
                 <button type="button" className="btn-link" onClick={() => setCertFlow("manual")}>
-                  Subirlos manualmente →
+                  {t("cert.uploadThemManually")}
                 </button>
               </div>
             )}
@@ -2794,29 +2897,27 @@ const App = () => {
             {certFlow === "manual" && (
               <div className="cert-manual">
                 <div className="cert-guided-header">
-                  <h3 className="cert-step-title" style={{margin: 0}}>Subí tus archivos .crt y .key</h3>
-                  <button className="btn-text cert-guided-close" onClick={resetCertFlow}>Volver al asistente</button>
+                  <h3 className="cert-step-title" style={{margin: 0}}>{t("cert.manualTitle")}</h3>
+                  <button className="btn-text cert-guided-close" onClick={resetCertFlow}>{t("cert.backToAssistant")}</button>
                 </div>
-                <p className="cert-step-desc">
-                  Si ya tenés ambos archivos generados, adjuntalos. Validamos que sean pareja antes de guardarlos.
-                </p>
+                <p className="cert-step-desc">{t("cert.manualDesc")}</p>
 
                 <div className="cards-row">
                   <div className="upload-card">
                     <div className="upload-card-header">
-                      <h3>Certificado (.crt)</h3>
-                      <p>Archivo de certificado público</p>
+                      <h3>{t("cert.crtTitle")}</h3>
+                      <p>{t("cert.crtDesc")}</p>
                     </div>
                     {crtFile ? (
                       <div className="upload-success">
                         <IconCheck />
                         <span>{crtFile.name}</span>
-                        <button className="btn-text" onClick={() => setCrtFile(null)}>Cambiar</button>
+                        <button className="btn-text" onClick={() => setCrtFile(null)}>{t("cert.change")}</button>
                       </div>
                     ) : (
                       <label className="upload-zone" htmlFor="crt-upload">
                         <IconUpload />
-                        <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                        <span className="upload-zone-text">{t("cert.dropToUpload")}</span>
                         <span className="upload-zone-hint">.crt</span>
                         <input
                           id="crt-upload"
@@ -2831,19 +2932,19 @@ const App = () => {
 
                   <div className="upload-card">
                     <div className="upload-card-header">
-                      <h3>Clave Privada (.key)</h3>
-                      <p>Archivo de clave privada</p>
+                      <h3>{t("cert.keyTitle")}</h3>
+                      <p>{t("cert.keyDesc")}</p>
                     </div>
                     {keyFile ? (
                       <div className="upload-success">
                         <IconCheck />
                         <span>{keyFile.name}</span>
-                        <button className="btn-text" onClick={() => setKeyFile(null)}>Cambiar</button>
+                        <button className="btn-text" onClick={() => setKeyFile(null)}>{t("cert.change")}</button>
                       </div>
                     ) : (
                       <label className="upload-zone" htmlFor="key-upload">
                         <IconUpload />
-                        <span className="upload-zone-text">Arrastrá o hacé clic para subir</span>
+                        <span className="upload-zone-text">{t("cert.dropToUpload")}</span>
                         <span className="upload-zone-hint">.key</span>
                         <input
                           id="key-upload"
@@ -2858,20 +2959,20 @@ const App = () => {
                 </div>
 
                 <div className="form-actions">
-                  <button className="btn-secondary" onClick={resetCertFlow}>Cancelar</button>
+                  <button className="btn-secondary" onClick={resetCertFlow}>{t("common.cancel")}</button>
                   <button
                     className="btn-primary"
                     onClick={handleUploadCertificates}
                     disabled={isLoading || !crtFile || !keyFile}
                   >
-                    {isLoading ? "Subiendo..." : "Guardar certificados"}
+                    {isLoading ? t("cert.uploading") : t("cert.saveCerts")}
                   </button>
                 </div>
 
                 <div className="info-box" style={{marginTop: "16px"}}>
                   <span className="info-box-icon">🔒</span>
                   <span>
-                    <strong>Seguridad:</strong> tu clave privada se cifra con AES-256 antes de guardarse y nunca se expone en texto plano.
+                    <strong>{t("cert.securityLabel")}</strong> {t("cert.securityBody")}
                   </span>
                 </div>
               </div>
@@ -2888,20 +2989,20 @@ const App = () => {
           // Todos los campos son obligatorios ahora (la distinción "opcional"
           // se eliminó — están todos integrados en el flujo de la factura modelo).
           const itemFieldsView = [
-            { id: "fecha_emision",        label: "Fecha de Emisión",       scope: "board",   required: true },
-            { id: "receptor_cuit",        label: "CUIT / DNI Receptor",    scope: "board",   required: true },
-            { id: "condicion_venta",      label: "Condición de Venta",     scope: "board",   required: true },
-            { id: "fecha_servicio_desde", label: "Fecha Servicio Desde",   scope: "board",   required: true },
-            { id: "fecha_servicio_hasta", label: "Fecha Servicio Hasta",   scope: "board",   required: true },
-            { id: "fecha_vto_pago",       label: "Fecha Vto. Pago",        scope: "board",   required: true },
+            { id: "fecha_emision",        label: t("map.f.fechaEmision"),   scope: "board",   required: true },
+            { id: "receptor_cuit",        label: t("map.f.receptorCuit"),   scope: "board",   required: true },
+            { id: "condicion_venta",      label: t("map.f.condicionVenta"), scope: "board",   required: true },
+            { id: "fecha_servicio_desde", label: t("map.f.fechaServDesde"), scope: "board",   required: true },
+            { id: "fecha_servicio_hasta", label: t("map.f.fechaServHasta"), scope: "board",   required: true },
+            { id: "fecha_vto_pago",       label: t("map.f.fechaVtoPago"),   scope: "board",   required: true },
           ];
           const subitemFieldsView = [
-            { id: "concepto",         label: "Concepto / Detalle",  scope: "subitem", required: true },
-            { id: "cantidad",         label: "Cantidad",            scope: "subitem", required: true },
-            { id: "precio_unitario",  label: "Precio Unitario",     scope: "subitem", required: true },
-            { id: "prod_serv",        label: "Prod / Serv",         scope: "subitem", required: true },
-            { id: "unidad_medida",    label: "Unidad de Medida",    scope: "subitem", required: true },
-            { id: "alicuota_iva",     label: "Alícuota IVA %",      scope: "subitem", required: true },
+            { id: "concepto",         label: t("map.f.concepto"),       scope: "subitem", required: true },
+            { id: "cantidad",         label: t("map.f.cantidad"),       scope: "subitem", required: true },
+            { id: "precio_unitario",  label: t("map.f.precioUnitario"), scope: "subitem", required: true },
+            { id: "prod_serv",        label: t("map.f.prodServ"),       scope: "subitem", required: true },
+            { id: "unidad_medida",    label: t("map.f.unidadMedida"),   scope: "subitem", required: true },
+            { id: "alicuota_iva",     label: t("map.f.alicuotaIva"),    scope: "subitem", required: true },
           ];
 
           // Helper: renderiza un select del estilo "pill" (variant Refined).
@@ -2943,19 +3044,17 @@ const App = () => {
           <section className="gd-content">
             <div className="gd-section-head">
               <div>
-                <h2 className="gd-section-title">Mapeo Visual de Factura</h2>
-                <p className="gd-section-sub">
-                  Asociá cada campo de la factura con una columna del tablero de Monday.
-                </p>
+                <h2 className="gd-section-title">{t("map.title")}</h2>
+                <p className="gd-section-sub">{t("map.sub")}</p>
               </div>
               <div className="gd-section-head-actions">
                 <span className={pillKind === "ok" ? "gd-pill-ok" : "gd-pill-warn"}>
-                  {mappedRequiredCount}/{totalRequiredCount} campos mapeados
+                  {mappedRequiredCount}/{totalRequiredCount} {t("map.fieldsMapped")}
                 </span>
                 {!inMappingEditMode && (
                   <button type="button" className="btn-secondary section-edit-btn" onClick={handleEnterMappingEdit}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4z"/></svg>
-                  Editar
+                  {t("common.edit")}
                   </button>
                 )}
               </div>
@@ -2967,10 +3066,10 @@ const App = () => {
                 background: "#fff8e1", border: "1.5px solid #f59e0b", borderRadius: "8px",
                 padding: "10px 14px", color: "#7c5a00", fontSize: "13px"
               }}>
-                <strong>Columnas no cargadas.</strong> Información de diagnóstico:
+                <strong>{t("map.diag.colsNotLoaded")}</strong> {t("map.diag.diagInfo")}
                 <ul style={{margin:"6px 0 0 0", paddingLeft:"18px", fontSize:"12px"}}>
-                  <li>boardId: <code>{String(context?.boardId ?? context?.locationContext?.boardId ?? "no disponible")}</code></li>
-                  <li>Columnas ítem: {columns.length} · Subitems: {subitemColumns.length}</li>
+                  <li>boardId: <code>{String(context?.boardId ?? context?.locationContext?.boardId ?? t("map.diag.notAvailable"))}</code></li>
+                  <li>{t("map.diag.itemCols")} {columns.length} · Subitems: {subitemColumns.length}</li>
                   {columnsLoadError && (
                     <li style={{color:"#a52020"}}>
                       Error:
@@ -2986,7 +3085,7 @@ const App = () => {
                 background: "#fff8e1", border: "1.5px solid #f59e0b", borderRadius: "8px",
                 padding: "10px 14px", color: "#7c5a00", fontSize: "13px"
               }}>
-                <strong>Columnas de subitems no detectadas.</strong> Asegurate de que el tablero tenga al menos un subitem creado y recargá la vista.
+                <strong>{t("map.diag.noSubitemsTitle")}</strong> {t("map.diag.noSubitemsBody")}
               </div>
             )}
 
@@ -2995,28 +3094,26 @@ const App = () => {
                 background: "#fff0f0", border: "1.5px solid #d83b3b", borderRadius: "8px",
                 padding: "10px 14px", color: "#a52020", fontSize: "13px"
               }}>
-                <strong>Faltan seleccionar:</strong>{" "}
+                <strong>{t("map.diag.missingTitle")}</strong>{" "}
                 {missingMappingFields.map(f => ({
-                  fecha_emision: "Fecha Emisión",
-                  receptor_cuit: "CUIT Receptor",
-                  concepto: "Concepto/Detalle",
-                  cantidad: "Cantidad",
-                  precio_unitario: "Precio Unitario",
-                  prod_serv: "Prod / Serv",
+                  fecha_emision: t("map.f.fechaEmision"),
+                  receptor_cuit: t("map.f.receptorCuit"),
+                  concepto: t("map.f.concepto"),
+                  cantidad: t("map.f.cantidad"),
+                  precio_unitario: t("map.f.precioUnitario"),
+                  prod_serv: t("map.f.prodServ"),
                 }[f] || f)).join(", ")}
-                {" "}— Los campos marcados en rojo deben asignarse antes de guardar.
+                {" "}{t("map.diag.missingSuffix")}
               </div>
             )}
 
             {/* ─── Acciones automáticas en el item (2 checkboxes opcionales) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Acciones automáticas en el item</span>
-                <span className="gd-dim">Opcionales</span>
+                <span className="h-eyebrow">{t("map.autoActions")}</span>
+                <span className="gd-dim">{t("map.optionals")}</span>
               </div>
-              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>
-                Decidí qué cambios automáticos hace la app sobre el item de monday cuando se emite la factura.
-              </p>
+              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>{t("map.autoActionsDesc")}</p>
 
               {/* Checkbox 1: renombrar item */}
               <label
@@ -3041,10 +3138,12 @@ const App = () => {
                   style={{ marginTop: 3, cursor: inMappingEditMode ? "pointer" : "default" }}
                 />
                 <span style={{ flex: 1 }}>
-                  <strong>Renombrar el item con el N° de factura</strong>
-                  <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
-                    Ej: <em>"Cliente Juan"</em> pasa a <em>"Factura B N° 0002-00000019"</em> tras emitir.
-                  </span>
+                  <strong>{t("map.renameItem")}</strong>
+                  <span
+                    className="gd-confirm-hint"
+                    style={{ display: "block", marginTop: 2 }}
+                    dangerouslySetInnerHTML={{ __html: t("map.renameExample") }}
+                  />
                 </span>
               </label>
 
@@ -3070,10 +3169,12 @@ const App = () => {
                   style={{ marginTop: 3, cursor: inMappingEditMode ? "pointer" : "default" }}
                 />
                 <span style={{ flex: 1 }}>
-                  <strong>Cambiar el estado del item automáticamente</strong>
-                  <span className="gd-confirm-hint" style={{ display: "block", marginTop: 2 }}>
-                    Ej: <em>Procesando</em> → <em>Comprobante Creado</em>, o <em>Error</em> si falla.
-                  </span>
+                  <strong>{t("map.changeStatus")}</strong>
+                  <span
+                    className="gd-confirm-hint"
+                    style={{ display: "block", marginTop: 2 }}
+                    dangerouslySetInnerHTML={{ __html: t("map.statusExample") }}
+                  />
                 </span>
               </label>
 
@@ -3081,14 +3182,14 @@ const App = () => {
               {boardConfig.auto_update_status && (
                 <div className="gd-confirm-grid" style={{ marginTop: 12 }}>
                   <div className="gd-confirm-row">
-                    <span className="gd-confirm-label">Columna de estado del item</span>
+                    <span className="gd-confirm-label">{t("map.statusColumn")}</span>
                     {inMappingEditMode ? (
                       <select
                         className={`invoice-preview-select ${boardConfig.status_column_id ? "mapped" : "unmapped"}`}
                         value={boardConfig.status_column_id || ""}
                         onChange={(e) => setBoardConfig((prev) => ({ ...prev, status_column_id: e.target.value }))}
                       >
-                        <option value="">— Elegir columna Status —</option>
+                        <option value="">{t("map.chooseStatus")}</option>
                         {statusColumns.map((c) => (
                           <option key={c.value} value={c.value}>{c.label}</option>
                         ))}
@@ -3096,12 +3197,12 @@ const App = () => {
                     ) : (
                       <span className="gd-confirm-value">
                         {statusColumns.find((c) => c.value === boardConfig.status_column_id)?.label || (
-                          <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                          <em style={{ color: "var(--ink-400)" }}>{t("map.notConfigured")}</em>
                         )}
                       </span>
                     )}
                     <span className="gd-confirm-hint">
-                      La app va a cambiar esta columna a "{COMPROBANTE_STATUS_FLOW.processing}" al disparar la emisión, y a "{COMPROBANTE_STATUS_FLOW.success}" cuando AFIP devuelva el CAE.
+                      {t("map.statusColHelpPre")}"{statusFlowFor(lang).processing}"{t("map.statusColHelpMid")}"{statusFlowFor(lang).success}"{t("map.statusColHelpSuf")}
                     </span>
                   </div>
                 </div>
@@ -3111,19 +3212,19 @@ const App = () => {
             {/* ─── Columna de salida del PDF (siempre obligatoria) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Columna del PDF emitido</span>
-                <span className="gd-dim">Obligatoria</span>
+                <span className="h-eyebrow">{t("map.pdfColumnTitle")}</span>
+                <span className="gd-dim">{t("common.required")}</span>
               </div>
               <div className="gd-confirm-grid">
                 <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Columna Comprobante PDF</span>
+                  <span className="gd-confirm-label">{t("map.pdfColumnLabel")}</span>
                   {inMappingEditMode ? (
                     <select
                       className={`invoice-preview-select ${boardConfig.invoice_pdf_column_id ? "mapped" : "unmapped"}`}
                       value={boardConfig.invoice_pdf_column_id || ""}
                       onChange={(e) => setBoardConfig((prev) => ({ ...prev, invoice_pdf_column_id: e.target.value }))}
                     >
-                      <option value="">— Elegir columna Archivo —</option>
+                      <option value="">{t("map.chooseFile")}</option>
                       {fileColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3131,23 +3232,19 @@ const App = () => {
                   ) : (
                     <span className="gd-confirm-value">
                       {fileColumns.find((c) => c.value === boardConfig.invoice_pdf_column_id)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>Sin configurar</em>
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.notConfigured")}</em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    La columna (tipo Archivo) donde se va a adjuntar el PDF emitido por AFIP.
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.pdfHint")}</span>
                 </div>
               </div>
               {inMappingEditMode && fileColumns.length === 0 && (
                 <div className="gd-infobox warn" style={{ marginTop: 12 }}>
                   <span className="gd-infobox-icon">⚠</span>
                   <div>
-                    <p className="gd-infobox-title">Tu tablero no tiene columna de Archivo</p>
-                    <p className="gd-infobox-body">
-                      Necesitás agregar una columna tipo "Archivo" al tablero para que la app pueda adjuntar el PDF de la factura.
-                    </p>
+                    <p className="gd-infobox-title">{t("map.noFileColTitle")}</p>
+                    <p className="gd-infobox-body">{t("map.noFileColBody")}</p>
                   </div>
                 </div>
               )}
@@ -3156,23 +3253,21 @@ const App = () => {
             {/* ─── Configuración opcional (campos no obligatorios — moneda, etc.) ─── */}
             <div className="gd-card" style={{ marginBottom: 16 }}>
               <div className="gd-card-head">
-                <span className="h-eyebrow">Configuración opcional</span>
-                <span className="gd-dim">Opcionales</span>
+                <span className="h-eyebrow">{t("map.optionalConfig")}</span>
+                <span className="gd-dim">{t("map.optionals")}</span>
               </div>
-              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>
-                Configuraciones avanzadas que extienden el comportamiento de la app. Si no las usás, la app funciona en su modo por defecto.
-              </p>
+              <p className="gd-section-sub" style={{ marginTop: 4, marginBottom: 12 }}>{t("map.optionalConfigDesc")}</p>
 
               <div className="gd-confirm-grid">
                 <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Moneda</span>
+                  <span className="gd-confirm-label">{t("map.currency")}</span>
                   {inMappingEditMode ? (
                     <select
                       className={`invoice-preview-select ${mapping.moneda ? "mapped" : "unmapped"}`}
                       value={mapping.moneda || ""}
                       onChange={(e) => setMapping({ ...mapping, moneda: e.target.value })}
                     >
-                      <option value="">— Default: pesos —</option>
+                      <option value="">{t("map.defaultPesos")}</option>
                       {columns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3180,18 +3275,16 @@ const App = () => {
                   ) : (
                     <span className="gd-confirm-value">
                       {columns.find((c) => c.value === mapping.moneda)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>Default: pesos</em>
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.defaultPesosShort")}</em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    El item escribe <code>Pesos</code> o <code>Dólares</code> (mayúsc/minúsc/tilde indistinto). Vacío → Pesos.
-                  </span>
+                  <span className="gd-confirm-hint" dangerouslySetInnerHTML={{ __html: t("map.currencyHelp") }} />
                 </div>
 
                 <div className="gd-confirm-row">
                   <span className="gd-confirm-label">
-                    Tipo de cambio
+                    {t("map.exchangeRate")}
                     {mapping.moneda && <span style={{ color: "var(--danger-500, #b91c1c)", marginLeft: 4 }}>*</span>}
                   </span>
                   {inMappingEditMode ? (
@@ -3200,7 +3293,7 @@ const App = () => {
                       value={mapping.cotizacion || ""}
                       onChange={(e) => setMapping({ ...mapping, cotizacion: e.target.value })}
                     >
-                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Default: AFIP"} —</option>
+                      <option value="">— {mapping.moneda ? t("map.requiredIfCurrency") : t("map.defaultAfip")} —</option>
                       {numericColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3209,20 +3302,18 @@ const App = () => {
                     <span className="gd-confirm-value">
                       {numericColumns.find((c) => c.value === mapping.cotizacion)?.label || (
                         <em style={{ color: "var(--ink-400)" }}>
-                          {mapping.moneda ? "Falta mapear" : "Default: cotización AFIP"}
+                          {mapping.moneda ? t("map.needsMapping") : t("map.defaultAfipQuote")}
                         </em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    Celda vacía → la app pide cotización a AFIP y la escribe acá como registro. Con valor → se respeta como override.
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.exchangeHint")}</span>
                 </div>
 
                 <div className="gd-confirm-row">
                   <span className="gd-confirm-label">
-                    Precio Unitario USD
-                    <span style={{ color: "var(--ink-400)", fontWeight: 400, fontSize: 11, marginLeft: 4 }}>(subitem)</span>
+                    {t("map.unitPriceUsd")}
+                    <span style={{ color: "var(--ink-400)", fontWeight: 400, fontSize: 11, marginLeft: 4 }}>{t("map.subitemTag")}</span>
                     {mapping.moneda && <span style={{ color: "var(--danger-500, #b91c1c)", marginLeft: 4 }}>*</span>}
                   </span>
                   {inMappingEditMode ? (
@@ -3231,7 +3322,7 @@ const App = () => {
                       value={mapping.precio_unitario_usd || ""}
                       onChange={(e) => setMapping({ ...mapping, precio_unitario_usd: e.target.value })}
                     >
-                      <option value="">— {mapping.moneda ? "Obligatorio si mapeás Moneda" : "Solo si emitís en USD"} —</option>
+                      <option value="">— {mapping.moneda ? t("map.requiredIfCurrency") : t("map.onlyIfUsd")} —</option>
                       {subitemNumericColumns
                         .filter((c) => c.value !== mapping.precio_unitario)
                         .map((c) => (
@@ -3242,14 +3333,12 @@ const App = () => {
                     <span className="gd-confirm-value">
                       {subitemNumericColumns.find((c) => c.value === mapping.precio_unitario_usd)?.label || (
                         <em style={{ color: "var(--ink-400)" }}>
-                          {mapping.moneda ? "Falta mapear" : "No mapeado"}
+                          {mapping.moneda ? t("map.needsMapping") : t("map.notMapped")}
                         </em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    Columna numérica del subitem con el precio en dólares. Solo se usa para items con moneda <code>Dólares</code>.
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.usdHint")}</span>
                 </div>
 
                 {mapping.moneda && (!mapping.cotizacion || !mapping.precio_unitario_usd) && (
@@ -3262,19 +3351,19 @@ const App = () => {
                     color: "#78350f",
                     gridColumn: "1 / -1",
                   }}>
-                    Mapeás Moneda → mapeá también <strong>Tipo de Cambio</strong> y <strong>Precio Unitario USD</strong>. Los 3 van juntos.
+                    {t("map.currencyWarn")}
                   </div>
                 )}
 
                 <div className="gd-confirm-row">
-                  <span className="gd-confirm-label">Observaciones</span>
+                  <span className="gd-confirm-label">{t("map.observations")}</span>
                   {inMappingEditMode ? (
                     <select
                       className={`invoice-preview-select ${mapping.observaciones ? "mapped" : "unmapped"}`}
                       value={mapping.observaciones || ""}
                       onChange={(e) => setMapping({ ...mapping, observaciones: e.target.value })}
                     >
-                      <option value="">— No mapeado —</option>
+                      <option value="">— {t("map.notMapped")} —</option>
                       {textColumns.map((c) => (
                         <option key={c.value} value={c.value}>{c.label}</option>
                       ))}
@@ -3282,13 +3371,11 @@ const App = () => {
                   ) : (
                     <span className="gd-confirm-value">
                       {textColumns.find((c) => c.value === mapping.observaciones)?.label || (
-                        <em style={{ color: "var(--ink-400)" }}>No mapeado</em>
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.notMapped")}</em>
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint">
-                    Columna texto del item. Si tiene contenido, aparece en el PDF entre la tabla y los totales (máx 255 chars; si excede, se trunca).
-                  </span>
+                  <span className="gd-confirm-hint">{t("map.obsHint")}</span>
                 </div>
               </div>
             </div>
@@ -3297,16 +3384,16 @@ const App = () => {
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Factura modelo</div>
+                  <div className="rf-mapping-frame-eyebrow">{t("map.invoiceModel")}</div>
                   <div className="rf-mapping-frame-title">
                     {inMappingEditMode
-                      ? "Hacé click en cada campo para mapear una columna"
-                      : "Vista del mapeo configurado — apretá Editar para cambiar"}
+                      ? t("map.frameEdit")
+                      : t("map.frameView")}
                   </div>
                 </div>
                 <div className="rf-mapping-legend">
-                  <span><span className="rf-legend-swatch mapped" /> Mapeado</span>
-                  <span><span className="rf-legend-swatch unmapped" /> Sin mapear</span>
+                  <span><span className="rf-legend-swatch mapped" /> {t("map.mapped")}</span>
+                  <span><span className="rf-legend-swatch unmapped" /> {t("map.unmapped")}</span>
                 </div>
               </div>
 
@@ -3314,18 +3401,18 @@ const App = () => {
                 {/* Header de la factura */}
                 <div className="rf-invoice-head">
                   <div>
-                    <div className="rf-invoice-title">FACTURA <span className="rf-invoice-type">X</span></div>
+                    <div className="rf-invoice-title">{t("map.modelInvoiceHeader")} <span className="rf-invoice-type">X</span></div>
                     <div className="rf-invoice-sub">
-                      {(fiscal.razonSocial || "Tu Empresa S.A.")} · CUIT {fiscal.cuit || "—"}
+                      {(fiscal.razonSocial || t("map.previewSampleCompany"))} · CUIT {fiscal.cuit || "—"}
                     </div>
                   </div>
                   <div className="rf-invoice-meta">
                     <div className="rf-invoice-meta-row">
-                      <span>Fecha de emisión</span>
-                      {mapSel("fecha_emision", "Columna fecha")}
+                      <span>{t("map.issueDate")}</span>
+                      {mapSel("fecha_emision", t("map.colDate"))}
                     </div>
                     <div className="rf-invoice-meta-row">
-                      <span>Punto de venta</span>
+                      <span>{t("map.pointOfSale")}</span>
                       <span className="mono rf-invoice-meta-static">{pvFormatted}</span>
                     </div>
                   </div>
@@ -3334,28 +3421,28 @@ const App = () => {
                 {/* Cliente */}
                 <div className="rf-invoice-client">
                   <div>
-                    <div className="rf-invoice-client-label">Cliente — CUIT/DNI</div>
-                    {mapSel("receptor_cuit", "Columna CUIT receptor")}
+                    <div className="rf-invoice-client-label">{t("map.clientLabel")}</div>
+                    {mapSel("receptor_cuit", t("map.colCuitReceptor"))}
                   </div>
                   <div>
-                    <div className="rf-invoice-client-label">Condición de venta</div>
-                    {mapSel("condicion_venta", "Opcional")}
+                    <div className="rf-invoice-client-label">{t("map.paymentTermsLabel")}</div>
+                    {mapSel("condicion_venta", t("map.optional"))}
                   </div>
                 </div>
 
                 {/* Fechas de servicio y vencimiento (integradas a la factura modelo) */}
                 <div className="rf-invoice-client cols-3">
                   <div>
-                    <div className="rf-invoice-client-label">Servicio desde</div>
-                    {mapSel("fecha_servicio_desde", "Columna fecha")}
+                    <div className="rf-invoice-client-label">{t("map.serviceFrom")}</div>
+                    {mapSel("fecha_servicio_desde", t("map.colDate"))}
                   </div>
                   <div>
-                    <div className="rf-invoice-client-label">Servicio hasta</div>
-                    {mapSel("fecha_servicio_hasta", "Columna fecha")}
+                    <div className="rf-invoice-client-label">{t("map.serviceTo")}</div>
+                    {mapSel("fecha_servicio_hasta", t("map.colDate"))}
                   </div>
                   <div>
-                    <div className="rf-invoice-client-label">Vencimiento de pago</div>
-                    {mapSel("fecha_vto_pago", "Columna fecha")}
+                    <div className="rf-invoice-client-label">{t("map.paymentDue")}</div>
+                    {mapSel("fecha_vto_pago", t("map.colDate"))}
                   </div>
                 </div>
 
@@ -3363,36 +3450,34 @@ const App = () => {
                 <table className="rf-invoice-table">
                   <thead>
                     <tr>
-                      <th style={{ width: "32%" }}>Concepto {mapSel("concepto", "Concepto", "subitem")}</th>
-                      <th>Cant {mapSel("cantidad", "Cantidad", "subitem")}</th>
-                      <th>Unidad {mapSel("unidad_medida", "Opcional", "subitem")}</th>
-                      <th>Prod/Serv {mapSel("prod_serv", "Prod/Serv", "subitem")}</th>
-                      <th>Precio unit. {mapSel("precio_unitario", "Precio", "subitem", ["precio_unitario_usd"])}</th>
-                      <th>IVA % {mapSel("alicuota_iva", "Opcional", "subitem")}</th>
+                      <th style={{ width: "32%" }}>{t("map.thConcept")} {mapSel("concepto", t("map.colConcepto"), "subitem")}</th>
+                      <th>{t("map.thQty")} {mapSel("cantidad", t("map.colQty"), "subitem")}</th>
+                      <th>{t("map.thUnit")} {mapSel("unidad_medida", t("map.optional"), "subitem")}</th>
+                      <th>{t("map.thProdServ")} {mapSel("prod_serv", t("map.colProdServ"), "subitem")}</th>
+                      <th>{t("map.thUnitPrice")} {mapSel("precio_unitario", t("map.colPrice"), "subitem", ["precio_unitario_usd"])}</th>
+                      <th>{t("map.thVat")} {mapSel("alicuota_iva", t("map.optional"), "subitem")}</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr className="rf-invoice-row-sample">
-                      <td>Consultoría abril 2026</td>
+                      <td>{t("map.sampleConcept")}</td>
                       <td className="mono">1,00</td>
-                      <td>Hora</td>
-                      <td>Servicio</td>
+                      <td>{t("map.sampleUnit")}</td>
+                      <td>{t("map.sampleServ")}</td>
                       <td className="mono">$ 180.000,00</td>
                       <td>21%</td>
                     </tr>
                     <tr className="rf-invoice-row-ghost">
-                      <td colSpan="6">
-                        Los subítems del tablero van a aparecer como líneas acá.
-                      </td>
+                      <td colSpan="6">{t("map.ghostRow")}</td>
                     </tr>
                   </tbody>
                 </table>
 
                 {/* Totales (solo demo) */}
                 <div className="rf-invoice-totals">
-                  <div><span>Subtotal</span><span className="mono">$ 180.000,00</span></div>
-                  <div><span>IVA 21%</span><span className="mono">$ 37.800,00</span></div>
-                  <div className="rf-total"><span>Total</span><span className="mono">$ 217.800,00</span></div>
+                  <div><span>{t("map.subtotal")}</span><span className="mono">$ 180.000,00</span></div>
+                  <div><span>{t("map.vat21")}</span><span className="mono">$ 37.800,00</span></div>
+                  <div className="rf-total"><span>{t("map.total")}</span><span className="mono">$ 217.800,00</span></div>
                 </div>
               </div>
             </div>
@@ -3401,54 +3486,51 @@ const App = () => {
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Columnas obligatorias</div>
-                  <div className="rf-mapping-frame-title">
-                    Datos del comprobante que la app registra en el item. Algunas las completa sola al emitir (CAE, N° de comprobante, letra, razón social y condición IVA del receptor — estas dos las saca del padrón de AFIP); otras son la base para emitir Notas de Crédito/Débito (Tipo de Comprobante y el CAE de la factura a anular). Mapealas todas para dejar el tablero completo.
-                  </div>
+                  <div className="rf-mapping-frame-eyebrow">{t("map.requiredCols")}</div>
+                  <div className="rf-mapping-frame-title">{t("map.requiredColsDesc")}</div>
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">CAE del Comprobante</div>
-                  {mapSel("cae_comprobante", "Columna CAE del comprobante")}
+                  <div className="rf-invoice-client-label">{t("map.caeLabel")}</div>
+                  {mapSel("cae_comprobante", t("map.colCae"))}
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">Razón Social del Receptor</div>
-                  {mapSel("razon_social_receptor", "Columna texto")}
+                  <div className="rf-invoice-client-label">{t("map.receptorName")}</div>
+                  {mapSel("razon_social_receptor", t("map.colText"))}
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">Condición IVA del Receptor</div>
-                  {mapSel("condicion_iva_receptor", "Columna dropdown")}
-                </div>
-              </div>
-              <div className="rf-invoice-client cols-3">
-                <div>
-                  <div className="rf-invoice-client-label">Tipo de Comprobante</div>
-                  {mapSel("tipo_comprobante", "Columna dropdown")}
-                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
-                    El dropdown del item debe tener las opciones: <b>Factura</b>, <b>Nota de Crédito</b>, <b>Nota de Débito</b>.
-                  </div>
-                </div>
-                <div>
-                  <div className="rf-invoice-client-label">CAE de la factura a anular</div>
-                  {mapSel("factura_referencia", "Columna numérica")}
-                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>
-                    Para una factura va vacía; para una NC/ND pegás acá el CAE de la factura que ajusta.
-                  </div>
-                </div>
-                <div>
-                  <div className="rf-invoice-client-label">Letra del Comprobante</div>
-                  {mapSel("letra_comprobante", "Columna dropdown")}
+                  <div className="rf-invoice-client-label">{t("map.receptorIvaCond")}</div>
+                  {mapSel("condicion_iva_receptor", t("map.colDropdown"))}
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">N° Factura (Pto-Nro)</div>
-                  {mapSel("nro_factura", "Columna texto")}
+                  <div className="rf-invoice-client-label">{t("map.voucherType")}</div>
+                  {mapSel("tipo_comprobante", t("map.colDropdown"))}
+                  <div
+                    style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}
+                    dangerouslySetInnerHTML={{ __html: t("map.voucherTypeHelp") }}
+                  />
                 </div>
                 <div>
-                  <div className="rf-invoice-client-label">N° Comprobante</div>
-                  {mapSel("nro_comprobante", "Columna numérica")}
+                  <div className="rf-invoice-client-label">{t("map.caeToCancel")}</div>
+                  {mapSel("factura_referencia", t("map.colNumeric"))}
+                  <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}>{t("map.factRefHint")}</div>
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">{t("map.letterLabel")}</div>
+                  {mapSel("letra_comprobante", t("map.colDropdown"))}
+                </div>
+              </div>
+              <div className="rf-invoice-client cols-3">
+                <div>
+                  <div className="rf-invoice-client-label">{t("map.invoiceNum")}</div>
+                  {mapSel("nro_factura", t("map.colText"))}
+                </div>
+                <div>
+                  <div className="rf-invoice-client-label">{t("map.voucherNum")}</div>
+                  {mapSel("nro_comprobante", t("map.colNumeric"))}
                 </div>
               </div>
             </div>
@@ -3460,16 +3542,14 @@ const App = () => {
             <div className="rf-mapping-frame">
               <div className="rf-mapping-frame-head">
                 <div>
-                  <div className="rf-mapping-frame-eyebrow">Columnas opcionales</div>
-                  <div className="rf-mapping-frame-title">
-                    Mapealas solo si las usás. La app las completa o las lee al emitir.
-                  </div>
+                  <div className="rf-mapping-frame-eyebrow">{t("map.optionalCols")}</div>
+                  <div className="rf-mapping-frame-title">{t("map.optionalColsDesc")}</div>
                 </div>
               </div>
               <div className="rf-invoice-client cols-3">
                 <div>
-                  <div className="rf-invoice-client-label">Punto de Venta</div>
-                  {mapSel("punto_venta", "Opcional")}
+                  <div className="rf-invoice-client-label">{t("fiscal.puntoVenta")}</div>
+                  {mapSel("punto_venta", t("map.optional"))}
                 </div>
               </div>
             </div>
@@ -3478,13 +3558,13 @@ const App = () => {
               <div className="form-actions" style={{marginTop: "8px"}}>
                 {!isMappingInitialSetup && (
                   <button type="button" className="btn-secondary" onClick={handleCancelMappingEdit} disabled={isLoading}>
-                    Cancelar
+                    {t("common.cancel")}
                   </button>
                 )}
                 <button className="btn-primary" onClick={handleSaveVisualMapping} disabled={isLoading}>
                   {isLoading
-                    ? "Guardando..."
-                    : (isMappingInitialSetup ? "Guardar Mapeo Visual" : "Guardar cambios")}
+                    ? t("fiscal.saving")
+                    : (isMappingInitialSetup ? t("map.saveInitial") : t("fiscal.saveChanges"))}
                 </button>
               </div>
             )}

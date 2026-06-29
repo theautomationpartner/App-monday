@@ -753,13 +753,14 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
         const boardCfgResult = await db.query(
             `SELECT status_column_id, trigger_label, success_label, error_label,
                     processing_label, required_columns_json,
-                    auto_rename_item, auto_update_status
+                    auto_rename_item, auto_update_status, language
              FROM board_automation_configs
              WHERE company_id=$1 AND board_id=$2
              ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
             [company.id, String(boardId)]
         );
         boardConfig = boardCfgResult.rows[0] || null;
+        applyStatusFlowDefaults(boardConfig);
         if (!boardConfig) {
             missing.push('board_config');
         } else {
@@ -788,8 +789,32 @@ async function validateEmissionReadiness({ mondayAccountId, boardId = null }) {
     return { ready: missing.length === 0, missing, company, certificate, mapping, boardConfig };
 }
 
-function formatMissingConfigError(missing) {
-    const labels = {
+function formatMissingConfigError(missing, language = 'es') {
+    const isEn = language === 'en';
+    const labels = isEn ? {
+        'datos_fiscales':                  'Company tax details',
+        'datos_fiscales.business_name':    'Legal name',
+        'datos_fiscales.cuit':              'Issuer CUIT',
+        'datos_fiscales.punto_venta':       'Point of sale',
+        'certificados_afip':                'AFIP certificates (.crt + .key)',
+        'certificados_afip.expirados':      'Expired AFIP certificates',
+        'mapeo_columnas':                        'Visual column mapping',
+        'mapeo_columnas.fecha_emision':          'Issue Date column (item)',
+        'mapeo_columnas.receptor_cuit':          'Recipient CUIT/DNI column (item)',
+        'mapeo_columnas.condicion_venta':        'Sale Condition column (item)',
+        'mapeo_columnas.fecha_servicio_desde':   'Service Date From column (item)',
+        'mapeo_columnas.fecha_servicio_hasta':   'Service Date To column (item)',
+        'mapeo_columnas.fecha_vto_pago':         'Payment Due Date column (item)',
+        'mapeo_columnas.concepto':               'Description / name column (subitem)',
+        'mapeo_columnas.cantidad':               'Quantity column (subitem)',
+        'mapeo_columnas.precio_unitario':        'Unit Price column (subitem)',
+        'mapeo_columnas.prod_serv':              'Prod/Serv column (subitem)',
+        'mapeo_columnas.unidad_medida':          'Unit of Measure column (subitem)',
+        'mapeo_columnas.alicuota_iva':           'VAT Rate % column (subitem)',
+        'board_config':                          'Board automation configuration',
+        'board_config.status_column_id':         'Board status column',
+        'board_config.invoice_pdf_column':       'Voucher PDF column (File type, item)',
+    } : {
         'datos_fiscales':                  'Datos fiscales de la empresa',
         'datos_fiscales.business_name':    'Razón social',
         'datos_fiscales.cuit':              'CUIT del emisor',
@@ -815,11 +840,15 @@ function formatMissingConfigError(missing) {
     };
     const list = missing.map(k => {
         if (k.startsWith('board_config.columnas_pendientes:')) {
-            return `Columnas requeridas sin resolver: ${k.split(':')[1]}`;
+            return isEn
+                ? `Required columns unresolved: ${k.split(':')[1]}`
+                : `Columnas requeridas sin resolver: ${k.split(':')[1]}`;
         }
         return labels[k] || k;
     });
-    return `Configuración incompleta. Falta: ${list.join(' · ')}`;
+    return isEn
+        ? `Incomplete configuration. Missing: ${list.join(' · ')}`
+        : `Configuración incompleta. Falta: ${list.join(' · ')}`;
 }
 
 /**
@@ -858,44 +887,52 @@ function getColumnLabel(columnValues, columnId, canonicalLabel) {
 // El mapeo es por board, así que el chequeo aplica a los dos flujos (factura y
 // NC/ND). Devuelve un array de errores legibles (vacío si está OK).
 const REQUIRED_EMIT_MAPPING = [
-    ['razon_social_receptor',  'Razón Social del Receptor'],
-    ['condicion_iva_receptor', 'Condición IVA del Receptor'],
-    ['tipo_comprobante',       'Tipo de Comprobante'],
-    ['factura_referencia',     'CAE de la factura a anular'],
-    ['nro_factura',            'N° Factura (Pto-Nro)'],
-    ['nro_comprobante',        'N° Comprobante'],
-    ['letra_comprobante',      'Letra del Comprobante'],
+    ['razon_social_receptor',  'Razón Social del Receptor', 'Recipient Legal Name'],
+    ['condicion_iva_receptor', 'Condición IVA del Receptor', 'Recipient VAT Condition'],
+    ['tipo_comprobante',       'Tipo de Comprobante', 'Voucher Type'],
+    ['factura_referencia',     'CAE de la factura a anular', 'CAE of the invoice to cancel'],
+    ['nro_factura',            'N° Factura (Pto-Nro)', 'Invoice No. (PoS-No.)'],
+    ['nro_comprobante',        'N° Comprobante', 'Voucher No.'],
+    ['letra_comprobante',      'Letra del Comprobante', 'Voucher Letter'],
 ];
-function checkReceptorWriteBackMapped(mapping) {
+function checkReceptorWriteBackMapped(mapping, language = 'es') {
     const errors = [];
-    for (const [key, label] of REQUIRED_EMIT_MAPPING) {
+    for (const [key, labelEs, labelEn] of REQUIRED_EMIT_MAPPING) {
         if (!mapping?.[key]) {
-            errors.push(`Falta mapear la columna "${label}" en el Mapeo Visual (es obligatoria).`);
+            errors.push(language === 'en'
+                ? `Column "${labelEn}" is not mapped in Visual Mapping (it's required).`
+                : `Falta mapear la columna "${labelEs}" en el Mapeo Visual (es obligatoria).`);
         }
     }
     return errors;
 }
 
-function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
+// `language` ('es' default | 'en'): los bullets de error se inyectan tal cual en
+// el comentario del item, así que se emiten en el idioma del board. La rama 'es'
+// es byte-idéntica a la versión histórica (clientes español intactos).
+function validateItemDataCompleteness({ mainColumns, subitems, mapping, language = 'es' }) {
     const errors = [];
+    const L = (en, es) => language === 'en' ? en : es;
     const VALID_ALICUOTAS = new Set(['0', '2.5', '5', '10.5', '21', '27']);
-    const VALID_PROD_SERV = new Set(['servicio', 'producto']);
+    const VALID_PROD_SERV = new Set(['servicio', 'producto', 'service', 'product']);
 
     // Columnas de write-back del receptor obligatorias (razón social + cond. IVA).
-    errors.push(...checkReceptorWriteBackMapped(mapping));
+    errors.push(...checkReceptorWriteBackMapped(mapping, language));
 
     const fechaEmision = getColumnTextById(mainColumns, mapping.fecha_emision);
     if (!fechaEmision) {
-        errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_emision, 'Fecha de Emisión')}`);
+        const lbl = getColumnLabel(mainColumns, mapping.fecha_emision, L('Issue Date', 'Fecha de Emisión'));
+        errors.push(L(`Item: missing column ${lbl}`, `Item: falta la columna ${lbl}`));
     }
 
     const condicionVenta = getColumnTextById(mainColumns, mapping.condicion_venta);
     if (!condicionVenta) {
-        errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.condicion_venta, 'Condición de Venta')}`);
+        const lbl = getColumnLabel(mainColumns, mapping.condicion_venta, L('Sale Condition', 'Condición de Venta'));
+        errors.push(L(`Item: missing column ${lbl}`, `Item: falta la columna ${lbl}`));
     }
 
     if (!subitems || subitems.length === 0) {
-        errors.push('El item no tiene subitems (al menos uno es obligatorio)');
+        errors.push(L('The item has no subitems (at least one is required)', 'El item no tiene subitems (al menos uno es obligatorio)'));
         return { ok: false, errors };
     }
 
@@ -913,62 +950,68 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         ? mapping.precio_unitario_usd
         : mapping.precio_unitario;
     const precioLabelForValidation = (monedaParsedForPrice === 'DOL' && mapping.precio_unitario_usd)
-        ? 'Precio Unitario (USD)'
-        : 'Precio Unitario';
+        ? L('Unit Price (USD)', 'Precio Unitario (USD)')
+        : L('Unit Price', 'Precio Unitario');
 
     let hayServicio = false;
     subitems.forEach(sub => {
         const name = sub.name || `#${sub.id}`;
 
         if (!sub.name || !String(sub.name).trim()) {
-            errors.push(`Subitem "${name}": falta el nombre (concepto)`);
+            errors.push(L(`Subitem "${name}": missing the name (description)`, `Subitem "${name}": falta el nombre (concepto)`));
         }
 
         const unidadMedida = getColumnTextById(sub.column_values, mapping.unidad_medida);
         if (!unidadMedida) {
-            errors.push(`Subitem "${name}": falta la columna ${getColumnLabel(sub.column_values, mapping.unidad_medida, 'Unidad de Medida')}`);
+            const lbl = getColumnLabel(sub.column_values, mapping.unidad_medida, L('Unit of Measure', 'Unidad de Medida'));
+            errors.push(L(`Subitem "${name}": missing column ${lbl}`, `Subitem "${name}": falta la columna ${lbl}`));
         }
 
         const cantNum = toNumberOrNull(getColumnTextById(sub.column_values, mapping.cantidad));
         if (cantNum === null || cantNum <= 0) {
-            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, mapping.cantidad, 'Cantidad')} inválida (debe ser número > 0)`);
+            const lbl = getColumnLabel(sub.column_values, mapping.cantidad, L('Quantity', 'Cantidad'));
+            errors.push(L(`Subitem "${name}": column ${lbl} invalid (must be a number > 0)`, `Subitem "${name}": columna ${lbl} inválida (debe ser número > 0)`));
         }
 
         const precioNum = toNumberOrNull(getColumnTextById(sub.column_values, precioColumnForValidation));
         if (precioNum === null || precioNum <= 0) {
-            errors.push(`Subitem "${name}": columna ${getColumnLabel(sub.column_values, precioColumnForValidation, precioLabelForValidation)} inválida (debe ser número > 0)`);
+            const lbl = getColumnLabel(sub.column_values, precioColumnForValidation, precioLabelForValidation);
+            errors.push(L(`Subitem "${name}": column ${lbl} invalid (must be a number > 0)`, `Subitem "${name}": columna ${lbl} inválida (debe ser número > 0)`));
         }
 
         const prodServRaw = getColumnTextById(sub.column_values, mapping.prod_serv) || '';
         const prodServ = prodServRaw.toLowerCase().trim();
         const prodServLabel = getColumnLabel(sub.column_values, mapping.prod_serv, 'Prod/Serv');
         if (!prodServ) {
-            errors.push(`Subitem "${name}": falta la columna ${prodServLabel} — debe decir "producto" o "servicio"`);
+            errors.push(L(`Subitem "${name}": missing column ${prodServLabel} — must say "product" or "service"`, `Subitem "${name}": falta la columna ${prodServLabel} — debe decir "producto" o "servicio"`));
         } else if (!VALID_PROD_SERV.has(prodServ)) {
-            errors.push(`Subitem "${name}": columna ${prodServLabel} debe decir "producto" o "servicio" (actual: "${prodServRaw}")`);
-        } else if (prodServ === 'servicio') {
+            errors.push(L(`Subitem "${name}": column ${prodServLabel} must say "product" or "service" (current: "${prodServRaw}")`, `Subitem "${name}": columna ${prodServLabel} debe decir "producto" o "servicio" (actual: "${prodServRaw}")`));
+        } else if (prodServ === 'servicio' || prodServ === 'service') {
             hayServicio = true;
         }
 
         const alicuotaRaw = getColumnTextById(sub.column_values, mapping.alicuota_iva) || '';
         const alicuotaNorm = String(alicuotaRaw).replace(/[^0-9.,]/g, '').replace(',', '.').trim();
-        const alicuotaLabel = getColumnLabel(sub.column_values, mapping.alicuota_iva, 'Alícuota IVA %');
+        const alicuotaLabel = getColumnLabel(sub.column_values, mapping.alicuota_iva, L('VAT Rate %', 'Alícuota IVA %'));
         if (!alicuotaNorm) {
-            errors.push(`Subitem "${name}": falta la columna ${alicuotaLabel}`);
+            errors.push(L(`Subitem "${name}": missing column ${alicuotaLabel}`, `Subitem "${name}": falta la columna ${alicuotaLabel}`));
         } else if (!VALID_ALICUOTAS.has(alicuotaNorm)) {
-            errors.push(`Subitem "${name}": columna ${alicuotaLabel} inválida. Valores permitidos: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`);
+            errors.push(L(`Subitem "${name}": column ${alicuotaLabel} invalid. Allowed values: 0, 2.5, 5, 10.5, 21, 27 (current: "${alicuotaRaw}")`, `Subitem "${name}": columna ${alicuotaLabel} inválida. Valores permitidos: 0, 2.5, 5, 10.5, 21, 27 (actual: "${alicuotaRaw}")`));
         }
     });
 
     if (hayServicio) {
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_desde)) {
-            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_servicio_desde, 'Fecha Servicio Desde')} (obligatoria cuando hay subitems de servicio)`);
+            const lbl = getColumnLabel(mainColumns, mapping.fecha_servicio_desde, L('Service Date From', 'Fecha Servicio Desde'));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_hasta)) {
-            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_servicio_hasta, 'Fecha Servicio Hasta')} (obligatoria cuando hay subitems de servicio)`);
+            const lbl = getColumnLabel(mainColumns, mapping.fecha_servicio_hasta, L('Service Date To', 'Fecha Servicio Hasta'));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_vto_pago)) {
-            errors.push(`Item: falta la columna ${getColumnLabel(mainColumns, mapping.fecha_vto_pago, 'Fecha Vto. Pago')} (obligatoria cuando hay subitems de servicio)`);
+            const lbl = getColumnLabel(mainColumns, mapping.fecha_vto_pago, L('Payment Due Date', 'Fecha Vto. Pago'));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
         }
     }
 
@@ -981,8 +1024,8 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         if (monedaRaw.trim()) {
             const monedaParsed = invoiceRules.parseMoneda(monedaRaw);
             if (!monedaParsed) {
-                const monedaLabel = getColumnLabel(mainColumns, mapping.moneda, 'Moneda');
-                errors.push(`Item: columna ${monedaLabel} tiene un valor no reconocido ("${monedaRaw}"). Debe decir "Pesos" o "Dólares" (acepta cualquier mayuscula/minuscula y singular/plural).`);
+                const monedaLabel = getColumnLabel(mainColumns, mapping.moneda, L('Currency', 'Moneda'));
+                errors.push(L(`Item: column ${monedaLabel} has an unrecognized value ("${monedaRaw}"). It must say "Pesos" or "Dollars" (any case and singular/plural accepted).`, `Item: columna ${monedaLabel} tiene un valor no reconocido ("${monedaRaw}"). Debe decir "Pesos" o "Dólares" (acepta cualquier mayuscula/minuscula y singular/plural).`));
             }
         }
     }
@@ -991,8 +1034,8 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping }) {
         if (cotRaw.trim()) {
             const cotNum = toNumberOrNull(cotRaw);
             if (cotNum === null || cotNum <= 0) {
-                const cotLabel = getColumnLabel(mainColumns, mapping.cotizacion, 'Tipo de cambio');
-                errors.push(`Item: columna ${cotLabel} debe ser un número mayor a 0 (actual: "${cotRaw}")`);
+                const cotLabel = getColumnLabel(mainColumns, mapping.cotizacion, L('Exchange Rate', 'Tipo de cambio'));
+                errors.push(L(`Item: column ${cotLabel} must be a number greater than 0 (current: "${cotRaw}")`, `Item: columna ${cotLabel} debe ser un número mayor a 0 (actual: "${cotRaw}")`));
             }
         }
     }
@@ -1061,6 +1104,37 @@ const COMPROBANTE_STATUS_FLOW = {
     success: 'Comprobante Creado',
     error: 'Error - Mirar Comentarios',
 };
+
+// Flujo de status en inglés, para boards instalados desde el template inglés.
+// Los strings DEBEN coincidir EXACTO con los labels del board EN (si no, monday
+// crea labels basura por create_labels_if_missing). El error usa "See Updates"
+// porque los comentarios viven en la pestaña "Updates" de monday.
+const COMPROBANTE_STATUS_FLOW_EN = {
+    trigger: 'Create Voucher',
+    processing: 'Creating Voucher',
+    success: 'Voucher Created',
+    error: 'Error - See Updates',
+};
+
+// Resuelve el flujo de status por idioma del board. Default = español: cualquier
+// valor que no sea 'en' (incluido NULL/undefined de clientes legacy) cae al flujo
+// español de SIEMPRE → comportamiento byte-idéntico para clientes existentes.
+function resolveStatusFlow(language) {
+    return language === 'en' ? COMPROBANTE_STATUS_FLOW_EN : COMPROBANTE_STATUS_FLOW;
+}
+
+// Rellena SOLO los labels NULL del boardConfig con el flujo del idioma. Preserva
+// cualquier label custom que el cliente ya tenga guardado. Centraliza la lógica
+// de idioma en un solo lugar para no tocar los ~18 sitios que escriben status.
+function applyStatusFlowDefaults(cfg) {
+    if (!cfg) return cfg;
+    const flow = resolveStatusFlow(cfg.language);
+    cfg.trigger_label    = cfg.trigger_label    || flow.trigger;
+    cfg.processing_label = cfg.processing_label || flow.processing;
+    cfg.success_label    = cfg.success_label    || flow.success;
+    cfg.error_label      = cfg.error_label      || flow.error;
+    return cfg;
+}
 
 function parseAuthorizationToken(req) {
     const authHeader = req.headers.authorization || req.headers.Authorization;
@@ -2119,7 +2193,8 @@ function extractCaeFromColumn(columnValues, columnId) {
 //   letra          — 'A' | 'B' | 'C' (C no lleva IVA)
 // Devuelve { validLines, lineas, alicuotaElegida, alicuotaConfig,
 //            importeNeto, importeIva, importeTotal }.
-function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
+function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra, language = 'es' }) {
+    const L = (en, es) => language === 'en' ? en : es;
     const ALICUOTA_MAP = {
         '0':    { id: 3, rate: 0 },
         '2.5':  { id: 9, rate: 0.025 },
@@ -2148,20 +2223,20 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
     if (validLines.length === 0) {
         const detalleStr = rawLines.map((l) => {
             const faltantes = [];
-            if (!l.concept) faltantes.push('Concepto');
+            if (!l.concept) faltantes.push(L('Description', 'Concepto'));
             const q = toNumberOrNull(l.quantity);
             const p = toNumberOrNull(l.unit_price);
-            if (q === null) faltantes.push('Cantidad');
-            else if (q <= 0) faltantes.push('Cantidad (tiene que ser mayor a 0)');
-            if (p === null) faltantes.push('Precio Unitario');
-            else if (p <= 0) faltantes.push('Precio Unitario (tiene que ser mayor a 0)');
+            if (q === null) faltantes.push(L('Quantity', 'Cantidad'));
+            else if (q <= 0) faltantes.push(L('Quantity (must be greater than 0)', 'Cantidad (tiene que ser mayor a 0)'));
+            if (p === null) faltantes.push(L('Unit Price', 'Precio Unitario'));
+            else if (p <= 0) faltantes.push(L('Unit Price (must be greater than 0)', 'Precio Unitario (tiene que ser mayor a 0)'));
             return `• "${l.subitem_name}": ${faltantes.join(', ')}`;
         }).join('\n');
         throw new Error(
-            `No hay líneas válidas en los subítems.\n` +
+            L('No valid lines in the subitems.\n', `No hay líneas válidas en los subítems.\n`) +
             ((subitems || []).length === 0
-                ? 'El item no tiene subítems creados.'
-                : `Subítems con problemas:\n${detalleStr}`)
+                ? L('The item has no subitems created.', 'El item no tiene subítems creados.')
+                : L(`Subitems with problems:\n${detalleStr}`, `Subítems con problemas:\n${detalleStr}`))
         );
     }
 
@@ -2173,15 +2248,18 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
     const sinAlicuota = alicuotas.filter((a) => !a.normalized);
     if (mapping.alicuota_iva && sinAlicuota.length > 0) {
         throw new Error(
-            `Alícuota IVA faltante en subítems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n` +
-            `Todos los subítems deben tener una alícuota IVA (0, 2.5, 5, 10.5, 21 o 27).`
+            L(`Missing VAT rate in subitems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n`,
+              `Alícuota IVA faltante en subítems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n`) +
+            L('All subitems must have a VAT rate (0, 2.5, 5, 10.5, 21 or 27).',
+              'Todos los subítems deben tener una alícuota IVA (0, 2.5, 5, 10.5, 21 o 27).')
         );
     }
     const alicuotasUnicas = [...new Set(alicuotas.map((a) => a.normalized).filter(Boolean))];
     if (alicuotasUnicas.length > 1) {
         throw new Error(
-            `Alícuotas IVA diferentes entre subítems.\n` +
-            `Todos los subítems deben tener la misma alícuota IVA. Encontradas:\n` +
+            L('Different VAT rates across subitems.\n', `Alícuotas IVA diferentes entre subítems.\n`) +
+            L('All subitems must have the same VAT rate. Found:\n',
+              'Todos los subítems deben tener la misma alícuota IVA. Encontradas:\n') +
             alicuotas.map((a) => `• "${a.name}": ${a.normalized}%`).join('\n')
         );
     }
@@ -2189,8 +2267,8 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
     const alicuotaConfig = ALICUOTA_MAP[alicuotaElegida];
     if (!alicuotaConfig) {
         throw new Error(
-            `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
-            `Las permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+            L(`Invalid VAT rate: ${alicuotaElegida}%.\n`, `Alícuota IVA no válida: ${alicuotaElegida}%.\n`) +
+            L('Allowed: 0%, 2.5%, 5%, 10.5%, 21%, 27%.', 'Las permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.')
         );
     }
 
@@ -2451,7 +2529,8 @@ async function ensureBoardAutomationConfigsExtras() {
         ALTER TABLE board_automation_configs
             ADD COLUMN IF NOT EXISTS auto_rename_item BOOLEAN DEFAULT TRUE,
             ADD COLUMN IF NOT EXISTS auto_update_status BOOLEAN DEFAULT TRUE,
-            ADD COLUMN IF NOT EXISTS processing_label TEXT
+            ADD COLUMN IF NOT EXISTS processing_label TEXT,
+            ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'es'
     `);
     // Hacer status_column_id nullable. ALTER COLUMN no es idempotente en si
     // (no hay IF NOT NULL), pero si la columna ya es nullable no rompe nada.
@@ -2673,6 +2752,30 @@ async function ensureAccountSubscriptionsTable() {
     _accountSubscriptionsTableEnsured = true;
 }
 
+let _accountReviewPromptsTableEnsured = false;
+// Estado por cuenta del pedido de calificación (review prompt):
+//   nudge_comment_sent_at → cuándo dejamos el comentario en el item (UNA sola vez).
+//   review_prompt_count   → cuántas veces mostramos el gate in-app (tope de vida 2).
+//   last_prompt_date      → cooldown (60-90 días entre intentos).
+//   has_rated             → ya calificó, no volver a pedir.
+//   last_feedback_at      → cuándo dejó feedback negativo (👎).
+async function ensureAccountReviewPromptsTable() {
+    if (_accountReviewPromptsTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS account_review_prompts (
+            monday_account_id     TEXT PRIMARY KEY,
+            nudge_comment_sent_at TIMESTAMP,
+            review_prompt_count   INTEGER NOT NULL DEFAULT 0,
+            last_prompt_date      TIMESTAMP,
+            has_rated             BOOLEAN NOT NULL DEFAULT FALSE,
+            last_feedback_at      TIMESTAMP,
+            created_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at            TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    _accountReviewPromptsTableEnsured = true;
+}
+
 let _accountPlanOverridesTableEnsured = false;
 // Tabla de overrides por cuenta: bonificaciones / planes custom que no encajan
 // en PLAN_LIMITS (ej. caso Polifroni). Si una cuenta tiene fila acá, su
@@ -2857,6 +2960,224 @@ async function getMonthlyEmissionCount(accountId) {
                )
     `, [String(accountId)]);
     return r.rows[0]?.n || 0;
+}
+
+// ── Pedido de calificación (review nudge) ───────────────────────────────────
+// A partir de la 3ra factura exitosa por cuenta, dejamos UN comentario en el
+// item invitando a calificar la app. El gate 👍/👎 vive en el frontend y se
+// muestra al abrir la app; este comentario es el empujón proactivo (la emisión
+// corre por la receta, sin la app abierta). TODO es fire-and-forget: NUNCA
+// debe romper la emisión.
+const REVIEW_NUDGE_THRESHOLD = 3;
+
+// Total histórico de comprobantes exitosos de una cuenta (todas sus companies).
+async function getTotalSuccessCount(accountId) {
+    if (!accountId) return 0;
+    const r = await db.query(`
+        SELECT COUNT(*)::int AS n
+          FROM invoice_emissions ie
+          JOIN companies c ON c.id = ie.company_id
+         WHERE c.monday_account_id::text = $1
+           AND ie.status = 'success'
+    `, [String(accountId)]);
+    return r.rows[0]?.n || 0;
+}
+
+// Slug de la cuenta del CLIENTE (con su token, NO el del dev) para armar el link.
+async function fetchAccountSlug(apiToken) {
+    if (!apiToken) return null;
+    try {
+        const res = await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({ query: 'query { me { account { slug } } }' }),
+        });
+        const json = await res.json().catch(() => null);
+        return json?.data?.me?.account?.slug || null;
+    } catch { return null; }
+}
+
+// View id de la vista del tablero de la app ("Facturacion Electronica", de tipo
+// FeatureBoardView) en un board dado, para linkear directo a esa vista (donde
+// aparece el gate). El id es distinto en cada board.
+async function fetchAppViewId(apiToken, boardId) {
+    if (!apiToken || !boardId) return null;
+    try {
+        const res = await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({ query: `query { boards(ids: ${Number(boardId)}) { views { id name type } } }` }),
+        });
+        const json = await res.json().catch(() => null);
+        const views = json?.data?.boards?.[0]?.views || [];
+        const appView = views.find(v => v.type === 'FeatureBoardView' && /factura/i.test(v.name || ''))
+            || views.find(v => v.type === 'FeatureBoardView');
+        return appView?.id || null;
+    } catch { return null; }
+}
+
+// Deja (una sola vez) el comentario-invitación en el item al cruzar el umbral.
+// Idempotente por cuenta: nudge_comment_sent_at marca que ya se hizo.
+async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId, language = 'es' }) {
+    try {
+        if (!accountId || !apiToken || !itemId) return;
+        await ensureAccountReviewPromptsTable();
+        await db.query(
+            `INSERT INTO account_review_prompts (monday_account_id)
+             VALUES ($1) ON CONFLICT (monday_account_id) DO NOTHING`,
+            [String(accountId)]
+        );
+        const st = (await db.query(
+            `SELECT nudge_comment_sent_at, has_rated
+               FROM account_review_prompts WHERE monday_account_id = $1`,
+            [String(accountId)]
+        )).rows[0] || {};
+        if (st.has_rated || st.nudge_comment_sent_at) return; // ya calificó o ya comentamos
+        const count = await getTotalSuccessCount(accountId);
+        if (count < REVIEW_NUDGE_THRESHOLD) return;           // todavía no llegó a 3
+
+        const slug = await fetchAccountSlug(apiToken);
+        const viewId = await fetchAppViewId(apiToken, boardId);
+        const isEnN = language === 'en';
+        let cta = isEnN
+            ? ' Open it from the app icon on your board.'
+            : ' Abrila desde el ícono de la app en tu tablero.';
+        if (slug && boardId) {
+            const url = viewId
+                ? `https://${slug}.monday.com/boards/${boardId}/views/${viewId}`
+                : `https://${slug}.monday.com/boards/${boardId}`;
+            cta = isEnN
+                ? `<br><br><a href="${url}">👉 Open Factura ARCA</a>`
+                : `<br><br><a href="${url}">👉 Abrir Factura ARCA</a>`;
+        }
+        const body = isEnN
+            ? `🎉 You've already issued ${count} vouchers with <b>Factura ARCA</b>! ` +
+              `How's your experience going? Open the <b>Electronic Invoicing</b> view ` +
+              `and leave us your feedback — it helps us a lot to keep improving. 🙌${cta}`
+            : `🎉 ¡Ya emitiste ${count} comprobantes con <b>Factura ARCA</b>! ` +
+              `¿Nos contás cómo viene tu experiencia? Abrí la vista <b>Facturación Electrónica</b> ` +
+              `y dejanos tu opinión — nos ayuda un montón a seguir mejorando. 🙌${cta}`;
+
+        await postMondayUpdate({ apiToken, itemId, body });
+        await db.query(
+            `UPDATE account_review_prompts
+                SET nudge_comment_sent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+              WHERE monday_account_id = $1`,
+            [String(accountId)]
+        );
+        console.log(`[review-nudge] comentario dejado en item ${itemId} (cuenta ${accountId}, ${count} éxitos)`);
+    } catch (e) {
+        console.warn('[review-nudge] falló (no crítico):', e.message);
+    }
+}
+
+// Decide si mostrar el gate de calificación al abrir la app. Reglas:
+//   - Si ya INTERACTUÓ (calificó 👍 o dejó feedback 👎) → no se muestra nunca más.
+//   - 1er intento: con 3+ comprobantes exitosos.
+//   - 2do (y último) intento: si la 1ra vez tocó "Ahora no", reaparece a los
+//     60 días. Tope de vida: 2 (si vuelve a postergar, no aparece más).
+async function getReviewPromptDecision(accountId) {
+    if (!accountId) return { show: false };
+    try {
+        await ensureAccountReviewPromptsTable();
+        const st = (await db.query(
+            `SELECT review_prompt_count, last_prompt_date, has_rated, last_feedback_at
+               FROM account_review_prompts WHERE monday_account_id = $1`,
+            [String(accountId)]
+        )).rows[0] || {};
+        // Interactuó (👍 calificó o 👎 dejó feedback) → terminal, no mostrar más.
+        if (st.has_rated || st.last_feedback_at) return { show: false };
+        const promptCount = st.review_prompt_count || 0;
+        if (promptCount >= 2) return { show: false };                 // tope de vida: 2
+        const successes = await getTotalSuccessCount(accountId);
+        if (successes < REVIEW_NUDGE_THRESHOLD) return { show: false };
+        if (promptCount === 0) return { show: true, attempt: 1 };     // 1er intento (3ra factura)
+        // 2do intento: solo si tocó "Ahora no" la 1ra vez y pasaron 60 días.
+        const cooldownMs = 60 * 24 * 60 * 60 * 1000;
+        const lastTs = st.last_prompt_date ? new Date(st.last_prompt_date).getTime() : 0;
+        if (Date.now() - lastTs < cooldownMs) return { show: false };
+        return { show: true, attempt: 2 };
+    } catch (e) {
+        console.warn('[review-gate] decisión falló (no crítico):', e.message);
+        return { show: false };
+    }
+}
+
+// Feedback negativo (👎) del gate. Tabla aparte para no perder ninguno aunque
+// todavía no exista el board de monday. Contiene PII → va a deleteAccountData.
+let _reviewFeedbackTableEnsured = false;
+async function ensureReviewFeedbackTable() {
+    if (_reviewFeedbackTableEnsured) return;
+    await db.query(`
+        CREATE TABLE IF NOT EXISTS review_feedback (
+            id                SERIAL PRIMARY KEY,
+            monday_account_id TEXT NOT NULL,
+            feedback          TEXT,
+            email             TEXT,
+            created_at        TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    `);
+    _reviewFeedbackTableEnsured = true;
+}
+
+async function saveReviewFeedback({ accountId, feedback, email }) {
+    try {
+        await ensureReviewFeedbackTable();
+        await db.query(
+            `INSERT INTO review_feedback (monday_account_id, feedback, email) VALUES ($1, $2, $3)`,
+            [
+                String(accountId),
+                feedback ? String(feedback).slice(0, 4000) : null,
+                email ? String(email).slice(0, 255) : null,
+            ]
+        );
+        console.log(`[review-feedback] guardado de cuenta ${accountId}`);
+        await postFeedbackToBoard({ accountId, feedback });
+    } catch (e) {
+        console.warn('[review-feedback] no se pudo guardar (no crítico):', e.message);
+    }
+}
+
+// Tablero "Comentarios" de monday donde el equipo gestiona el feedback negativo.
+// Compartido prod+staging (mismo board, como el audit board). El board_relation
+// "Instalaciones APP" apunta al board de leads (DEV_LEADS_BOARD_ID = 18408871816),
+// así cada comentario queda linkeado a la instalación de la cuenta.
+const FEEDBACK_BOARD_ID = '18418398507';
+const FEEDBACK_COLS = {
+    fecha:         'date_mm4ek9hm',
+    comentario:    'long_text_mm4ez9mq',
+    instalaciones: 'board_relation_mm4e29na',
+};
+
+// Crea el ítem de feedback en el board "Comentarios" y lo linkea a la instalación
+// de la cuenta. Fire-and-forget: si falla, el feedback ya quedó en review_feedback.
+async function postFeedbackToBoard({ accountId, feedback }) {
+    try {
+        const token = process.env.DEV_MONDAY_TOKEN;
+        if (!token) return;
+        // Nombre del ítem: la razón social de la cuenta, si la tenemos.
+        let label = `Cuenta ${accountId}`;
+        try {
+            const comp = (await db.query(
+                `SELECT business_name FROM companies
+                  WHERE monday_account_id = $1 AND business_name IS NOT NULL
+                  ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
+                [String(accountId)]
+            )).rows[0];
+            if (comp?.business_name) label = comp.business_name;
+        } catch (_) {}
+        const fecha = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
+        const cv = {
+            [FEEDBACK_COLS.fecha]: { date: fecha },
+            [FEEDBACK_COLS.comentario]: { text: String(feedback || '').slice(0, 2000) },
+        };
+        const leadItemId = await getInstallationLeadItemId(accountId);
+        if (leadItemId) cv[FEEDBACK_COLS.instalaciones] = { item_ids: [Number(leadItemId)] };
+        const itemId = await createLeadItem(token, FEEDBACK_BOARD_ID, `Feedback — ${label}`, cv);
+        console.log(`[review-feedback] item ${itemId} creado en board Comentarios (cuenta ${accountId}, lead ${leadItemId || 'n/a'})`);
+    } catch (e) {
+        console.warn('[review-feedback] no se pudo crear item en board (no crítico):', e.message);
+    }
 }
 
 // Chequea si una cuenta puede emitir una factura mas en este momento.
@@ -3480,6 +3801,7 @@ app.get('/api/usage', requireMondaySession, async (req, res) => {
         const accountId = String(req.mondayIdentity.accountId || '');
         if (!accountId) return res.status(400).json({ error: 'account_id ausente' });
         const check = await checkEmissionAllowed(accountId);
+        const review = await getReviewPromptDecision(accountId);
         res.json({
             plan_id: check.plan.plan_id,
             is_trial: check.plan.is_trial,
@@ -3488,10 +3810,62 @@ app.get('/api/usage', requireMondaySession, async (req, res) => {
             used: check.used,
             remaining: check.remaining,
             allowed: check.allowed,
+            show_review_prompt: review.show === true,
+            review_prompt_attempt: review.attempt || null,
         });
     } catch (err) {
         console.error('[usage] error:', err.message);
         res.status(500).json({ error: 'error consultando usage' });
+    }
+});
+
+// Registra la interacción del usuario con el gate de calificación in-app.
+//   event 'dismiss'  → tocó "Ahora no": cuenta para el tope de vida y arranca el
+//                      cooldown de 60 días (review_prompt_count++ , last_prompt_date).
+//                      Si NO toca nada (cierra la app), el front no manda nada →
+//                      el gate reaparece la próxima vez que abre.
+//   event 'rated'    → tocó 👍 y se abrió el popup de monday: no volver a pedir.
+//   event 'feedback' → tocó 👎 y dejó comentario: lo guardamos para el equipo.
+app.post('/api/review-prompt/response', requireMondaySession, async (req, res) => {
+    try {
+        const accountId = String(req.mondayIdentity.accountId || '');
+        if (!accountId) return res.status(400).json({ error: 'account_id ausente' });
+        const { event, feedback, email } = req.body || {};
+        await ensureAccountReviewPromptsTable();
+        await db.query(
+            `INSERT INTO account_review_prompts (monday_account_id)
+             VALUES ($1) ON CONFLICT (monday_account_id) DO NOTHING`,
+            [accountId]
+        );
+        if (event === 'shown' || event === 'dismiss') {
+            await db.query(
+                `UPDATE account_review_prompts
+                    SET review_prompt_count = review_prompt_count + 1,
+                        last_prompt_date = CURRENT_TIMESTAMP,
+                        updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1`,
+                [accountId]
+            );
+        } else if (event === 'rated') {
+            await db.query(
+                `UPDATE account_review_prompts
+                    SET has_rated = TRUE, updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1`,
+                [accountId]
+            );
+        } else if (event === 'feedback') {
+            await db.query(
+                `UPDATE account_review_prompts
+                    SET last_feedback_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                  WHERE monday_account_id = $1`,
+                [accountId]
+            );
+            await saveReviewFeedback({ accountId, feedback, email });
+        }
+        res.json({ ok: true });
+    } catch (err) {
+        console.error('[review-prompt] error:', err.message);
+        res.status(500).json({ error: 'error registrando respuesta' });
     }
 });
 
@@ -3634,8 +4008,8 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
             try {
                 const boardConfigResult = await db.query(
                     `SELECT status_column_id, trigger_label, success_label, error_label,
-                            required_columns_json, updated_at,
-                            auto_rename_item, auto_update_status
+                            processing_label, required_columns_json, updated_at,
+                            auto_rename_item, auto_update_status, language
                      FROM board_automation_configs
                      WHERE company_id = $1
                        AND board_id = $2
@@ -3648,12 +4022,14 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
 
                 if (boardConfigResult.rows.length > 0) {
                     const row = boardConfigResult.rows[0];
+                    const flow = resolveStatusFlow(row.language);
                     boardConfig = {
                         status_column_id: row.status_column_id || '',
-                        trigger_label: row.trigger_label || COMPROBANTE_STATUS_FLOW.trigger,
-                        processing_label: COMPROBANTE_STATUS_FLOW.processing,
-                        success_label: row.success_label || COMPROBANTE_STATUS_FLOW.success,
-                        error_label: row.error_label || COMPROBANTE_STATUS_FLOW.error,
+                        trigger_label: row.trigger_label || flow.trigger,
+                        processing_label: row.processing_label || flow.processing,
+                        success_label: row.success_label || flow.success,
+                        error_label: row.error_label || flow.error,
+                        language: row.language || 'es',
                         required_columns: row.required_columns_json || [],
                         // Default TRUE para no afectar a clientes existentes que
                         // no tienen estos flags grabados aun (NULL o no existe).
@@ -3761,8 +4137,8 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
 
         const result = await db.query(
             `SELECT id, status_column_id, trigger_label, success_label, error_label,
-                    required_columns_json, updated_at,
-                    auto_rename_item, auto_update_status
+                    processing_label, required_columns_json, updated_at,
+                    auto_rename_item, auto_update_status, language
              FROM board_automation_configs
              WHERE company_id = $1
                AND board_id = $2
@@ -3778,15 +4154,17 @@ app.get('/api/board-config/:mondayAccountId', requireMondaySession, async (req, 
         }
 
         const row = result.rows[0];
+        const flow = resolveStatusFlow(row.language);
         return res.json({
             hasConfig: true,
             config: {
                 id: row.id,
                 status_column_id: row.status_column_id || '',
-                trigger_label: row.trigger_label || COMPROBANTE_STATUS_FLOW.trigger,
-                processing_label: COMPROBANTE_STATUS_FLOW.processing,
-                success_label: row.success_label || COMPROBANTE_STATUS_FLOW.success,
-                error_label: row.error_label || COMPROBANTE_STATUS_FLOW.error,
+                trigger_label: row.trigger_label || flow.trigger,
+                processing_label: row.processing_label || flow.processing,
+                success_label: row.success_label || flow.success,
+                error_label: row.error_label || flow.error,
+                language: row.language || 'es',
                 required_columns: row.required_columns_json || [],
                 // Default TRUE para no afectar a clientes que no tienen estos
                 // flags todavia: el comportamiento sigue siendo el de siempre.
@@ -3818,6 +4196,11 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
         required_columns,
         auto_rename_item,
         auto_update_status,
+        language,
+        trigger_label,
+        processing_label,
+        success_label,
+        error_label,
     } = req.body;
 
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
@@ -3827,6 +4210,17 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
     // si por algun motivo no vienen estos flags en el body (ej: deploys parciales).
     const autoRenameItem    = auto_rename_item    === false ? false : true;
     const autoUpdateStatus  = auto_update_status  === false ? false : true;
+
+    // Idioma del board: lo manda el frontend tras detectarlo de los labels del
+    // status. Default 'es'. Los 4 labels: los que mande el frontend o, si no
+    // manda, el flujo del idioma. Frontend viejo (no manda language ni labels)
+    // → 'es' + flujo español de SIEMPRE → clientes existentes intactos.
+    const lang = language === 'en' ? 'en' : 'es';
+    const flow = resolveStatusFlow(lang);
+    const triggerLabel    = trigger_label    || flow.trigger;
+    const processingLabel = processing_label || flow.processing;
+    const successLabel    = success_label    || flow.success;
+    const errorLabel      = error_label      || flow.error;
 
     if (!accountId || !board_id) {
         return res.status(400).json({ error: 'monday_account_id y board_id son obligatorios' });
@@ -3860,12 +4254,14 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                  view_id = $4,
                  app_feature_id = $5,
                  trigger_label = $6,
-                 success_label = $7,
-                 error_label = $8,
-                 required_columns_json = $9,
-                 workspace_id = $10,
-                 auto_rename_item = $11,
-                 auto_update_status = $12,
+                 processing_label = $7,
+                 success_label = $8,
+                 error_label = $9,
+                 language = $10,
+                 required_columns_json = $11,
+                 workspace_id = $12,
+                 auto_rename_item = $13,
+                 auto_update_status = $14,
                  updated_at = CURRENT_TIMESTAMP
              WHERE company_id = $1
                AND board_id = $2
@@ -3876,9 +4272,11 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 status_column_id ? String(status_column_id) : null,
                 view_id || null,
                 app_feature_id || null,
-                COMPROBANTE_STATUS_FLOW.trigger,
-                COMPROBANTE_STATUS_FLOW.success,
-                COMPROBANTE_STATUS_FLOW.error,
+                triggerLabel,
+                processingLabel,
+                successLabel,
+                errorLabel,
+                lang,
                 JSON.stringify(required_columns),
                 workspaceId,
                 autoRenameItem,
@@ -3899,12 +4297,14 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 app_feature_id,
                 status_column_id,
                 trigger_label,
+                processing_label,
                 success_label,
                 error_label,
+                language,
                 required_columns_json,
                 auto_rename_item,
                 auto_update_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING *`,
             [
                 company.id,
@@ -3913,9 +4313,11 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
                 view_id || null,
                 app_feature_id || null,
                 status_column_id ? String(status_column_id) : null,
-                COMPROBANTE_STATUS_FLOW.trigger,
-                COMPROBANTE_STATUS_FLOW.success,
-                COMPROBANTE_STATUS_FLOW.error,
+                triggerLabel,
+                processingLabel,
+                successLabel,
+                errorLabel,
+                lang,
                 JSON.stringify(required_columns),
                 autoRenameItem,
                 autoUpdateStatus,
@@ -5059,6 +5461,14 @@ async function deleteAccountData(accountId) {
             `DELETE FROM account_subscriptions WHERE monday_account_id = $1`,
             [accountId]
         )).rowCount;
+        stats.account_review_prompts = (await client.query(
+            `DELETE FROM account_review_prompts WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
+        stats.review_feedback = (await client.query(
+            `DELETE FROM review_feedback WHERE monday_account_id = $1`,
+            [accountId]
+        )).rowCount;
         // account_plan_overrides contiene `reason` con texto libre (puede incluir
         // nombres / razon social) → es PII y va con el resto de los datos al
         // uninstall. Tabla puede no existir aun si la cuenta no llego a usar
@@ -5408,7 +5818,7 @@ async function comprobanteHandler(req, res) {
                 || await validateEmissionReadiness({ mondayAccountId: accountId, boardId });
             if (!readiness.ready) {
                 console.warn(`[emit] Pre-flight falló:`, readiness.missing);
-                throw new Error(formatMissingConfigError(readiness.missing));
+                throw new Error(formatMissingConfigError(readiness.missing, readiness.boardConfig?.language));
             }
 
             // ── 2b-ter. Ruteo por Tipo de Comprobante ──────────────────────────
@@ -5428,7 +5838,9 @@ async function comprobanteHandler(req, res) {
                     // como lista de columnas faltantes con el nombre real.
                     throw new Error(
                         'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
-                        `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura, Nota de Crédito o Nota de Débito`
+                        (readiness.boardConfig?.language === 'en'
+                            ? `• Choose a value in the ${getColumnLabel(mainColumns, tipoCompColId, 'Voucher Type')} column: Invoice, Credit Note or Debit Note`
+                            : `• Elegí un valor en la columna ${getColumnLabel(mainColumns, tipoCompColId, 'Tipo de Comprobante')}: Factura, Nota de Crédito o Nota de Débito`)
                     );
                 }
                 // OJO con el orden: "Factura" se chequea PRIMERO. AFIP tiene
@@ -5437,22 +5849,24 @@ async function comprobanteHandler(req, res) {
                 // factura se emitiría como Nota de Crédito → comprobante fiscal
                 // incorrecto. Anclando al inicio con /^\s*factura/i nos aseguramos
                 // que cualquier "Factura ..." cae acá, no en NC.
-                if (/^\s*factura/i.test(tipoComp)) {
-                    // tipoComp empieza con "Factura" (incluye FCE) → emitir factura.
-                } else if (/cr[eé]dito/i.test(tipoComp)) {
+                if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
+                    // tipoComp empieza con "Factura"/"Invoice" (incluye FCE) → emitir factura.
+                } else if (/cr[eé]dito/i.test(tipoComp) || /credit/i.test(tipoComp)) {
                     displayKind = 'Nota de Crédito';
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Crédito`);
                     await emitNotaHandler(req, res, 'NC');
                     return;
-                } else if (/d[eé]bito/i.test(tipoComp)) {
+                } else if (/d[eé]bito/i.test(tipoComp) || /debit/i.test(tipoComp)) {
                     displayKind = 'Nota de Débito';
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Nota de Débito`);
                     await emitNotaHandler(req, res, 'ND');
                     return;
                 } else {
-                    throw new Error(
-                        `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
-                        `Tiene que ser "Factura", "Nota de Crédito" o "Nota de Débito".`
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `Voucher Type not recognized: "${tipoComp}". ` +
+                          `It must be "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" or "Nota de Débito"/"Debit Note".`
+                        : `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
+                          `Tiene que ser "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" o "Nota de Débito"/"Debit Note".`
                     );
                 }
             }
@@ -5483,25 +5897,37 @@ async function comprobanteHandler(req, res) {
             );
             if (ncEnEsteItem.rows[0]) {
                 const r = ncEnEsteItem.rows[0];
-                const docPrevio = r.invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito';
+                const isEnPrev = readiness.boardConfig?.language === 'en';
+                const docPrevio = isEnPrev
+                    ? (r.invoice_type === 'ND' ? 'Debit Note' : 'Credit Note')
+                    : (r.invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito');
                 if (r.status === 'success') {
                     const n = r.afip_result_json || {};
-                    throw new Error(
-                        `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
-                        `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
-                        `cada item corresponde a un solo comprobante. Creá un item nuevo.`
+                    throw new Error(isEnPrev
+                        ? `This item already issued a ${docPrevio} (No. ${n.numero_comprobante || '—'}, ` +
+                          `CAE ${n.cae || '—'}). You can't issue an invoice on the same item — ` +
+                          `each item corresponds to a single voucher. Create a new item.`
+                        : `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
+                          `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
+                          `cada item corresponde a un solo comprobante. Creá un item nuevo.`
                     );
                 } else if (r.status === 'processing') {
-                    throw new Error(
-                        `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
-                        `segundos a que termine — NO vuelvas a disparar la receta.`
+                    throw new Error(isEnPrev
+                        ? `This item is currently issuing a ${docPrevio}. Wait a few seconds for it to ` +
+                          `finish — do NOT trigger the recipe again.`
+                        : `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
+                          `segundos a que termine — NO vuelvas a disparar la receta.`
                     );
                 } else {
-                    throw new Error(
-                        `Este item tiene una ${docPrevio} con número reservado en AFIP pero sin ` +
-                        `confirmar (probable timeout del intento anterior). El cron de recuperación ` +
-                        `consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y ` +
-                        `volvé a intentar — emitir una factura ahora puede crear dos comprobantes.`
+                    throw new Error(isEnPrev
+                        ? `This item has a ${docPrevio} with a number reserved in AFIP but not confirmed ` +
+                          `(likely a timeout on the previous attempt). The recovery cron checks AFIP and ` +
+                          `resolves the real status within the next 5 minutes. Wait and retry — issuing an ` +
+                          `invoice now could create two vouchers.`
+                        : `Este item tiene una ${docPrevio} con número reservado en AFIP pero sin ` +
+                          `confirmar (probable timeout del intento anterior). El cron de recuperación ` +
+                          `consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y ` +
+                          `volvé a intentar — emitir una factura ahora puede crear dos comprobantes.`
                     );
                 }
             }
@@ -5513,6 +5939,7 @@ async function comprobanteHandler(req, res) {
                 mainColumns,
                 subitems,
                 mapping: readiness.mapping,
+                language: readiness.boardConfig?.language,
             });
             if (!dataCheck.ok) {
                 console.warn(`[emit] Validación de datos falló:`, dataCheck.errors);
@@ -5537,14 +5964,18 @@ async function comprobanteHandler(req, res) {
                 if (!pvRaw) {
                     throw new Error(
                         'Item incompleto — corregí los siguientes datos antes de emitir:\n' +
-                        `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Punto de Venta')}`
+                        (readiness.boardConfig?.language === 'en'
+                            ? `• Choose the Point of Sale in the ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Point of Sale')} column`
+                            : `• Elegí el Punto de Venta en la columna ${getColumnLabel(mainColumns, readiness.mapping.punto_venta, 'Punto de Venta')}`)
                     );
                 }
                 const pvNum = parseInt(pvRaw.replace(/\D/g, ''), 10);
                 if (!pvNum || pvNum <= 0) {
-                    throw new Error(
-                        `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
-                        `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `The Point of Sale "${pvRaw}" is not valid. It must be a point-of-sale number ` +
+                          `enabled in AFIP for web services (e.g. 1, 5, 0005).`
+                        : `El Punto de Venta "${pvRaw}" no es válido. Tiene que ser un número de ` +
+                          `punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).`
                     );
                 }
                 ptoVentaItem = pvNum;
@@ -5663,7 +6094,7 @@ async function comprobanteHandler(req, res) {
                 try {
                     const prevDraft  = existing.rows[0].draft_json || {};
                     const tipoPrev   = prevDraft.tipo_comprobante || 'C';
-                    const pdfBufPrev = await generateFacturaPdfBuffer({ company, draft: prevDraft, afipResult: prev, itemId });
+                    const pdfBufPrev = await generateFacturaPdfBuffer({ company, draft: prevDraft, afipResult: prev, itemId, language: readiness.boardConfig?.language });
                     const pdfColPrev = await getInvoicePdfColumnId({ companyId: company.id, boardId });
                     let uploadPrev;
                     if (pdfColPrev && pdfBufPrev) {
@@ -5672,7 +6103,7 @@ async function comprobanteHandler(req, res) {
                         uploadPrev = await uploadPdfToMondayFileColumn({
                             apiToken: mondayToken, itemId,
                             fileColumnId: pdfColPrev, pdfBuffer: pdfBufPrev,
-                            filename: `Factura_${tipoPrev}_Nro_${pvP}-${nroP}.pdf`,
+                            filename: `${readiness.boardConfig?.language === 'en' ? 'Invoice' : 'Factura'}_${tipoPrev}_Nro_${pvP}-${nroP}.pdf`,
                         });
                     } else {
                         uploadPrev = { uploaded: false, reason: pdfColPrev ? 'pdf_gen_failed' : 'no_column_configured' };
@@ -5713,7 +6144,9 @@ async function comprobanteHandler(req, res) {
                 console.warn(`[emit] claim falló item ${itemId} — ya hay una emisión en curso, abortando sin tocar la fila`);
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
-                    body: '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
+                    body: readiness?.boardConfig?.language === 'en'
+                        ? "⏳ An invoice is already being issued for this item. Wait for it to finish — don't trigger the recipe again."
+                        : '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
                 }).catch(() => {});
                 return;
             }
@@ -5854,7 +6287,9 @@ async function comprobanteHandler(req, res) {
                 const detalleStr = detalles
                     .map(d => `• "${d.name}": falta ${d.faltantes.join(', ')}`)
                     .join('\n');
-                throw new Error(`No hay líneas válidas en subitems para emitir la factura.\n${subitems.length === 0 ? 'El item no tiene subitems creados.' : `Subitems con problemas:\n${detalleStr}`}`);
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `No valid lines in the subitems to issue the invoice.\n${subitems.length === 0 ? 'The item has no subitems created.' : `Subitems with problems:\n${detalleStr}`}`
+                    : `No hay líneas válidas en subitems para emitir la factura.\n${subitems.length === 0 ? 'El item no tiene subitems creados.' : `Subitems con problemas:\n${detalleStr}`}`);
             }
 
             // Determinar Concepto AFIP: 1=Productos, 2=Servicios, 3=Ambos
@@ -5882,10 +6317,13 @@ async function comprobanteHandler(req, res) {
                 if (!fechaServHastaRaw) faltanFechas.push('Fecha Servicio Hasta');
                 if (!fechaVtoPagoRaw)   faltanFechas.push('Fecha Vto. Pago');
                 if (faltanFechas.length > 0) {
-                    throw new Error(
-                        `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(', ')}.\n` +
-                        `Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: ${conceptoAfip === 2 ? 'Servicios' : 'Productos y Servicios'}), ` +
-                        `AFIP exige las fechas del período facturado y el vencimiento de pago.`
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `Missing required service dates: ${faltanFechas.join(', ')}.\n` +
+                          `When the product/service type includes services (AFIP Concept: ${conceptoAfip === 2 ? 'Services' : 'Products and Services'}), ` +
+                          `AFIP requires the billing-period dates and the payment due date.`
+                        : `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(', ')}.\n` +
+                          `Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: ${conceptoAfip === 2 ? 'Servicios' : 'Productos y Servicios'}), ` +
+                          `AFIP exige las fechas del período facturado y el vencimiento de pago.`
                     );
                 }
             }
@@ -5910,9 +6348,11 @@ async function comprobanteHandler(req, res) {
             const sinAlicuota = alicuotasDetalle.filter(a => !a.normalized);
             if (mapping.alicuota_iva && sinAlicuota.length > 0) {
                 const nombres = sinAlicuota.map(a => `"${a.name}"`).join(', ');
-                throw new Error(
-                    `Alícuota IVA faltante en subitems: ${nombres}.\n` +
-                    `Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Missing VAT rate in subitems: ${nombres}.\n` +
+                      `All subitems must have a VAT rate assigned (0, 2.5, 5, 10.5, 21 or 27).`
+                    : `Alícuota IVA faltante en subitems: ${nombres}.\n` +
+                      `Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).`
                 );
             }
 
@@ -5922,9 +6362,11 @@ async function comprobanteHandler(req, res) {
                 const detalle = alicuotasDetalle
                     .map(a => `• "${a.name}": ${a.normalized}%`)
                     .join('\n');
-                throw new Error(
-                    `Alícuotas IVA diferentes entre subitems.\n` +
-                    `Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas:\n${detalle}`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Different VAT rates across subitems.\n` +
+                      `All subitems must have the same VAT rate. Rates found:\n${detalle}`
+                    : `Alícuotas IVA diferentes entre subitems.\n` +
+                      `Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas:\n${detalle}`
                 );
             }
 
@@ -5932,20 +6374,26 @@ async function comprobanteHandler(req, res) {
             const alicuotaElegida = alicuotasUnicas.length === 1 ? alicuotasUnicas[0] : '21';
             const alicuotaConfig = ALICUOTA_MAP[alicuotaElegida];
             if (!alicuotaConfig) {
-                throw new Error(
-                    `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
-                    `Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Invalid VAT rate: ${alicuotaElegida}%.\n` +
+                      `Allowed rates are: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+                    : `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
+                      `Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
                 );
             }
             console.log(`[emit] Alícuota IVA: ${alicuotaElegida}% (Id AFIP: ${alicuotaConfig.id}, Tasa: ${alicuotaConfig.rate})`);
 
             // Factura C no lleva IVA: si el usuario configuró una alícuota distinta de 0%, es un error de carga.
             if (tipo === 'C' && alicuotaElegida !== '0') {
-                throw new Error(
-                    `Alícuota IVA incompatible con Factura C.\n` +
-                    `Configuraste ${alicuotaElegida}% pero las Facturas C no llevan IVA ` +
-                    `(emisor ${emisorInfo.condicion}).\n` +
-                    `Cambiá la alícuota de los subítems a 0% antes de emitir.`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `VAT rate incompatible with Invoice C.\n` +
+                      `You set ${alicuotaElegida}% but Invoice C doesn't carry VAT ` +
+                      `(issuer ${emisorInfo.condicion}).\n` +
+                      `Change the subitem rates to 0% before issuing.`
+                    : `Alícuota IVA incompatible con Factura C.\n` +
+                      `Configuraste ${alicuotaElegida}% pero las Facturas C no llevan IVA ` +
+                      `(emisor ${emisorInfo.condicion}).\n` +
+                      `Cambiá la alícuota de los subítems a 0% antes de emitir.`
                 );
             }
 
@@ -6169,6 +6617,7 @@ async function comprobanteHandler(req, res) {
                         draft,
                         afipResult,
                         itemId,
+                        language: readiness.boardConfig?.language,
                     });
                     markEnd('pdf_gen');
                     console.log(`[emit] PDF generado, ${pdfBuffer?.length || 0} bytes`);
@@ -6198,7 +6647,7 @@ async function comprobanteHandler(req, res) {
                             apiToken: mondayToken, itemId,
                             fileColumnId: invoicePdfColumnId,
                             pdfBuffer,
-                            filename: `Factura_${tipo}_Nro_${pvPadded}-${nroCompPadded}.pdf`,
+                            filename: `${readiness.boardConfig?.language === 'en' ? 'Invoice' : 'Factura'}_${tipo}_Nro_${pvPadded}-${nroCompPadded}.pdf`,
                         });
                         markEnd('pdf_upload');
                         console.log('[emit] PDF subido:', JSON.stringify(mondayUpload).slice(0, 300));
@@ -6277,6 +6726,13 @@ async function comprobanteHandler(req, res) {
                     emisorCondicion:  emisorInfo.condicion,
                     receptorCondicion: receptorInfo.condicion,
                 }).catch((err) => console.warn('[callback] fire-and-forget falló:', err.message));
+            }
+
+            // Pedido de calificación (FIRE-AND-FORGET) — al llegar a 3 éxitos deja
+            // UN comentario en el item invitando a calificar. Nunca rompe la emisión.
+            if (afipResult?.cae) {
+                maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: readiness?.boardConfig?.language })
+                    .catch((err) => console.warn('[review-nudge] fire-and-forget falló:', err.message));
             }
 
             // Resumen completo de tiempos — una sola línea legible al final.
@@ -6358,10 +6814,13 @@ async function comprobanteHandler(req, res) {
                     // ya tiene CAE valido en AFIP/DB.
                     console.warn('[write-back] CAE fire-and-forget falló:', e.message);
                     try {
-                        const warnBody =
-                            `⚠️ El CAE se emitió correctamente pero no pudimos escribirlo en la ` +
-                            `columna del item. Copialo del PDF si vas a emitir una Nota de Crédito ` +
-                            `o Débito sobre esta factura.<br/><br/><b>CAE:</b> ${afipResult.cae}`;
+                        const warnBody = readiness?.boardConfig?.language === 'en'
+                            ? `⚠️ The CAE was issued successfully but we couldn't write it to the ` +
+                              `item column. Copy it from the PDF if you'll issue a Credit or Debit ` +
+                              `Note against this invoice.<br/><br/><b>CAE:</b> ${afipResult.cae}`
+                            : `⚠️ El CAE se emitió correctamente pero no pudimos escribirlo en la ` +
+                              `columna del item. Copialo del PDF si vas a emitir una Nota de Crédito ` +
+                              `o Débito sobre esta factura.<br/><br/><b>CAE:</b> ${afipResult.cae}`;
                         await postMondayUpdate({ apiToken: mondayToken, itemId, body: warnBody });
                     } catch (warnErr) {
                         console.warn('[write-back] no se pudo postear aviso de CAE:', warnErr.message);
@@ -6378,6 +6837,7 @@ async function comprobanteHandler(req, res) {
                 numero:     afipResult.numero_comprobante,
                 receptorNombre:    draft.receptor_nombre,
                 receptorCondicion: draft.receptorCondicion,
+                language:          readiness.boardConfig?.language,
             }).catch((e) => console.warn('[write-back] columnas comprobante fire-and-forget falló:', e.message));
 
             // Renombrar el item del cliente con el formato del comprobante emitido.
@@ -6387,7 +6847,8 @@ async function comprobanteHandler(req, res) {
             // en mapeo visual. Si esta apagado, el item conserva su nombre original.
             const autoRenameItem = readiness.boardConfig?.auto_rename_item !== false;
             if (autoRenameItem && afipResult?.numero_comprobante) {
-                const newClientItemName = `Factura ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim();
+                const docWord = readiness.boardConfig?.language === 'en' ? 'Invoice' : 'Factura';
+                const newClientItemName = `${docWord} ${tipo || ''} N° ${String(draft?.punto_venta || '').padStart(4, '0')}-${String(afipResult.numero_comprobante).padStart(8, '0')}`.trim();
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
                     newName: newClientItemName,
@@ -6424,7 +6885,14 @@ async function comprobanteHandler(req, res) {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId && boardId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind });
+                    // Releemos la config acá: `readiness` del try está FUERA DE SCOPE
+                    // en el catch (es `const` dentro del try). La usamos tanto para el
+                    // idioma del comentario como para el status. (Bug histórico: el
+                    // comentario referenciaba `readiness` → ReferenceError → el feedback
+                    // de error fallaba en silencio y el item no mostraba nada.)
+                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
+
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind, language: readinessForErr?.boardConfig?.language });
 
                     // Si NO es idempotencia → marcar el item como "Error".
                     // Si SI es idempotencia → la fila DB ya esta en success, pero
@@ -6433,7 +6901,6 @@ async function comprobanteHandler(req, res) {
                     // no quede colgado en amarillo. (Antes solo evitabamos pisar
                     // a "Error" — defensa IDVTA-153 — pero olvidabamos revertir
                     // el "Creando" intermedio.)
-                    const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
                     const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
                     const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
                     if (errAutoUpdateStatus && errStatusColId) {
@@ -6447,7 +6914,9 @@ async function comprobanteHandler(req, res) {
                         });
                     }
                 }
-            } catch (_) {}
+            } catch (feedbackErr) {
+                console.warn('[emit] no se pudo postear feedback de error al item:', feedbackErr?.message);
+            }
 
             // Persistir el error en la DB — NUNCA si es idempotencia: la fila es
             // una factura exitosa y pisarla con status='error' la corrompe (era
@@ -6556,7 +7025,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
     const esND      = clase === 'ND';
     const docLabel  = esND ? 'Nota de Débito' : 'Nota de Crédito';
     const docAbbr   = esND ? 'ND' : 'NC';
-    const tipoRegex = esND ? /d[eé]bito/i : /cr[eé]dito/i;
+    const tipoRegex = esND ? /d[eé]bito|debit/i : /cr[eé]dito|credit/i;
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
     const inputFields   = payload?.inputFields || {};
@@ -6644,6 +7113,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         let successLabel     = COMPROBANTE_STATUS_FLOW.success;
         let errorLabel       = COMPROBANTE_STATUS_FLOW.error;
         let processingLabel  = COMPROBANTE_STATUS_FLOW.processing;
+        let ncLanguage       = 'es'; // idioma del board (para el PDF de la NC/ND)
 
         try {
             // ── 1. Token de Monday ─────────────────────────────────────────────
@@ -6684,7 +7154,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             try {
                 const cfgRes = await db.query(
                     `SELECT status_column_id, auto_update_status, auto_rename_item,
-                            success_label, error_label, processing_label
+                            success_label, error_label, processing_label, language
                      FROM board_automation_configs
                      WHERE company_id=$1 AND board_id=$2
                      ORDER BY updated_at DESC NULLS LAST, id DESC
@@ -6696,11 +7166,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     autoUpdateStatus = cfgRes.rows[0].auto_update_status !== false;
                     autoRenameItem   = cfgRes.rows[0].auto_rename_item !== false;
                     // Labels custom (si el cliente los cambió en mapeo visual);
-                    // fallback al flow estándar. Consistente con factura y con
-                    // el reconcile cron, que ya honra estos campos.
-                    successLabel    = cfgRes.rows[0].success_label    || COMPROBANTE_STATUS_FLOW.success;
-                    errorLabel      = cfgRes.rows[0].error_label      || COMPROBANTE_STATUS_FLOW.error;
-                    processingLabel = cfgRes.rows[0].processing_label || COMPROBANTE_STATUS_FLOW.processing;
+                    // fallback al flow del idioma del board. Consistente con
+                    // factura y con el reconcile cron, que ya honran estos campos.
+                    ncLanguage = cfgRes.rows[0].language || 'es';
+                    const flowNc = resolveStatusFlow(ncLanguage);
+                    successLabel    = cfgRes.rows[0].success_label    || flowNc.success;
+                    errorLabel      = cfgRes.rows[0].error_label      || flowNc.error;
+                    processingLabel = cfgRes.rows[0].processing_label || flowNc.processing;
                 }
             } catch (cfgErr) {
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
@@ -6721,11 +7193,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // razón social, cond. IVA, tipo comprobante, CAE a anular, N° factura,
             // N° comprobante, letra). Mismo bloqueo que en factura: sin todas
             // mapeadas no se emite. El valor del CAE a anular se valida más abajo.
-            const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping);
+            const ncReceptorErrors = checkReceptorWriteBackMapped(ncMapping, ncLanguage);
             if (ncReceptorErrors.length > 0) {
-                throw new Error(
-                    `No se puede emitir ${docLabel}:\n` +
-                    ncReceptorErrors.map(e => `• ${e}`).join('\n')
+                throw new Error(ncLanguage === 'en'
+                    ? `Can't issue the ${esND ? 'Debit Note' : 'Credit Note'}:\n` +
+                      ncReceptorErrors.map(e => `• ${e}`).join('\n')
+                    : `No se puede emitir ${docLabel}:\n` +
+                      ncReceptorErrors.map(e => `• ${e}`).join('\n')
                 );
             }
 
@@ -6739,9 +7213,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (ncMapping.tipo_comprobante) {
                 const tipoCompRaw = (getColumnTextById(ncItemColumns, ncMapping.tipo_comprobante) || '').trim();
                 if (tipoCompRaw && !tipoRegex.test(tipoCompRaw)) {
-                    throw new Error(
-                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                        `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
+                    throw new Error(ncLanguage === 'en'
+                        ? `The item is marked as "${tipoCompRaw}" in the Voucher Type column, ` +
+                          `not as a ${esND ? 'Debit Note' : 'Credit Note'}. Make sure you're triggering the recipe on the right item.`
+                        : `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
+                          `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
                     );
                 }
             }
@@ -6750,10 +7226,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // columna mapeada `factura_referencia`. Esa columna es OBLIGATORIA:
             // sin ella mapeada no se puede emitir una Nota de Crédito.
             if (!ncMapping.factura_referencia) {
-                throw new Error(
-                    'El tablero no tiene mapeada la columna del CAE de referencia. ' +
-                    'Configurala en el Mapeo Visual de la app (sección "Columnas opcionales") ' +
-                    `para poder emitir ${docLabel === 'Nota de Débito' ? 'Notas de Débito' : 'Notas de Crédito'}.`
+                throw new Error(ncLanguage === 'en'
+                    ? `The board doesn't have the reference CAE column mapped. ` +
+                      `Configure it in the app's Visual Mapping ("Optional columns" section) ` +
+                      `to issue ${esND ? 'Debit Notes' : 'Credit Notes'}.`
+                    : 'El tablero no tiene mapeada la columna del CAE de referencia. ' +
+                      'Configurala en el Mapeo Visual de la app (sección "Columnas opcionales") ' +
+                      `para poder emitir ${docLabel === 'Nota de Débito' ? 'Notas de Débito' : 'Notas de Crédito'}.`
                 );
             }
             // Lectura robusta del CAE: la columna puede ser numérica o de texto.
@@ -6762,16 +7241,22 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 // Distinguir "vacía" de "valor inválido" para un mensaje útil.
                 const rawShown = (getColumnTextById(ncItemColumns, ncMapping.factura_referencia) || '').trim();
                 if (!rawShown) {
-                    throw new Error(
-                        'La columna del CAE de referencia está vacía. Pegá ahí el CAE ' +
-                        `(14 dígitos) de la factura que esta ${docLabel} debe anular — lo ` +
-                        'encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.'
+                    throw new Error(ncLanguage === 'en'
+                        ? `The reference CAE column is empty. Paste there the CAE ` +
+                          `(14 digits) of the invoice this ${esND ? 'Debit Note' : 'Credit Note'} must cancel — you'll ` +
+                          `find it in the invoice PDF or in the comment the app left when issuing it.`
+                        : 'La columna del CAE de referencia está vacía. Pegá ahí el CAE ' +
+                          `(14 dígitos) de la factura que esta ${docLabel} debe anular — lo ` +
+                          'encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.'
                     );
                 }
-                throw new Error(
-                    `El CAE de referencia "${rawShown}" no es válido: el CAE de AFIP tiene ` +
-                    `14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). ` +
-                    `La columna puede ser numérica o de texto, las dos sirven.`
+                throw new Error(ncLanguage === 'en'
+                    ? `The reference CAE "${rawShown}" is not valid: the AFIP CAE has ` +
+                      `14 digits. Copy it exactly from the invoice PDF (or the app comment). ` +
+                      `The column can be numeric or text, both work.`
+                    : `El CAE de referencia "${rawShown}" no es válido: el CAE de AFIP tiene ` +
+                      `14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). ` +
+                      `La columna puede ser numérica o de texto, las dos sirven.`
                 );
             }
             const byCae = await db.query(
@@ -6786,10 +7271,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             );
             const factura = byCae.rows[0] || null;
             if (!factura) {
-                throw new Error(
-                    `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
-                    `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
-                    `desde este mismo tablero.`
+                throw new Error(ncLanguage === 'en'
+                    ? `No invoice issued by the app was found with CAE ${caeRef}. ` +
+                      `Check that the CAE is copied correctly and that the invoice was issued ` +
+                      `from this same board.`
+                    : `No se encontró ninguna factura emitida por la app con el CAE ${caeRef}. ` +
+                      `Verificá que el CAE esté bien copiado y que la factura se haya emitido ` +
+                      `desde este mismo tablero.`
                 );
             }
             console.log(`[nc] factura resuelta por CAE ${caeRef} → emisión id=${factura.id}`);
@@ -6810,14 +7298,18 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             }
             const facturaPtoVta   = factura.attempted_pto_vta;
             if (!facturaAfip.cae || !facturaCbteNro || !facturaCbteTipo || !facturaPtoVta) {
-                throw new Error(
-                    'La factura de este item no tiene los datos completos (CAE / número / tipo / ' +
-                    `punto de venta) para poder referenciarla en una ${docLabel}.`
+                throw new Error(ncLanguage === 'en'
+                    ? `The invoice on this item doesn't have complete data (CAE / number / type / ` +
+                      `point of sale) to reference it in a ${esND ? 'Debit Note' : 'Credit Note'}.`
+                    : 'La factura de este item no tiene los datos completos (CAE / número / tipo / ' +
+                      `punto de venta) para poder referenciarla en una ${docLabel}.`
                 );
             }
             const letra = facturaDraft.tipo_comprobante;  // 'A' | 'B' | 'C'
             if (!['A', 'B', 'C'].includes(letra)) {
-                throw new Error(`No se pudo determinar la letra de la factura original (tipo='${letra}').`);
+                throw new Error(ncLanguage === 'en'
+                    ? `Couldn't determine the letter of the original invoice (type='${letra}').`
+                    : `No se pudo determinar la letra de la factura original (tipo='${letra}').`);
             }
 
             // El usuario NO elige el punto de venta de la NC: se emite SIEMPRE desde
@@ -6836,11 +7328,15 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 } else {
                     const pvSel = parseInt(pvSelRaw.replace(/\D/g, ''), 10);
                     if (pvSel && pvSel !== Number(facturaPtoVta)) {
-                        throw new Error(
-                            `Seleccionaste el Punto de Venta ${pvSel}, pero esta ${docLabel} anula la ` +
-                            `Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
-                            `que es del Punto de Venta ${facturaPtoVta}. La ${docAbbr} se emite desde el MISMO punto de venta que ` +
-                            `la factura — cambiá el Punto de Venta a ${facturaPtoVta} o dejá esa columna vacía.`
+                        throw new Error(ncLanguage === 'en'
+                            ? `You selected Point of Sale ${pvSel}, but this ${esND ? 'Debit Note' : 'Credit Note'} cancels ` +
+                              `Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
+                              `which is from Point of Sale ${facturaPtoVta}. The ${docAbbr} is issued from the SAME point of sale as ` +
+                              `the invoice — change the Point of Sale to ${facturaPtoVta} or leave that column empty.`
+                            : `Seleccionaste el Punto de Venta ${pvSel}, pero esta ${docLabel} anula la ` +
+                              `Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${String(facturaCbteNro).padStart(8, '0')}, ` +
+                              `que es del Punto de Venta ${facturaPtoVta}. La ${docAbbr} se emite desde el MISMO punto de venta que ` +
+                              `la factura — cambiá el Punto de Venta a ${facturaPtoVta} o dejá esa columna vacía.`
                         );
                     }
                 }
@@ -6945,9 +7441,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // se puede emitir. El encabezado (receptor, moneda, condición) lo
             // hereda de la factura.
             if (!ncSubitems || ncSubitems.length === 0) {
-                throw new Error(
-                    `El item de ${docLabel} no tiene subítems. Cargá como subítems ` +
-                    `las líneas de lo que querés ${esND ? 'debitar' : 'acreditar'} (concepto, cantidad y precio).`
+                throw new Error(ncLanguage === 'en'
+                    ? `The ${esND ? 'Debit Note' : 'Credit Note'} item has no subitems. Add the lines you want ` +
+                      `to ${esND ? 'debit' : 'credit'} as subitems (description, quantity and price).`
+                    : `El item de ${docLabel} no tiene subítems. Cargá como subítems ` +
+                      `las líneas de lo que querés ${esND ? 'debitar' : 'acreditar'} (concepto, cantidad y precio).`
                 );
             }
             // Columna de precio: si la factura era en moneda extranjera, la NC
@@ -6957,6 +7455,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 ? ncMapping.precio_unitario_usd
                 : ncMapping.precio_unitario;
             const ncLines = buildLinesFromSubitems({
+                language: ncLanguage,
                 subitems: ncSubitems, mapping: ncMapping,
                 precioColumnId: ncPrecioColId, letra,
             });
@@ -6980,10 +7479,12 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     facturaAlicuota = ALICUOTA_ID_TO_PCT[facturaDraft.alicuota_iva_id] ?? null;
                 }
                 if (facturaAlicuota != null && String(facturaAlicuota) !== String(ncLines.alicuotaElegida)) {
-                    throw new Error(
-                        `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
-                        `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
-                        `alícuota IVA que la factura que anula.`
+                    throw new Error(ncLanguage === 'en'
+                        ? `The Credit Note's VAT rate (${ncLines.alicuotaElegida}%) doesn't match the invoice's ` +
+                          `(${facturaAlicuota}%). The Credit Note must use the same VAT rate as the invoice it cancels.`
+                        : `La alícuota IVA de la Nota de Crédito (${ncLines.alicuotaElegida}%) no coincide ` +
+                          `con la de la factura (${facturaAlicuota}%). La NC tiene que usar la misma ` +
+                          `alícuota IVA que la factura que anula.`
                     );
                 }
             }
@@ -7083,7 +7584,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 console.warn(`[nc] claim falló item ${itemId} — ya hay una ${docAbbr} en curso, abortando sin tocar la fila`);
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
-                    body: `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`,
+                    body: ncLanguage === 'en'
+                        ? `⏳ A ${esND ? 'Debit Note' : 'Credit Note'} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`
+                        : `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`,
                 }).catch(() => {});
                 return;
             }
@@ -7123,11 +7626,15 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                          WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                         [company.id, boardId, itemId, clase]
                     ).catch(() => {});
-                    throw new Error(
-                        `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
-                        `disponible de la factura.\n` +
-                        `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
-                        `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+                    throw new Error(ncLanguage === 'en'
+                        ? `The Credit Note (${ncLines.importeTotal.toFixed(2)}) exceeds the available ` +
+                          `invoice balance.\n` +
+                          `Invoiced total: ${facturaTotal.toFixed(2)} · Already credited / in progress: ` +
+                          `${yaAcreditado.toFixed(2)} · Available balance: ${saldo.toFixed(2)}.`
+                        : `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
+                          `disponible de la factura.\n` +
+                          `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
+                          `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
                     );
                 }
                 console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado/en curso=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
@@ -7233,6 +7740,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 cae:        afipResult.cae,
                 receptorNombre:    ncDraft.receptor_nombre,
                 receptorCondicion: ncDraft.receptorCondicion,
+                language:          ncLanguage,
             }).catch((e) => console.warn('[nc] write-back columnas comprobante falló:', e.message));
 
             // Si el board mapea "Punto de Venta" y el usuario la dejó VACÍA, la
@@ -7251,7 +7759,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
 
             // ── 10. Generar PDF ────────────────────────────────────────────────
             try {
-                pdfBuffer = await generateFacturaPdfBuffer({ company, draft: ncDraft, afipResult, itemId });
+                pdfBuffer = await generateFacturaPdfBuffer({ company, draft: ncDraft, afipResult, itemId, language: ncLanguage });
                 console.log(`[nc] PDF generado, ${pdfBuffer?.length || 0} bytes`);
             } catch (pdfErr) {
                 console.error('[nc] ⚠ Error generando PDF:', pdfErr.message);
@@ -7268,7 +7776,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                             apiToken: mondayToken, itemId,
                             fileColumnId: pdfColumnId,
                             pdfBuffer,
-                            filename: `${esND ? 'Nota_Debito' : 'Nota_Credito'}_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
+                            filename: `${ncLanguage === 'en' ? (esND ? 'Debit_Note' : 'Credit_Note') : (esND ? 'Nota_Debito' : 'Nota_Credito')}_${letra}_Nro_${pvPadded}-${nroPadded}.pdf`,
                         });
                         console.log('[nc] PDF de la NC subido a Monday');
                     } else {
@@ -7283,19 +7791,30 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             const pvLargo  = String(ncDraft?.punto_venta || '').padStart(4, '0');
             const nroLargo = String(afipResult?.numero_comprobante || '').padStart(8, '0');
             const facturaNroLargo = String(facturaCbteNro).padStart(8, '0');
-            let okBody = `✅ <b>${docLabel} emitida</b><br/><br/>` +
-                `Comprobante: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
-                `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>`;
+            const isEnNc = ncLanguage === 'en';
+            const docLabelLoc = isEnNc ? (esND ? 'Debit Note' : 'Credit Note') : docLabel;
+            let okBody = isEnNc
+                ? `✅ <b>${docLabelLoc} issued</b><br/><br/>` +
+                  `Voucher: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
+                  `CAE: ${afipResult.cae} (exp. ${afipResult.cae_vencimiento || '—'})<br/>`
+                : `✅ <b>${docLabel} emitida</b><br/><br/>` +
+                  `Comprobante: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
+                  `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>`;
             if (esND) {
-                okBody +=
-                    `Importe: ${ncLines.importeTotal.toFixed(2)}<br/>` +
-                    `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
+                okBody += isEnNc
+                    ? `Amount: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`
+                    : `Importe: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
             } else {
                 const saldoRestante = Number((saldo - ncLines.importeTotal).toFixed(2));
-                okBody +=
-                    `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
-                    `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
-                    ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
+                okBody += isEnNc
+                    ? `Credited amount: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
+                      ` — remaining balance to credit: ${saldoRestante.toFixed(2)}.`
+                    : `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
+                      ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
             }
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
@@ -7306,7 +7825,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             if (autoRenameItem && afipResult?.numero_comprobante) {
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
-                    newName: `${docLabel} ${letra} N° ${pvLargo}-${nroLargo}`,
+                    newName: `${ncLanguage === 'en' ? (esND ? 'Debit Note' : 'Credit Note') : docLabel} ${letra} N° ${pvLargo}-${nroLargo}`,
                 }).catch((e) => console.warn('[nc] rename fire-and-forget falló:', e.message));
             }
 
@@ -7335,6 +7854,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 }).catch((e) => console.warn('[nc] callback fire-and-forget falló:', e.message));
             }
 
+            // Pedido de calificación (FIRE-AND-FORGET) — mismo nudge que en factura.
+            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: ncLanguage })
+                .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
+
             console.log(`[nc] ── OK item ${itemId} ── ${docAbbr} ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
 
         } catch (err) {
@@ -7352,7 +7875,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel });
+                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel, language: ncLanguage });
                     // Si NO es idempotencia → "Error". Si SI es idempotencia → restaurar a
                     // "Comprobante Creado" (la NC/ND ya existe en success; el status habia
                     // pasado a "Creando" antes del claim y quedaria colgado en amarillo si
@@ -7365,7 +7888,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                         });
                     }
                 }
-            } catch (_) {}
+            } catch (feedbackErr) {
+                console.warn('[nc] no se pudo postear feedback de error al item:', feedbackErr?.message);
+            }
 
             // Persistir el error en la DB + audit board — NUNCA si es idempotencia:
             // la fila es success y pisarla corrompe la emisión (el cron Fase 3 la
@@ -7411,7 +7936,7 @@ app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, (req, res
 // Cuando el handler de factura delega a NC/ND y la delegacion falla en el path
 // que vuelve al catch del wrapper, displayKind permite decir "Nota de Credito"
 // en lugar del generico "comprobante".
-function buildErrorComment(err, displayKind = 'comprobante') {
+function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
     const msg = err?.message || 'Error desconocido';
     const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
 
@@ -7504,6 +8029,17 @@ function buildErrorComment(err, displayKind = 'comprobante') {
             solucion: 'Abrí la vista de la app → sección <b>Datos Fiscales</b> → completá Razón Social, CUIT, Punto de Venta y guardá.',
         },
         {
+            // Errores de red transitorios de Node (undici/fetch). "fetch failed"
+            // es el mensaje crudo que tira fetch cuando el socket se cae antes de
+            // recibir respuesta (ECONNRESET / ETIMEDOUT / socket hang up / EAI_AGAIN).
+            // Casi siempre es un micro-corte hablando con AFIP. Va ANTES del patrón
+            // genérico de AFIP para darle un mensaje propio cuando llega pelado.
+            match: /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|network.*error|terminated/i,
+            title: 'Falla de conexión temporal con AFIP',
+            detail: 'Fue un corte de red, no un problema de tus datos. El comprobante <b>no se emitió</b> (no hay duplicado).',
+            solucion: 'Volvé a disparar la receta. Si sigue fallando, esperá unos minutos y reintentá.',
+        },
+        {
             match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
             title: 'AFIP no está respondiendo correctamente',
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
@@ -7577,24 +8113,191 @@ function buildErrorComment(err, displayKind = 'comprobante') {
         },
     ];
 
-    const known = KNOWN_ERRORS.find(e => e.match.test(msg));
+    // Versión en inglés de KNOWN_ERRORS para boards en inglés. MISMOS `match`
+    // (la app tira los errores en español, así que el regex matchea igual); solo
+    // cambia el texto user-facing. Las partes dinámicas (mainMsg, subitemDetails)
+    // se reusan tal cual.
+    const KNOWN_ERRORS_EN = [
+        {
+            match: /Item incompleto/i,
+            title: 'Missing item data',
+            detail: subitemDetails.length > 0
+                ? 'Fill in these columns (empty or with invalid data) and trigger the recipe again:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
+                : 'There are required fields missing in the item or its subitems.',
+            solucion: "Open the item, fill in the columns marked with ❌ and retry. If a column is missing, check the <b>Visual Mapping</b> in the app's configuration view.",
+        },
+        {
+            match: /falta.*mapeo|falta.*configurar.*mapeo|falta.*mapping/i,
+            title: 'Column mapping not configured',
+            detail: "The board doesn't have configured which column corresponds to each invoice field.",
+            solucion: "Open the app's view → <b>Visual Mapping</b> section → select the columns and save.",
+        },
+        {
+            match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0|no valid lines/i,
+            title: 'Incomplete or missing subitems',
+            detail: subitemDetails.length > 0
+                ? 'The following subitems have empty or invalid fields:<br/>' +
+                  subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
+                : 'No subitems found with Description, Quantity and Unit Price filled in.',
+            solucion: 'Check each subitem and fill in the required fields: <b>Description</b>, <b>Quantity</b> (number) and <b>Unit Price</b> (number). If there are none, create at least one.',
+        },
+        {
+            match: /Configuración incompleta|incomplete configuration/i,
+            title: 'Incomplete configuration',
+            detail: mainMsg,
+            solucion: "Open the app's view → complete the pending steps in <b>Visual Mapping</b>. Make sure to map all required columns.",
+        },
+        {
+            match: /faltan certificados|certificados.*afip|falta.*crt|falta.*key/i,
+            title: 'Missing AFIP certificates',
+            detail: 'No digital certificates were found to authenticate with AFIP.',
+            solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the .crt file and the private key (.key).",
+        },
+        {
+            match: /certificados.*expirados|expir/i,
+            title: 'AFIP certificates expired',
+            detail: 'The digital certificates are expired and AFIP rejects the authentication.',
+            solucion: "Generate new certificates in AFIP/ARCA and upload them in the app's view → <b>ARCA Certificates</b> section.",
+        },
+        {
+            match: /tipo de factura incorrecto/i,
+            title: 'Incorrect invoice type',
+            detail: "The issuer's or recipient's tax data doesn't match the invoice type that was attempted.",
+            solucion: "Check two things:<br/>&nbsp;&nbsp;1) In the app, open <b>Tax Details</b> and confirm your company's <b>VAT Condition</b> is set correctly (Registered, Monotributo, etc.).<br/>&nbsp;&nbsp;2) In the item, confirm the <b>recipient CUIT</b> is correct. The app automatically asks AFIP for the recipient's condition to decide whether A, B or C applies.",
+        },
+        {
+            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)|this item (already issued|is currently issuing|has a .*number reserved)/i,
+            title: 'This item already has a voucher',
+            detail: mainMsg,
+            solucion: 'Each item corresponds to <b>a single voucher</b>. To issue another — or the Credit Note for this invoice — create a <b>new item</b> on the board. The Credit Note references the invoice by its CAE.',
+        },
+        {
+            match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
+            title: 'Invalid recipient CUIT / DNI',
+            detail: 'The recipient CUIT / DNI field is empty or has the wrong format.',
+            solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with exactly 11 numeric digits (e.g. 20327446348). No dashes or spaces.',
+        },
+        {
+            match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
+            title: 'Error querying the AFIP registry',
+            detail: "The recipient CUIT's VAT condition couldn't be verified on AFIP's servers.",
+            solucion: 'Check that the recipient CUIT is correct. If it is, retry in a few minutes (it may be a temporary AFIP outage).',
+        },
+        {
+            match: /empresa no encontrada|no encontrada.*cuenta/i,
+            title: 'Company not configured',
+            detail: 'The tax data of the issuing company was not found.',
+            solucion: "Open the app's view → <b>Tax Details</b> section → fill in Legal Name, CUIT, Point of Sale and save.",
+        },
+        {
+            match: /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|network.*error|terminated/i,
+            title: 'Temporary connection failure with AFIP',
+            detail: 'It was a network glitch, not a problem with your data. The voucher was <b>not issued</b> (no duplicate).',
+            solucion: 'Trigger the recipe again. If it keeps failing, wait a few minutes and retry.',
+        },
+        {
+            match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
+            title: 'AFIP is not responding correctly',
+            detail: "AFIP's servers didn't respond in time or returned an error. <b>This is not a configuration problem on your end</b>, it's on AFIP's side.",
+            solucion: "Wait a few minutes and try again. AFIP usually has brief outages or maintenance. If it's still failing after 30 minutes, contact the app's support.",
+        },
+        {
+            match: /token.*monday|no hay token|sessionToken/i,
+            title: 'monday authentication error',
+            detail: "The app couldn't access the board data.",
+            solucion: "Close the app's view and reopen it. If the error persists, uninstall the app from the board and reinstall it from the monday Marketplace.",
+        },
+        {
+            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta|missing required service dates/i,
+            title: 'Service dates required',
+            detail: mainMsg,
+            solucion: 'Fill in the <b>Service Date From</b> and <b>Service Date To</b> columns in the item. They are required when the subitems include services.',
+        },
+        {
+            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva|vat rate incompatible with invoice c/i,
+            title: "C voucher doesn't carry VAT",
+            detail: mainMsg,
+            solucion: "C vouchers (Invoice or Credit Note) don't break out VAT because the issuer is Monotributo or Exempt. Open the item's subitems and set the <b>VAT Rate %</b> column to <b>0</b> on all of them. Then retry.",
+        },
+        {
+            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida|missing vat rate|different vat rates|invalid vat rate/i,
+            title: 'Invalid VAT rate',
+            detail: subitemDetails.length > 0
+                ? 'The subitems have different VAT rates:<br/>' +
+                  subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
+                : mainMsg,
+            solucion: 'All subitems of an invoice must have the <b>same VAT rate</b>. Check the VAT Rate % column and make sure all subitems have the same value (0, 2.5, 5, 10.5, 21 or 27).',
+        },
+        {
+            match: /tipo de comprobante no reconocido|voucher type not recognized/i,
+            title: 'Voucher Type not recognized',
+            detail: mainMsg,
+            solucion: "The item's <b>Voucher Type</b> column must say <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Fix the value and trigger the recipe again.",
+        },
+        {
+            match: /cae de referencia|columna del cae|no se encontró ninguna factura|reference cae|no invoice.*found with cae/i,
+            title: "Couldn't identify the invoice to cancel",
+            detail: mainMsg,
+            solucion: "In the Credit Note item, paste the 14-digit <b>CAE</b> of the invoice you want to cancel into the CAE column. You get it from that invoice's PDF or from the comment the app left when it was issued.",
+        },
+        {
+            match: /(credit|debit) note item has no subitems/i,
+            title: 'The Credit Note has no lines to credit',
+            detail: mainMsg,
+            solucion: 'Add what you want to credit as <b>subitems</b> of the item — each line with Description, Quantity and Price. The Credit Note is issued for the sum of those subitems.',
+        },
+        {
+            match: /exceeds the available invoice balance/i,
+            title: 'The Credit Note exceeds the invoice balance',
+            detail: mainMsg,
+            solucion: "You can't credit more than what was invoiced. Lower the subitem amounts so the total doesn't exceed the <b>available balance</b> shown above.",
+        },
+        {
+            match: /vat rate.*doesn't match the invoice/i,
+            title: "The Credit Note's VAT rate doesn't match the invoice",
+            detail: mainMsg,
+            solucion: 'The Credit Note is credited with the same VAT that was invoiced. Adjust the <b>VAT Rate %</b> column of the subitems to match the original invoice.',
+        },
+        {
+            match: AFIP_IDEMPOTENT_ERROR_PATTERN,
+            title: 'A voucher was already issued for this item',
+            detail: mainMsg,
+            solucion: 'Each board item corresponds to <b>a single voucher</b>. To issue another, <b>create a new item</b> on the board and trigger it from there. This avoids duplicating vouchers in AFIP.',
+        },
+    ];
+
+    const isEn = language === 'en';
+    const errorsArr = isEn ? KNOWN_ERRORS_EN : KNOWN_ERRORS;
+    const known = errorsArr.find(e => e.match.test(msg));
+    const A = isEn
+        ? { issue: "Couldn't issue", cause: 'Cause:', fix: 'How to fix it:',
+            fallback: "Review the item data and retry. If the error persists, contact the app's support with the item name." }
+        : { issue: 'No se pudo emitir', cause: 'Causa:', fix: 'Cómo solucionarlo:',
+            fallback: 'Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.' };
 
     if (known) {
-        return `<b>❌ No se pudo emitir ${kindArticle(kind)}</b><br/><br/>` +
-            `<b>Causa:</b> ${known.title}<br/>${known.detail}<br/><br/>` +
-            `<b>Cómo solucionarlo:</b> ${known.solucion}`;
+        return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
+            `<b>${A.cause}</b> ${known.title}<br/>${known.detail}<br/><br/>` +
+            `<b>${A.fix}</b> ${known.solucion}`;
     }
 
-    return `<b>❌ No se pudo emitir ${kindArticle(kind)}</b><br/><br/>` +
-        `<b>Causa:</b> ${mainMsg}<br/><br/>` +
-        `<b>Cómo solucionarlo:</b> Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.`;
+    return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
+        `<b>${A.cause}</b> ${mainMsg}<br/><br/>` +
+        `<b>${A.fix}</b> ${A.fallback}`;
 }
 
 // M6: helper para concordancia gramatical del comprobante en mensajes user-facing.
 //   'Factura' / 'Nota de Crédito' / 'Nota de Débito' → "la Factura" / "la Nota de ..."
 //   'comprobante' (default) → "el comprobante"
-function kindArticle(kind) {
+function kindArticle(kind, language = 'es') {
     const k = String(kind || 'comprobante').trim();
+    if (language === 'en') {
+        if (/^factura/i.test(k)) return 'the invoice';
+        if (/cr[eé]dito/i.test(k)) return 'the credit note';
+        if (/d[eé]bito/i.test(k)) return 'the debit note';
+        return 'the voucher';
+    }
     if (/^factura/i.test(k) || /^nota de/i.test(k)) return `la ${k}`;
     return `el ${k}`;
 }
@@ -7604,8 +8307,8 @@ function kindArticle(kind) {
  * displayKind es el nombre user-facing del comprobante ('Factura' / 'Nota de Crédito' /
  * 'Nota de Débito'); default 'comprobante' para call sites legacy.
  */
-async function postMondayErrorComment({ apiToken, itemId, error, displayKind }) {
-    const body = buildErrorComment(error, displayKind);
+async function postMondayErrorComment({ apiToken, itemId, error, displayKind, language = 'es' }) {
+    const body = buildErrorComment(error, displayKind, language);
     const mutation = `
         mutation {
             create_update(item_id: ${itemId}, body: ${JSON.stringify(body)}) {
@@ -7828,7 +8531,7 @@ async function writeMondayDropdownColumn({ apiToken, boardId, itemId, columnId, 
 //                                        ("IVA Responsable Inscripto", "Consumidor
 //                                         Final", etc.). El usuario NO la carga: la
 //                                         resuelve la app desde el padrón AFIP.
-async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae, receptorNombre, receptorCondicion }) {
+async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, letra, puntoVenta, numero, cae, receptorNombre, receptorCondicion, language = 'es' }) {
     if (!apiToken || !boardId || !itemId || !mapping) return;
     const pv  = String(puntoVenta ?? '').replace(/\D/g, '');
     const nro = String(numero ?? '').replace(/\D/g, '');
@@ -7871,10 +8574,16 @@ async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, let
     // Razón social del receptor (texto). La app la resuelve desde el padrón AFIP
     // al emitir; acá solo la deja registrada en el item para que el cliente la vea.
     if (mapping.razon_social_receptor && receptorNombre) {
+        // Si es el "Consumidor Final" genérico (cualquier caja), lo escribimos en el
+        // idioma del board; un nombre real (B2B) va tal cual title-cased.
+        const recNombreRaw = String(receptorNombre).trim();
+        const nombreValue = (recNombreRaw.toLowerCase() === 'consumidor final')
+            ? (language === 'en' ? 'Final Consumer' : 'Consumidor Final')
+            : invoiceRules.toTitleCase(recNombreRaw);
         await writeMondayTextColumn({
             apiToken, boardId, itemId,
             columnId: mapping.razon_social_receptor,
-            value: invoiceRules.toTitleCase(String(receptorNombre)),
+            value: nombreValue,
         });
     }
     // Condición frente al IVA del receptor (dropdown). receptorCondicion viene en
@@ -7884,7 +8593,7 @@ async function writeComprobanteColumns({ apiToken, boardId, itemId, mapping, let
         await writeMondayDropdownColumn({
             apiToken, boardId, itemId,
             columnId: mapping.condicion_iva_receptor,
-            label: invoiceRules.toTitleCase(invoiceRules.condicionLabel(receptorCondicion)),
+            label: invoiceRules.toTitleCase(invoiceRules.condicionLabel(receptorCondicion, language)),
         });
     }
 }
@@ -8415,6 +9124,18 @@ async function runStartupMigrations() {
         console.log('[migrations] visual_mappings dedup + UNIQUE (company_id, board_id) aseguradas');
     } catch (err) {
         console.error('[migrations] visual_mappings dedup error:', err.message);
+    }
+    try {
+        await ensureAccountReviewPromptsTable();
+        console.log('[migrations] account_review_prompts table asegurada');
+    } catch (err) {
+        console.error('[migrations] account_review_prompts error:', err.message);
+    }
+    try {
+        await ensureReviewFeedbackTable();
+        console.log('[migrations] review_feedback table asegurada');
+    } catch (err) {
+        console.error('[migrations] review_feedback error:', err.message);
     }
 }
 
@@ -9554,8 +10275,19 @@ async function reconcileSingleEmission(row) {
     // 8. Generar PDF
     let pdfBuffer = null;
     try {
+        // Idioma del board para regenerar el PDF en el idioma correcto (default 'es').
+        let reconcileLang = 'es';
+        try {
+            const langRes = await db.query(
+                `SELECT language FROM board_automation_configs
+                 WHERE company_id=$1 AND board_id=$2
+                 ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1`,
+                [row.company_id, row.board_id]
+            );
+            reconcileLang = langRes.rows[0]?.language || 'es';
+        } catch { /* default es */ }
         pdfBuffer = await generateFacturaPdfBuffer({
-            company, draft, afipResult, itemId: row.item_id,
+            company, draft, afipResult, itemId: row.item_id, language: reconcileLang,
         });
         console.log(`${tag} PDF generado (${pdfBuffer?.length || 0} bytes)`);
     } catch (pdfErr) {

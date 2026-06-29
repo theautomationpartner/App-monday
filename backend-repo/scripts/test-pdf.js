@@ -28,6 +28,7 @@ if (!['A', 'B', 'C'].includes(tipoArg)) {
 
 const monedaArg     = (process.argv[3] || 'PES').toUpperCase();
 const cotizacionArg = Number(process.argv[4] || 1);
+const langArg       = (process.argv[5] || 'es').toLowerCase() === 'en' ? 'en' : 'es';
 if (!['PES', 'DOL'].includes(monedaArg)) {
     console.error(`Moneda inválida: ${monedaArg}. Usar PES o DOL.`);
     process.exit(1);
@@ -125,11 +126,11 @@ const afipResult = {
 (async () => {
     try {
         console.log(`Generando PDF de prueba — Factura ${tipoArg} (${monedaArg}${monedaArg === 'DOL' ? `, ctz=${cotizacionArg}` : ''})…`);
-        const pdfBuffer = await generateFacturaPdfBuffer({ company, draft, afipResult });
+        const pdfBuffer = await generateFacturaPdfBuffer({ company, draft, afipResult, language: langArg });
 
         const outDir = path.join(__dirname, '..', 'test-output');
         fs.mkdirSync(outDir, { recursive: true });
-        const outFile = path.join(outDir, `factura-${tipoArg}-${monedaArg}-test.pdf`);
+        const outFile = path.join(outDir, `factura-${tipoArg}-${monedaArg}-${langArg}-test.pdf`);
         fs.writeFileSync(outFile, pdfBuffer);
 
         console.log(`PDF generado: ${outFile} (${pdfBuffer.length} bytes)`);

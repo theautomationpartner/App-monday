@@ -60,6 +60,7 @@ const BoardConfigSchema = z.object({
     processing_label: z.string().optional().nullable(),
     success_label: z.string().optional().nullable(),
     error_label: z.string().optional().nullable(),
+    language: z.enum(['es', 'en']).optional().nullable(),
     auto_rename_item: z.boolean().optional(),
     auto_update_status: z.boolean().optional(),
 }).refine(

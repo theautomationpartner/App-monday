@@ -116,6 +116,59 @@ function calcularDesgloseIva(draft) {
 // 'DUPLICADO' y 'TRIPLICADO' a este array y el resto del código se adapta solo.
 const INVOICE_COPIES = ['ORIGINAL'];
 
+// ─── Etiquetas del PDF por idioma (Fase 2 i18n) ─────────────────────────────
+// SOLO se traducen las ETIQUETAS de campos. Las leyendas/textos OBLIGATORIOS de
+// AFIP quedan SIEMPRE en español (ARCA, "AGENCIA DE RECAUDACIÓN...", "Comprobante
+// Autorizado", "Esta Agencia no se responsabiliza...", RG 5614 "Régimen de
+// Transparencia Fiscal", RG 5616 leyenda de cotización, "ORIGINAL", "COD.", CAE,
+// CUIT). Los importes y fechas mantienen formato argentino (es-AR) por ser un
+// comprobante fiscal argentino. Default 'es' → comportamiento de SIEMPRE.
+const PDF_LABELS = {
+    es: {
+        titleFactura: 'FACTURA', titleNC: 'NOTA DE CRÉDITO', titleND: 'NOTA DE DÉBITO',
+        razonSocial: 'Razón Social: ', domicilio: 'Domicilio: ', condIva: 'Cond. IVA: ',
+        tel: 'Tel: ', puntoVenta: 'Punto de Venta: ', compNro: 'Comp. Nro: ',
+        fechaEmision: 'Fecha de Emisión: ', ingresosBrutos: 'Ingresos Brutos: ',
+        fechaInicio: 'Fecha de Inicio de Actividades: ',
+        periodoDesde: 'Período Facturado Desde: ', hasta: 'Hasta: ',
+        vtoPago: 'Fecha de Vto. para el pago: ',
+        apellidoNombre: 'Apellido y Nombre / Razón Social: ', consumidorFinal: 'Consumidor Final',
+        condFrenteIva: 'Condición frente al IVA: ', domicilioComercial: 'Domicilio Comercial: ',
+        condVenta: 'Condición de venta: ', contado: 'Contado',
+        compAsociado: 'Comprobante Asociado: ', facturaWord: 'Factura', fecha: 'Fecha: ',
+        thCodigo: 'Código', thProdServ: 'Producto / Servicio', thCantidad: 'Cantidad',
+        thUMedida: 'U. Medida', thPrecioUnit: 'Precio Unit.', thBonif: '% Bonif',
+        thSubtotal: 'Subtotal', thAlicIva: 'Alícuota IVA', thSubtotalIva: 'Subtotal c/IVA',
+        thImpBonif: 'Imp. Bonif.', unidades: 'unidades', observaciones: 'Observaciones:',
+        importeNeto: 'Importe Neto Gravado: ', iva: 'IVA', otrosTributos: 'Importe Otros Tributos: ',
+        importeTotal: 'Importe Total: ', subtotalTot: 'Subtotal: ', ivaContenido: 'IVA Contenido: ',
+        caeVto: 'Fecha de Vto. de CAE: ', pag: 'Pág. ', pendiente: 'PENDIENTE',
+    },
+    en: {
+        titleFactura: 'INVOICE', titleNC: 'CREDIT NOTE', titleND: 'DEBIT NOTE',
+        razonSocial: 'Legal Name: ', domicilio: 'Address: ', condIva: 'VAT Condition: ',
+        tel: 'Phone: ', puntoVenta: 'Sales Point: ', compNro: 'Voucher No.: ',
+        fechaEmision: 'Issue Date: ', ingresosBrutos: 'Gross Income Tax: ',
+        fechaInicio: 'Start of Activities Date: ',
+        periodoDesde: 'Billing Period From: ', hasta: 'To: ',
+        vtoPago: 'Payment Due Date: ',
+        apellidoNombre: 'Name / Legal Name: ', consumidorFinal: 'Final Consumer',
+        condFrenteIva: 'VAT Condition: ', domicilioComercial: 'Business Address: ',
+        condVenta: 'Sale Condition: ', contado: 'Cash',
+        compAsociado: 'Associated Voucher: ', facturaWord: 'Invoice', fecha: 'Date: ',
+        thCodigo: 'Code', thProdServ: 'Product / Service', thCantidad: 'Quantity',
+        thUMedida: 'Unit', thPrecioUnit: 'Unit Price', thBonif: '% Disc.',
+        thSubtotal: 'Subtotal', thAlicIva: 'VAT Rate', thSubtotalIva: 'Subtotal w/VAT',
+        thImpBonif: 'Disc. Amt.', unidades: 'units', observaciones: 'Remarks:',
+        importeNeto: 'Net Taxable Amount: ', iva: 'VAT', otrosTributos: 'Other Taxes: ',
+        importeTotal: 'Total Amount: ', subtotalTot: 'Subtotal: ', ivaContenido: 'VAT Included: ',
+        caeVto: 'CAE Due Date: ', pag: 'Page ', pendiente: 'PENDING',
+    },
+};
+function pdfLabelsFor(language) {
+    return language === 'en' ? PDF_LABELS.en : PDF_LABELS.es;
+}
+
 // Normaliza una URL para mostrar: saca "https://" (no aporta info visual).
 // NO hace pre-truncate — drawKV se encarga del auto-shrink y truncate final,
 // aprovechando todo el ancho disponible de la columna.
@@ -230,7 +283,8 @@ async function fetchQrImage({ company, draft, afipResult }) {
     return null;
 }
 
-async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId */ }) {
+async function generateFacturaPdfBuffer({ company, draft, afipResult, language /*, itemId */ }) {
+    const L = pdfLabelsFor(language); // etiquetas del PDF por idioma (default 'es')
     const tQrStart = Date.now();
     const qrImageBuffer = await fetchQrImage({ company, draft, afipResult });
     const tLogoStart = Date.now();
@@ -394,9 +448,9 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const rx = centerX + centerW;
             const rightColW = colRight - rx - 8;
             const facturaFontSize = 16;
-            const tituloComprobante = isNotaCredito ? 'NOTA DE CRÉDITO'
-                : isNotaDebito ? 'NOTA DE DÉBITO'
-                : 'FACTURA';
+            const tituloComprobante = isNotaCredito ? L.titleNC
+                : isNotaDebito ? L.titleND
+                : L.titleFactura;
             doc.fontSize(facturaFontSize).font('Helvetica-Bold')
                .text(tituloComprobante, rx, bannerCenterY - facturaFontSize / 2,
                      { width: rightColW, align: 'center', lineBreak: false });
@@ -421,16 +475,16 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             // mayusculas y abreviaturas con punto/slash respetadas).
             let dy = dataStartY;
             drawKV(doc, contentX, dy, contentW,
-                'Razón Social: ', invoiceRules.toTitleCase(company.business_name || ''));
+                L.razonSocial, invoiceRules.toTitleCase(company.business_name || ''));
             dy += STEP;
             drawKV(doc, contentX, dy, contentW,
-                'Domicilio: ', invoiceRules.toTitleCase(company.address || '-'));
+                L.domicilio, invoiceRules.toTitleCase(company.address || '-'));
             dy += STEP;
             drawKV(doc, contentX, dy, contentW,
-                'Cond. IVA: ', invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.emisorCondicion || '')));
+                L.condIva, invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.emisorCondicion || '', language)));
             if (company.phone) {
                 dy += STEP;
-                drawKV(doc, contentX, dy, contentW, 'Tel: ', company.phone);
+                drawKV(doc, contentX, dy, contentW, L.tel, company.phone);
             }
             if (company.email) {
                 dy += STEP;
@@ -445,15 +499,15 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             const compX = centerX + centerW + 8;
             const compW = colRight - compX - 8;
             let cry = dataStartY;
-            drawKV(doc, compX, cry, compW, 'Punto de Venta: ', `${pv}   Comp. Nro: ${nroComp}`);
+            drawKV(doc, compX, cry, compW, L.puntoVenta, `${pv}   ${L.compNro}${nroComp}`);
             cry += STEP;
-            drawKV(doc, compX, cry, compW, 'Fecha de Emisión: ', fechaEmision);
+            drawKV(doc, compX, cry, compW, L.fechaEmision, fechaEmision);
             cry += STEP;
             drawKV(doc, compX, cry, compW, 'CUIT: ', fmtCuit(company.cuit));
             cry += STEP;
-            drawKV(doc, compX, cry, compW, 'Ingresos Brutos: ', fmtCuit(company.cuit));
+            drawKV(doc, compX, cry, compW, L.ingresosBrutos, fmtCuit(company.cuit));
             cry += STEP;
-            drawKV(doc, compX, cry, compW, 'Fecha de Inicio de Actividades: ', startDate);
+            drawKV(doc, compX, cry, compW, L.fechaInicio, startDate);
 
             y += headerH;
             mark(`header_done_c${copyIdx}`);
@@ -468,11 +522,11 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 doc.fontSize(7.5);
 
                 // Izquierda: Período Facturado Desde
-                doc.font('Helvetica-Bold').text('Período Facturado Desde: ', colLeft + 8, periodoY, { continued: true, lineBreak: false });
+                doc.font('Helvetica-Bold').text(L.periodoDesde, colLeft + 8, periodoY, { continued: true, lineBreak: false });
                 doc.font('Helvetica').text(fmtDate(draft.fecha_servicio_desde) || fechaEmision, { lineBreak: false });
 
                 // Centro: Hasta (geométricamente centrado en W/2)
-                const hastaLabel = 'Hasta: ';
+                const hastaLabel = L.hasta;
                 const hastaValue = fmtDate(draft.fecha_servicio_hasta) || fechaEmision;
                 doc.font('Helvetica-Bold');
                 const hastaLabelW = doc.widthOfString(hastaLabel);
@@ -483,7 +537,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 doc.font('Helvetica').text(hastaValue, hastaX + hastaLabelW, periodoY, { lineBreak: false });
 
                 // Derecha: Fecha de Vto. para el pago (alineado a la derecha)
-                const vtoLabel = 'Fecha de Vto. para el pago: ';
+                const vtoLabel = L.vtoPago;
                 const vtoValue = fmtDate(draft.fecha_vto_pago) || fechaEmision;
                 doc.font('Helvetica-Bold');
                 const vtoLabelW = doc.widthOfString(vtoLabel);
@@ -504,16 +558,19 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             doc.fontSize(7.5);
             doc.font('Helvetica-Bold').text('CUIT: ', colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text(fmtCuit(draft.receptor_cuit_o_dni) || '-');
-            doc.font('Helvetica-Bold').text('Apellido y Nombre / Razón Social: ', colLeft + halfW + 8, cy, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.receptor_nombre || 'Consumidor Final'));
+            doc.font('Helvetica-Bold').text(L.apellidoNombre, colLeft + halfW + 8, cy, { continued: true });
+            const recNombreRaw = (draft.receptor_nombre || '').trim();
+            const esConsumidorFinalGenerico = !recNombreRaw || recNombreRaw.toLowerCase() === 'consumidor final';
+            doc.font('Helvetica').text(
+                esConsumidorFinalGenerico ? L.consumidorFinal : invoiceRules.toTitleCase(recNombreRaw));
             cy += 12;
-            doc.font('Helvetica-Bold').text('Condición frente al IVA: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.receptorCondicion || '')));
-            doc.font('Helvetica-Bold').text('Domicilio Comercial: ', colLeft + halfW + 8, cy, { continued: true });
+            doc.font('Helvetica-Bold').text(L.condFrenteIva, colLeft + 8, cy, { continued: true });
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.receptorCondicion || '', language)));
+            doc.font('Helvetica-Bold').text(L.domicilioComercial, colLeft + halfW + 8, cy, { continued: true });
             doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.receptor_domicilio || '-'));
             cy += 12;
-            doc.font('Helvetica-Bold').text('Condición de venta: ', colLeft + 8, cy, { continued: true });
-            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.condicion_venta || 'Contado'));
+            doc.font('Helvetica-Bold').text(L.condVenta, colLeft + 8, cy, { continued: true });
+            doc.font('Helvetica').text(invoiceRules.toTitleCase(draft.condicion_venta || L.contado));
             y += receptorH;
             mark(`receptor_done_c${copyIdx}`);
 
@@ -527,11 +584,11 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                 doc.rect(colLeft, y, W, caH).stroke('#000');
                 const caPv  = padNum(ca.punto_venta, 5);
                 const caNro = padNum(ca.numero, 8);
-                let caTxt = `Factura ${ca.letra || ''} ${caPv}-${caNro}`.replace(/\s+/g, ' ').trim();
-                if (ca.fecha) caTxt += `    Fecha: ${fmtDate(ca.fecha)}`;
+                let caTxt = `${L.facturaWord} ${ca.letra || ''} ${caPv}-${caNro}`.replace(/\s+/g, ' ').trim();
+                if (ca.fecha) caTxt += `    ${L.fecha}${fmtDate(ca.fecha)}`;
                 if (ca.cae)   caTxt += `    CAE: ${ca.cae}`;
                 doc.fontSize(7.5).font('Helvetica-Bold')
-                   .text('Comprobante Asociado: ', colLeft + 8, y + 5, { continued: true, lineBreak: false });
+                   .text(L.compAsociado, colLeft + 8, y + 5, { continued: true, lineBreak: false });
                 doc.font('Helvetica').text(caTxt, { lineBreak: false });
                 y += caH;
             }
@@ -543,24 +600,24 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             // columnas que llevan importes (Precio Unit., Subtotal, etc.).
             const monSuffix = isMonExt ? ` (${monSym})` : '';
             const cols = isFacturaA ? [
-                { label: 'Código',                       w: W * 0.06, align: 'center' },
-                { label: 'Producto / Servicio',          w: W * 0.26, align: 'left'   },
-                { label: 'Cantidad',                     w: W * 0.07, align: 'right'  },
-                { label: 'U. Medida',                    w: W * 0.08, align: 'center' },
-                { label: `Precio Unit.${monSuffix}`,     w: W * 0.11, align: 'right'  },
-                { label: '% Bonif',                      w: W * 0.07, align: 'right'  },
-                { label: `Subtotal${monSuffix}`,         w: W * 0.11, align: 'right'  },
-                { label: 'Alícuota IVA',                 w: W * 0.10, align: 'center' },
-                { label: `Subtotal c/IVA${monSuffix}`,   w: W * 0.14, align: 'right'  },
+                { label: L.thCodigo,                        w: W * 0.06, align: 'center' },
+                { label: L.thProdServ,                      w: W * 0.26, align: 'left'   },
+                { label: L.thCantidad,                      w: W * 0.07, align: 'right'  },
+                { label: L.thUMedida,                       w: W * 0.08, align: 'center' },
+                { label: `${L.thPrecioUnit}${monSuffix}`,   w: W * 0.11, align: 'right'  },
+                { label: L.thBonif,                         w: W * 0.07, align: 'right'  },
+                { label: `${L.thSubtotal}${monSuffix}`,     w: W * 0.11, align: 'right'  },
+                { label: L.thAlicIva,                       w: W * 0.10, align: 'center' },
+                { label: `${L.thSubtotalIva}${monSuffix}`,  w: W * 0.14, align: 'right'  },
             ] : [
-                { label: 'Código',                       w: W * 0.08, align: 'center' },
-                { label: 'Producto / Servicio',          w: W * 0.30, align: 'left'   },
-                { label: 'Cantidad',                     w: W * 0.08, align: 'right'  },
-                { label: 'U. Medida',                    w: W * 0.10, align: 'center' },
-                { label: `Precio Unit.${monSuffix}`,     w: W * 0.13, align: 'right'  },
-                { label: '% Bonif',                      w: W * 0.08, align: 'right'  },
-                { label: `Imp. Bonif.${monSuffix}`,      w: W * 0.10, align: 'right'  },
-                { label: `Subtotal${monSuffix}`,         w: W * 0.13, align: 'right'  },
+                { label: L.thCodigo,                        w: W * 0.08, align: 'center' },
+                { label: L.thProdServ,                      w: W * 0.30, align: 'left'   },
+                { label: L.thCantidad,                      w: W * 0.08, align: 'right'  },
+                { label: L.thUMedida,                       w: W * 0.10, align: 'center' },
+                { label: `${L.thPrecioUnit}${monSuffix}`,   w: W * 0.13, align: 'right'  },
+                { label: L.thBonif,                         w: W * 0.08, align: 'right'  },
+                { label: `${L.thImpBonif}${monSuffix}`,     w: W * 0.10, align: 'right'  },
+                { label: `${L.thSubtotal}${monSuffix}`,     w: W * 0.13, align: 'right'  },
             ];
             // En moneda extranjera el header crece a 2 lineas: "Subtotal" + "(USD)".
             const rowH = isMonExt ? 22 : 16;
@@ -584,7 +641,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             // Indice de la columna "Producto / Servicio" — es la que tiene
             // textos largos (descripcion del producto) y fuerza a que la fila
             // crezca en altura cuando el texto necesita >1 linea.
-            const conceptColIdx = cols.findIndex(c => /Producto.*Servicio/i.test(c.label));
+            const conceptColIdx = cols.findIndex(c => /Producto.*Servicio|Product.*Service/i.test(c.label));
 
             for (const line of lineas) {
                 const qty = Number(line.quantity || line.cantidad || 0);
@@ -603,7 +660,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                         '',
                         line.concept || line.descripcion || '',
                         String(qty),
-                        (line.unidad_medida || 'unidades').toLowerCase(),
+                        (line.unidad_medida || L.unidades).toLowerCase(),
                         fmtMoney(price),
                         '0,00',
                         fmtMoney(subtotal),
@@ -617,7 +674,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                         '',
                         line.concept || line.descripcion || '',
                         String(qty),
-                        (line.unidad_medida || 'unidades').toLowerCase(),
+                        (line.unidad_medida || L.unidades).toLowerCase(),
                         fmtMoney(priceConIva),
                         '0,00',
                         '0,00',
@@ -629,7 +686,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                         '',
                         line.concept || line.descripcion || '',
                         String(qty),
-                        (line.unidad_medida || 'unidades').toLowerCase(),
+                        (line.unidad_medida || L.unidades).toLowerCase(),
                         fmtMoney(price),
                         '0,00',
                         '0,00',
@@ -671,7 +728,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             let obsHeight = 0;
             const obsW = W - 16;
             const obsLabelW = observacionesText
-                ? doc.font('Helvetica-Bold').fontSize(8).widthOfString('Observaciones: ')
+                ? doc.font('Helvetica-Bold').fontSize(8).widthOfString(L.observaciones + ' ')
                 : 0;
             if (observacionesText) {
                 const textH = doc.heightOfString(observacionesText, { width: obsW - obsLabelW });
@@ -692,7 +749,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
             if (observacionesText) {
                 const obsX = colLeft + 8;
                 doc.fontSize(8);
-                doc.fillColor('#000').font('Helvetica-Bold').text('Observaciones:', obsX, y + 4);
+                doc.fillColor('#000').font('Helvetica-Bold').text(L.observaciones, obsX, y + 4);
                 doc.font('Helvetica').text(observacionesText, obsX + obsLabelW, y + 4, {
                     width: obsW - obsLabelW,
                     align: 'left',
@@ -747,24 +804,24 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                     ty += 11;
                 };
 
-                drawRow(`Importe Neto Gravado: ${monSym}`, fmtMoney(netoGravado), true);
-                drawRow(`IVA 27%: ${monSym}`,   fmtMoney(ivaPorAlicuota['27']));
-                drawRow(`IVA 21%: ${monSym}`,   fmtMoney(ivaPorAlicuota['21']));
-                drawRow(`IVA 10.5%: ${monSym}`, fmtMoney(ivaPorAlicuota['10.5']));
-                drawRow(`IVA 5%: ${monSym}`,    fmtMoney(ivaPorAlicuota['5']));
-                drawRow(`IVA 2.5%: ${monSym}`,  fmtMoney(ivaPorAlicuota['2.5']));
-                drawRow(`IVA 0%: ${monSym}`,    fmtMoney(ivaPorAlicuota['0']));
-                drawRow(`Importe Otros Tributos: ${monSym}`, '0,00');
-                drawRow(`Importe Total: ${monSym}`,
+                drawRow(`${L.importeNeto}${monSym}`, fmtMoney(netoGravado), true);
+                drawRow(`${L.iva} 27%: ${monSym}`,   fmtMoney(ivaPorAlicuota['27']));
+                drawRow(`${L.iva} 21%: ${monSym}`,   fmtMoney(ivaPorAlicuota['21']));
+                drawRow(`${L.iva} 10.5%: ${monSym}`, fmtMoney(ivaPorAlicuota['10.5']));
+                drawRow(`${L.iva} 5%: ${monSym}`,    fmtMoney(ivaPorAlicuota['5']));
+                drawRow(`${L.iva} 2.5%: ${monSym}`,  fmtMoney(ivaPorAlicuota['2.5']));
+                drawRow(`${L.iva} 0%: ${monSym}`,    fmtMoney(ivaPorAlicuota['0']));
+                drawRow(`${L.otrosTributos}${monSym}`, '0,00');
+                drawRow(`${L.importeTotal}${monSym}`,
                     fmtMoney(draft.importe_total ?? importeTotalCalculado), true);
             } else {
-                doc.font('Helvetica-Bold').text(`Subtotal: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(`${L.subtotalTot}${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
                 ty += 14;
-                doc.font('Helvetica-Bold').text(`Importe Otros Tributos: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(`${L.otrosTributos}${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text('0,00', totValueX, ty, { width: valueW, align: 'right' });
                 ty += 14;
-                doc.font('Helvetica-Bold').text(`Importe Total: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
+                doc.font('Helvetica-Bold').text(`${L.importeTotal}${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                 doc.font('Helvetica-Bold').text(fmtMoney(draft.importe_total), totValueX, ty, { width: valueW, align: 'right' });
                 // Si es Factura C en moneda extranjera, avanzamos el cursor para
                 // que el divisor de la leyenda monExt no caiga sobre el texto
@@ -784,7 +841,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                              colLeft + 8, ty, { width: W - 16 });
                     ty += 12;
                     const ivaContenido = Number(draft.importe_iva || 0);
-                    doc.font('Helvetica-Bold').text(`IVA Contenido: ${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
+                    doc.font('Helvetica-Bold').text(`${L.ivaContenido}${monSym}`, totLabelX, ty, { width: labelW, align: 'right' });
                     doc.font('Helvetica-Bold').text(fmtMoney(ivaContenido), totValueX, ty, { width: valueW, align: 'right' });
                     ty += 14;  // avanzar bajo IVA Contenido para que la leyenda monExt no se solape
                 }
@@ -856,12 +913,12 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult /*, itemId 
                       arcaX, footerY + 40);
 
             doc.fontSize(8).font('Helvetica-Bold')
-               .text(`CAE N°: ${afipResult?.cae || 'PENDIENTE'}`, colRight - 180, footerY + 18, { width: 180, align: 'right' });
+               .text(`CAE N°: ${afipResult?.cae || L.pendiente}`, colRight - 180, footerY + 18, { width: 180, align: 'right' });
             doc.fontSize(8).font('Helvetica')
-               .text(`Fecha de Vto. de CAE: ${caeVto}`, colRight - 180, footerY + 30, { width: 180, align: 'right' });
+               .text(`${L.caeVto}${caeVto}`, colRight - 180, footerY + 30, { width: 180, align: 'right' });
 
             doc.fontSize(8).font('Helvetica')
-               .text(`Pág. ${pageNum}/${totalPages}`, colLeft + W / 2 - 20, footerY + 24);
+               .text(`${L.pag}${pageNum}/${totalPages}`, colLeft + W / 2 - 20, footerY + 24);
 
             mark(`footer_done_c${copyIdx}`);
             } // end for copyIdx (loop por ORIGINAL / DUPLICADO / TRIPLICADO)
