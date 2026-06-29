@@ -2165,7 +2165,8 @@ function extractCaeFromColumn(columnValues, columnId) {
 //   letra          — 'A' | 'B' | 'C' (C no lleva IVA)
 // Devuelve { validLines, lineas, alicuotaElegida, alicuotaConfig,
 //            importeNeto, importeIva, importeTotal }.
-function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
+function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra, language = 'es' }) {
+    const L = (en, es) => language === 'en' ? en : es;
     const ALICUOTA_MAP = {
         '0':    { id: 3, rate: 0 },
         '2.5':  { id: 9, rate: 0.025 },
@@ -2194,20 +2195,20 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
     if (validLines.length === 0) {
         const detalleStr = rawLines.map((l) => {
             const faltantes = [];
-            if (!l.concept) faltantes.push('Concepto');
+            if (!l.concept) faltantes.push(L('Description', 'Concepto'));
             const q = toNumberOrNull(l.quantity);
             const p = toNumberOrNull(l.unit_price);
-            if (q === null) faltantes.push('Cantidad');
-            else if (q <= 0) faltantes.push('Cantidad (tiene que ser mayor a 0)');
-            if (p === null) faltantes.push('Precio Unitario');
-            else if (p <= 0) faltantes.push('Precio Unitario (tiene que ser mayor a 0)');
+            if (q === null) faltantes.push(L('Quantity', 'Cantidad'));
+            else if (q <= 0) faltantes.push(L('Quantity (must be greater than 0)', 'Cantidad (tiene que ser mayor a 0)'));
+            if (p === null) faltantes.push(L('Unit Price', 'Precio Unitario'));
+            else if (p <= 0) faltantes.push(L('Unit Price (must be greater than 0)', 'Precio Unitario (tiene que ser mayor a 0)'));
             return `• "${l.subitem_name}": ${faltantes.join(', ')}`;
         }).join('\n');
         throw new Error(
-            `No hay líneas válidas en los subítems.\n` +
+            L('No valid lines in the subitems.\n', `No hay líneas válidas en los subítems.\n`) +
             ((subitems || []).length === 0
-                ? 'El item no tiene subítems creados.'
-                : `Subítems con problemas:\n${detalleStr}`)
+                ? L('The item has no subitems created.', 'El item no tiene subítems creados.')
+                : L(`Subitems with problems:\n${detalleStr}`, `Subítems con problemas:\n${detalleStr}`))
         );
     }
 
@@ -2219,15 +2220,18 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
     const sinAlicuota = alicuotas.filter((a) => !a.normalized);
     if (mapping.alicuota_iva && sinAlicuota.length > 0) {
         throw new Error(
-            `Alícuota IVA faltante en subítems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n` +
-            `Todos los subítems deben tener una alícuota IVA (0, 2.5, 5, 10.5, 21 o 27).`
+            L(`Missing VAT rate in subitems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n`,
+              `Alícuota IVA faltante en subítems: ${sinAlicuota.map((a) => `"${a.name}"`).join(', ')}.\n`) +
+            L('All subitems must have a VAT rate (0, 2.5, 5, 10.5, 21 or 27).',
+              'Todos los subítems deben tener una alícuota IVA (0, 2.5, 5, 10.5, 21 o 27).')
         );
     }
     const alicuotasUnicas = [...new Set(alicuotas.map((a) => a.normalized).filter(Boolean))];
     if (alicuotasUnicas.length > 1) {
         throw new Error(
-            `Alícuotas IVA diferentes entre subítems.\n` +
-            `Todos los subítems deben tener la misma alícuota IVA. Encontradas:\n` +
+            L('Different VAT rates across subitems.\n', `Alícuotas IVA diferentes entre subítems.\n`) +
+            L('All subitems must have the same VAT rate. Found:\n',
+              'Todos los subítems deben tener la misma alícuota IVA. Encontradas:\n') +
             alicuotas.map((a) => `• "${a.name}": ${a.normalized}%`).join('\n')
         );
     }
@@ -2235,8 +2239,8 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra }) {
     const alicuotaConfig = ALICUOTA_MAP[alicuotaElegida];
     if (!alicuotaConfig) {
         throw new Error(
-            `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
-            `Las permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+            L(`Invalid VAT rate: ${alicuotaElegida}%.\n`, `Alícuota IVA no válida: ${alicuotaElegida}%.\n`) +
+            L('Allowed: 0%, 2.5%, 5%, 10.5%, 21%, 27%.', 'Las permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.')
         );
     }
 
@@ -5830,9 +5834,11 @@ async function comprobanteHandler(req, res) {
                     await emitNotaHandler(req, res, 'ND');
                     return;
                 } else {
-                    throw new Error(
-                        `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
-                        `Tiene que ser "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" o "Nota de Débito"/"Debit Note".`
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `Voucher Type not recognized: "${tipoComp}". ` +
+                          `It must be "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" or "Nota de Débito"/"Debit Note".`
+                        : `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
+                          `Tiene que ser "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" o "Nota de Débito"/"Debit Note".`
                     );
                 }
             }
@@ -5863,25 +5869,37 @@ async function comprobanteHandler(req, res) {
             );
             if (ncEnEsteItem.rows[0]) {
                 const r = ncEnEsteItem.rows[0];
-                const docPrevio = r.invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito';
+                const isEnPrev = readiness.boardConfig?.language === 'en';
+                const docPrevio = isEnPrev
+                    ? (r.invoice_type === 'ND' ? 'Debit Note' : 'Credit Note')
+                    : (r.invoice_type === 'ND' ? 'Nota de Débito' : 'Nota de Crédito');
                 if (r.status === 'success') {
                     const n = r.afip_result_json || {};
-                    throw new Error(
-                        `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
-                        `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
-                        `cada item corresponde a un solo comprobante. Creá un item nuevo.`
+                    throw new Error(isEnPrev
+                        ? `This item already issued a ${docPrevio} (No. ${n.numero_comprobante || '—'}, ` +
+                          `CAE ${n.cae || '—'}). You can't issue an invoice on the same item — ` +
+                          `each item corresponds to a single voucher. Create a new item.`
+                        : `Este item ya emitió una ${docPrevio} (N° ${n.numero_comprobante || '—'}, ` +
+                          `CAE ${n.cae || '—'}). No se puede emitir una factura sobre el mismo item — ` +
+                          `cada item corresponde a un solo comprobante. Creá un item nuevo.`
                     );
                 } else if (r.status === 'processing') {
-                    throw new Error(
-                        `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
-                        `segundos a que termine — NO vuelvas a disparar la receta.`
+                    throw new Error(isEnPrev
+                        ? `This item is currently issuing a ${docPrevio}. Wait a few seconds for it to ` +
+                          `finish — do NOT trigger the recipe again.`
+                        : `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
+                          `segundos a que termine — NO vuelvas a disparar la receta.`
                     );
                 } else {
-                    throw new Error(
-                        `Este item tiene una ${docPrevio} con número reservado en AFIP pero sin ` +
-                        `confirmar (probable timeout del intento anterior). El cron de recuperación ` +
-                        `consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y ` +
-                        `volvé a intentar — emitir una factura ahora puede crear dos comprobantes.`
+                    throw new Error(isEnPrev
+                        ? `This item has a ${docPrevio} with a number reserved in AFIP but not confirmed ` +
+                          `(likely a timeout on the previous attempt). The recovery cron checks AFIP and ` +
+                          `resolves the real status within the next 5 minutes. Wait and retry — issuing an ` +
+                          `invoice now could create two vouchers.`
+                        : `Este item tiene una ${docPrevio} con número reservado en AFIP pero sin ` +
+                          `confirmar (probable timeout del intento anterior). El cron de recuperación ` +
+                          `consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y ` +
+                          `volvé a intentar — emitir una factura ahora puede crear dos comprobantes.`
                     );
                 }
             }
@@ -6241,7 +6259,9 @@ async function comprobanteHandler(req, res) {
                 const detalleStr = detalles
                     .map(d => `• "${d.name}": falta ${d.faltantes.join(', ')}`)
                     .join('\n');
-                throw new Error(`No hay líneas válidas en subitems para emitir la factura.\n${subitems.length === 0 ? 'El item no tiene subitems creados.' : `Subitems con problemas:\n${detalleStr}`}`);
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `No valid lines in the subitems to issue the invoice.\n${subitems.length === 0 ? 'The item has no subitems created.' : `Subitems with problems:\n${detalleStr}`}`
+                    : `No hay líneas válidas en subitems para emitir la factura.\n${subitems.length === 0 ? 'El item no tiene subitems creados.' : `Subitems con problemas:\n${detalleStr}`}`);
             }
 
             // Determinar Concepto AFIP: 1=Productos, 2=Servicios, 3=Ambos
@@ -6269,10 +6289,13 @@ async function comprobanteHandler(req, res) {
                 if (!fechaServHastaRaw) faltanFechas.push('Fecha Servicio Hasta');
                 if (!fechaVtoPagoRaw)   faltanFechas.push('Fecha Vto. Pago');
                 if (faltanFechas.length > 0) {
-                    throw new Error(
-                        `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(', ')}.\n` +
-                        `Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: ${conceptoAfip === 2 ? 'Servicios' : 'Productos y Servicios'}), ` +
-                        `AFIP exige las fechas del período facturado y el vencimiento de pago.`
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `Missing required service dates: ${faltanFechas.join(', ')}.\n` +
+                          `When the product/service type includes services (AFIP Concept: ${conceptoAfip === 2 ? 'Services' : 'Products and Services'}), ` +
+                          `AFIP requires the billing-period dates and the payment due date.`
+                        : `Fechas de servicio obligatorias faltantes: ${faltanFechas.join(', ')}.\n` +
+                          `Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: ${conceptoAfip === 2 ? 'Servicios' : 'Productos y Servicios'}), ` +
+                          `AFIP exige las fechas del período facturado y el vencimiento de pago.`
                     );
                 }
             }
@@ -6297,9 +6320,11 @@ async function comprobanteHandler(req, res) {
             const sinAlicuota = alicuotasDetalle.filter(a => !a.normalized);
             if (mapping.alicuota_iva && sinAlicuota.length > 0) {
                 const nombres = sinAlicuota.map(a => `"${a.name}"`).join(', ');
-                throw new Error(
-                    `Alícuota IVA faltante en subitems: ${nombres}.\n` +
-                    `Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Missing VAT rate in subitems: ${nombres}.\n` +
+                      `All subitems must have a VAT rate assigned (0, 2.5, 5, 10.5, 21 or 27).`
+                    : `Alícuota IVA faltante en subitems: ${nombres}.\n` +
+                      `Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).`
                 );
             }
 
@@ -6309,9 +6334,11 @@ async function comprobanteHandler(req, res) {
                 const detalle = alicuotasDetalle
                     .map(a => `• "${a.name}": ${a.normalized}%`)
                     .join('\n');
-                throw new Error(
-                    `Alícuotas IVA diferentes entre subitems.\n` +
-                    `Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas:\n${detalle}`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Different VAT rates across subitems.\n` +
+                      `All subitems must have the same VAT rate. Rates found:\n${detalle}`
+                    : `Alícuotas IVA diferentes entre subitems.\n` +
+                      `Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas:\n${detalle}`
                 );
             }
 
@@ -6319,20 +6346,26 @@ async function comprobanteHandler(req, res) {
             const alicuotaElegida = alicuotasUnicas.length === 1 ? alicuotasUnicas[0] : '21';
             const alicuotaConfig = ALICUOTA_MAP[alicuotaElegida];
             if (!alicuotaConfig) {
-                throw new Error(
-                    `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
-                    `Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Invalid VAT rate: ${alicuotaElegida}%.\n` +
+                      `Allowed rates are: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
+                    : `Alícuota IVA no válida: ${alicuotaElegida}%.\n` +
+                      `Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.`
                 );
             }
             console.log(`[emit] Alícuota IVA: ${alicuotaElegida}% (Id AFIP: ${alicuotaConfig.id}, Tasa: ${alicuotaConfig.rate})`);
 
             // Factura C no lleva IVA: si el usuario configuró una alícuota distinta de 0%, es un error de carga.
             if (tipo === 'C' && alicuotaElegida !== '0') {
-                throw new Error(
-                    `Alícuota IVA incompatible con Factura C.\n` +
-                    `Configuraste ${alicuotaElegida}% pero las Facturas C no llevan IVA ` +
-                    `(emisor ${emisorInfo.condicion}).\n` +
-                    `Cambiá la alícuota de los subítems a 0% antes de emitir.`
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `VAT rate incompatible with Invoice C.\n` +
+                      `You set ${alicuotaElegida}% but Invoice C doesn't carry VAT ` +
+                      `(issuer ${emisorInfo.condicion}).\n` +
+                      `Change the subitem rates to 0% before issuing.`
+                    : `Alícuota IVA incompatible con Factura C.\n` +
+                      `Configuraste ${alicuotaElegida}% pero las Facturas C no llevan IVA ` +
+                      `(emisor ${emisorInfo.condicion}).\n` +
+                      `Cambiá la alícuota de los subítems a 0% antes de emitir.`
                 );
             }
 
@@ -7370,6 +7403,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 ? ncMapping.precio_unitario_usd
                 : ncMapping.precio_unitario;
             const ncLines = buildLinesFromSubitems({
+                language: ncLanguage,
                 subitems: ncSubitems, mapping: ncMapping,
                 precioColumnId: ncPrecioColId, letra,
             });
@@ -8048,7 +8082,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "Open the app's view → <b>Visual Mapping</b> section → select the columns and save.",
         },
         {
-            match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0/i,
+            match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0|no valid lines/i,
             title: 'Incomplete or missing subitems',
             detail: subitemDetails.length > 0
                 ? 'The following subitems have empty or invalid fields:<br/>' +
@@ -8081,7 +8115,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "Check two things:<br/>&nbsp;&nbsp;1) In the app, open <b>Tax Details</b> and confirm your company's <b>VAT Condition</b> is set correctly (Registered, Monotributo, etc.).<br/>&nbsp;&nbsp;2) In the item, confirm the <b>recipient CUIT</b> is correct. The app automatically asks AFIP for the recipient's condition to decide whether A, B or C applies.",
         },
         {
-            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)/i,
+            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)|this item (already issued|is currently issuing|has a .*number reserved)/i,
             title: 'This item already has a voucher',
             detail: mainMsg,
             solucion: 'Each item corresponds to <b>a single voucher</b>. To issue another — or the Credit Note for this invoice — create a <b>new item</b> on the board. The Credit Note references the invoice by its CAE.',
@@ -8123,13 +8157,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "Close the app's view and reopen it. If the error persists, uninstall the app from the board and reinstall it from the monday Marketplace.",
         },
         {
-            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta/i,
+            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta|missing required service dates/i,
             title: 'Service dates required',
             detail: mainMsg,
             solucion: 'Fill in the <b>Service Date From</b> and <b>Service Date To</b> columns in the item. They are required when the subitems include services.',
         },
         {
-            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva/i,
+            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva|vat rate incompatible with invoice c/i,
             title: "C voucher doesn't carry VAT",
             detail: mainMsg,
             solucion: "C vouchers (Invoice or Credit Note) don't break out VAT because the issuer is Monotributo or Exempt. Open the item's subitems and set the <b>VAT Rate %</b> column to <b>0</b> on all of them. Then retry.",
@@ -8144,7 +8178,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'All subitems of an invoice must have the <b>same VAT rate</b>. Check the VAT Rate % column and make sure all subitems have the same value (0, 2.5, 5, 10.5, 21 or 27).',
         },
         {
-            match: /tipo de comprobante no reconocido/i,
+            match: /tipo de comprobante no reconocido|voucher type not recognized/i,
             title: 'Voucher Type not recognized',
             detail: mainMsg,
             solucion: "The item's <b>Voucher Type</b> column must say <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Fix the value and trigger the recipe again.",
