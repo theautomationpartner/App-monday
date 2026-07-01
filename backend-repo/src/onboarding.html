@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Cómo usar Factura ARCA</title>
+    <title>How to use Factura ARCA</title>
     <style>
         :root {
             --navy: #071F32;
@@ -31,6 +31,29 @@
             max-width: 920px;
             margin: 0 auto;
             padding: 24px 20px 80px;
+        }
+        .lang-switch {
+            display: flex;
+            justify-content: flex-end;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .lang-btn {
+            border: 1px solid var(--border);
+            background: #fff;
+            color: var(--text-light);
+            border-radius: 8px;
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all .15s ease;
+        }
+        .lang-btn:hover { border-color: var(--navy-500); color: var(--navy); }
+        .lang-btn.active {
+            background: var(--navy);
+            color: #fff;
+            border-color: var(--navy);
         }
         .hero {
             background: linear-gradient(135deg, var(--navy) 0%, var(--navy-500) 100%);
@@ -184,36 +207,41 @@
 </head>
 <body>
     <main class="page">
+        <div class="lang-switch">
+            <button type="button" class="lang-btn" data-lang="en" onclick="setLang('en')">English</button>
+            <button type="button" class="lang-btn" data-lang="es" onclick="setLang('es')">Español</button>
+        </div>
+
         <header class="hero">
             <div class="hero-kicker">monday app · Factura ARCA</div>
-            <h1>Cómo usar Factura ARCA</h1>
-            <p>Facturación electrónica AFIP automática desde tus tableros de monday.com. Configurá una vez y olvidate de la carga manual en la web de AFIP.</p>
+            <h1 data-i18n="heroTitle"></h1>
+            <p data-i18n="heroSub"></p>
         </header>
 
         <section class="section">
-            <h2>Antes de empezar</h2>
-            <p>Para usar Factura ARCA necesitás tener:</p>
+            <h2 data-i18n="prereqTitle"></h2>
+            <p data-i18n="prereqIntro"></p>
             <ul class="prereqs">
-                <li>Un CUIT activo de AFIP/ARCA con habilitación para facturación electrónica</li>
-                <li>Certificado digital (.crt y .key) o el alta del servicio en ARCA para generarlo desde la app</li>
-                <li>Un punto de venta habilitado para emitir comprobantes electrónicos</li>
-                <li>Una cuenta de monday.com con permisos para instalar apps en tu workspace</li>
+                <li data-i18n="prereq1"></li>
+                <li data-i18n="prereq2"></li>
+                <li data-i18n="prereq3"></li>
+                <li data-i18n="prereq4"></li>
             </ul>
         </section>
 
         <section class="section">
-            <h2>Configurá la app en 3 pasos</h2>
+            <h2 data-i18n="setupTitle"></h2>
 
             <div class="step">
                 <div class="step-header">
                     <div class="step-num">1</div>
                     <div>
-                        <div class="step-title">Cargá tus datos fiscales</div>
-                        <div class="step-desc">Después de instalar la app en tu workspace, abrila desde el botón "Factura ARCA" del board y cargá los datos de tu empresa: CUIT, razón social, domicilio fiscal y punto de venta. Es la información que va a aparecer en cada comprobante que emitas.</div>
+                        <div class="step-title" data-i18n="step1Title"></div>
+                        <div class="step-desc" data-i18n="step1Desc"></div>
                     </div>
                 </div>
                 <div class="step-img-wrap">
-                    <img class="step-img" src="/onboarding/step-1-datos.png" alt="Pantalla de Datos Fiscales con CUIT, razón social y punto de venta cargados" />
+                    <img class="step-img" data-img="step1" alt="" />
                 </div>
             </div>
 
@@ -221,12 +249,12 @@
                 <div class="step-header">
                     <div class="step-num">2</div>
                     <div>
-                        <div class="step-title">Conectá tus certificados de ARCA</div>
-                        <div class="step-desc">Subí tus certificados digitales (.crt y .key) o usá el flujo guiado de la app para generarlos sin salir de monday. Los guardamos cifrados con AES-256 y solo se usan para firmar requests al servicio de facturación electrónica de AFIP.</div>
+                        <div class="step-title" data-i18n="step2Title"></div>
+                        <div class="step-desc" data-i18n="step2Desc"></div>
                     </div>
                 </div>
                 <div class="step-img-wrap">
-                    <img class="step-img" src="/onboarding/step-2-certificados.png" alt="Pantalla de Certificados ARCA con certificado activo y fecha de vencimiento" />
+                    <img class="step-img" data-img="step2" alt="" />
                 </div>
             </div>
 
@@ -234,38 +262,143 @@
                 <div class="step-header">
                     <div class="step-num">3</div>
                     <div>
-                        <div class="step-title">Mapeá las columnas del board</div>
-                        <div class="step-desc">Asociá cada columna del board (Cliente, Monto, Fecha, Concepto) con los campos de la factura. La app detecta automáticamente los tipos comunes y propone un mapeo por defecto. Vos confirmás o ajustás.</div>
+                        <div class="step-title" data-i18n="step3Title"></div>
+                        <div class="step-desc" data-i18n="step3Desc"></div>
                     </div>
                 </div>
                 <div class="step-img-wrap">
-                    <img class="step-img" src="/onboarding/step-3-mapeo.png" alt="Pantalla de Mapeo Visual mostrando columnas asignadas a campos de la factura modelo" />
+                    <img class="step-img" data-img="step3" alt="" />
                 </div>
             </div>
         </section>
 
         <section class="section">
-            <h2>Cómo emitir una factura</h2>
-            <p>Una vez configurada la app, emitir una factura es así:</p>
+            <h2 data-i18n="emitTitle"></h2>
+            <p data-i18n="emitIntro"></p>
             <ol style="padding-left: 20px; color: var(--text-light); line-height: 1.9;">
-                <li>Crear un item nuevo en el tablero con los datos del cliente (CUIT, monto, etc.)</li>
-                <li>Llenar los subitems con cada concepto a facturar (descripción, cantidad, precio, IVA)</li>
-                <li>Cambiar la columna "Estado Comprobante" a <strong>"Crear Comprobante"</strong></li>
-                <li>La automatización dispara la emisión: validación contra padrón AFIP → obtención de CAE → generación de PDF → adjuntado al item</li>
+                <li data-i18n="emit1"></li>
+                <li data-i18n="emit2"></li>
+                <li data-i18n="emit3"></li>
+                <li data-i18n="emit4"></li>
             </ol>
-            <p style="margin-top: 16px;">Tiempo total por factura: <strong>5-10 segundos</strong>.</p>
+            <p style="margin-top: 16px;" data-i18n="emitTime"></p>
         </section>
 
         <section class="section">
-            <h2>Soporte y privacidad</h2>
-            <p>¿Tenés dudas o algo no funciona como esperás?</p>
-            <p>Escribinos a <a href="mailto:arca@theautomationpartner.com">arca@theautomationpartner.com</a>. Respondemos en menos de 2 días hábiles.</p>
-            <p style="margin-top: 16px;">Tus certificados y datos fiscales se almacenan cifrados con AES-256, las comunicaciones con ARCA usan los webservices oficiales de AFIP (WSAA + WSFEv1), y cuando desinstales la app todos tus datos operativos se eliminan automáticamente en menos de 10 días.</p>
+            <h2 data-i18n="supportTitle"></h2>
+            <p data-i18n="supportIntro"></p>
+            <p data-i18n="supportContact"></p>
+            <p style="margin-top: 16px;" data-i18n="supportPrivacy"></p>
         </section>
 
-        <div class="footer-note">
-            Factura ARCA — desarrollado por <a href="https://theautomationpartner.com" target="_blank" rel="noopener">The Automation Partner</a>
-        </div>
+        <div class="footer-note" data-i18n="footer"></div>
     </main>
+
+    <script>
+        var TR = {
+            es: {
+                docTitle: "Cómo usar Factura ARCA",
+                heroTitle: "Cómo usar Factura ARCA",
+                heroSub: "Facturación electrónica AFIP automática desde tus tableros de monday.com. Configurá una vez y olvidate de la carga manual en la web de AFIP.",
+                prereqTitle: "Antes de empezar",
+                prereqIntro: "Para usar Factura ARCA necesitás tener:",
+                prereq1: "Un CUIT activo de AFIP/ARCA con habilitación para facturación electrónica",
+                prereq2: "Certificado digital (.crt y .key) o el alta del servicio en ARCA para generarlo desde la app",
+                prereq3: "Un punto de venta habilitado para emitir comprobantes electrónicos",
+                prereq4: "Una cuenta de monday.com con permisos para instalar apps en tu workspace",
+                setupTitle: "Configurá la app en 3 pasos",
+                step1Title: "Cargá tus datos fiscales",
+                step1Desc: "Después de instalar la app en tu workspace, abrila desde el botón \"Factura ARCA\" del board y cargá los datos de tu empresa: CUIT, razón social, domicilio fiscal y punto de venta. Es la información que va a aparecer en cada comprobante que emitas.",
+                step1Alt: "Pantalla de Datos Fiscales con CUIT, razón social y punto de venta cargados",
+                step2Title: "Conectá tus certificados de ARCA",
+                step2Desc: "Subí tus certificados digitales (.crt y .key) o usá el flujo guiado de la app para generarlos sin salir de monday. Los guardamos cifrados con AES-256 y solo se usan para firmar requests al servicio de facturación electrónica de AFIP.",
+                step2Alt: "Pantalla de Certificados ARCA con certificado activo y fecha de vencimiento",
+                step3Title: "Mapeá las columnas del board",
+                step3Desc: "Asociá cada columna del board (Cliente, Monto, Fecha, Concepto) con los campos de la factura. La app detecta automáticamente los tipos comunes y propone un mapeo por defecto. Vos confirmás o ajustás.",
+                step3Alt: "Pantalla de Mapeo Visual mostrando columnas asignadas a campos de la factura modelo",
+                emitTitle: "Cómo emitir una factura",
+                emitIntro: "Una vez configurada la app, emitir una factura es así:",
+                emit1: "Crear un item nuevo en el tablero con los datos del cliente (CUIT, monto, etc.)",
+                emit2: "Llenar los subitems con cada concepto a facturar (descripción, cantidad, precio, IVA)",
+                emit3: "Cambiar la columna \"Estado Comprobante\" a <strong>\"Crear Comprobante\"</strong>",
+                emit4: "La automatización dispara la emisión: validación contra padrón AFIP → obtención de CAE → generación de PDF → adjuntado al item",
+                emitTime: "Tiempo total por factura: <strong>5-10 segundos</strong>.",
+                supportTitle: "Soporte y privacidad",
+                supportIntro: "¿Tenés dudas o algo no funciona como esperás?",
+                supportContact: "Escribinos a <a href=\"mailto:arca@theautomationpartner.com\">arca@theautomationpartner.com</a>. Respondemos en menos de 2 días hábiles.",
+                supportPrivacy: "Tus certificados y datos fiscales se almacenan cifrados con AES-256, las comunicaciones con ARCA usan los webservices oficiales de AFIP (WSAA + WSFEv1), y cuando desinstales la app todos tus datos operativos se eliminan automáticamente en menos de 10 días.",
+                footer: "Factura ARCA — desarrollado por <a href=\"https://theautomationpartner.com\" target=\"_blank\" rel=\"noopener\">The Automation Partner</a>"
+            },
+            en: {
+                docTitle: "How to use Factura ARCA",
+                heroTitle: "How to use Factura ARCA",
+                heroSub: "Automatic AFIP electronic invoicing straight from your monday.com boards. Set it up once and forget about manual loading on the AFIP website.",
+                prereqTitle: "Before you start",
+                prereqIntro: "To use Factura ARCA you need:",
+                prereq1: "An active AFIP/ARCA tax ID (CUIT) enabled for electronic invoicing",
+                prereq2: "A digital certificate (.crt and .key), or the ARCA service registration to generate it from the app",
+                prereq3: "A point of sale enabled to issue electronic vouchers",
+                prereq4: "A monday.com account with permission to install apps in your workspace",
+                setupTitle: "Set up the app in 3 steps",
+                step1Title: "Enter your tax details",
+                step1Desc: "After installing the app in your workspace, open it from the \"Factura ARCA\" button on your board and enter your company data: tax ID (CUIT), legal name, fiscal address and point of sale. This is the information that appears on every voucher you issue.",
+                step1Alt: "Tax Details screen with CUIT, legal name and point of sale entered",
+                step2Title: "Connect your ARCA certificates",
+                step2Desc: "Upload your digital certificates (.crt and .key) or use the app's guided flow to generate them without leaving monday. We store them encrypted with AES-256 and only use them to sign requests to AFIP's electronic invoicing service.",
+                step2Alt: "ARCA Certificates screen with an active certificate and expiration date",
+                step3Title: "Map your board columns",
+                step3Desc: "Link each board column (Client, Amount, Date, Item) to the invoice fields. The app automatically detects common types and proposes a default mapping. You confirm or adjust it.",
+                step3Alt: "Visual Mapping screen showing columns assigned to the sample invoice fields",
+                emitTitle: "How to issue an invoice",
+                emitIntro: "Once the app is set up, issuing an invoice works like this:",
+                emit1: "Create a new item on the board with the client data (tax ID, amount, etc.)",
+                emit2: "Fill the subitems with each line to invoice (description, quantity, price, VAT)",
+                emit3: "Change the \"Voucher Status\" column to <strong>\"Create Voucher\"</strong>",
+                emit4: "The automation triggers the emission: validation against the AFIP registry → CAE retrieval → PDF generation → attached to the item",
+                emitTime: "Total time per invoice: <strong>5-10 seconds</strong>.",
+                supportTitle: "Support and privacy",
+                supportIntro: "Have a question or something isn't working as expected?",
+                supportContact: "Email us at <a href=\"mailto:arca@theautomationpartner.com\">arca@theautomationpartner.com</a>. We reply within 2 business days.",
+                supportPrivacy: "Your certificates and tax data are stored encrypted with AES-256, communication with ARCA uses AFIP's official web services (WSAA + WSFEv1), and when you uninstall the app all your operational data is automatically deleted within 10 days.",
+                footer: "Factura ARCA — developed by <a href=\"https://theautomationpartner.com\" target=\"_blank\" rel=\"noopener\">The Automation Partner</a>"
+            }
+        };
+
+        var IMG = {
+            es: { step1: "/onboarding/step-1-datos.png", step2: "/onboarding/step-2-certificados.png", step3: "/onboarding/step-3-mapeo.png" },
+            en: { step1: "/onboarding/step-1-datos-en.png", step2: "/onboarding/step-2-certificados-en.png", step3: "/onboarding/step-3-mapeo-en.png" }
+        };
+
+        function setLang(lang) {
+            if (lang !== 'en' && lang !== 'es') lang = 'es';
+            var dict = TR[lang];
+            document.documentElement.lang = lang;
+            document.title = dict.docTitle;
+            document.querySelectorAll('[data-i18n]').forEach(function (el) {
+                el.innerHTML = dict[el.getAttribute('data-i18n')] || '';
+            });
+            document.querySelectorAll('[data-img]').forEach(function (el) {
+                var key = el.getAttribute('data-img');
+                el.src = IMG[lang][key];
+                el.alt = dict[key + 'Alt'] || '';
+            });
+            document.querySelectorAll('.lang-btn').forEach(function (b) {
+                b.classList.toggle('active', b.getAttribute('data-lang') === lang);
+            });
+            try { localStorage.setItem('arca_onboarding_lang', lang); } catch (e) {}
+        }
+
+        (function () {
+            var params = new URLSearchParams(window.location.search);
+            var lang = params.get('lang');
+            if (lang !== 'en' && lang !== 'es') {
+                try { lang = localStorage.getItem('arca_onboarding_lang'); } catch (e) {}
+            }
+            if (lang !== 'en' && lang !== 'es') {
+                lang = (navigator.language || 'es').toLowerCase().indexOf('es') === 0 ? 'es' : 'en';
+            }
+            setLang(lang);
+        })();
+    </script>
 </body>
 </html>
