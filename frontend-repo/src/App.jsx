@@ -2781,6 +2781,7 @@ const App = () => {
                       )}
                     </div>
 
+                    <div className="gd-arca-blocktitle" dangerouslySetInnerHTML={{ __html: t("cert.s3.b2Title") }} />
                     <ol className="gd-arca-steps">
                       <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li1") }} />
                       <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li2") }} />
@@ -2804,6 +2805,17 @@ const App = () => {
                       <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li4") }} />
                       <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li5") }} />
                     </ol>
+
+                    {/* Bloque ③ — Autorizar el certificado para facturar (el paso que faltaba
+                        y causaba el error "Computador no autorizado"). */}
+                    <div className="gd-arca-blocktitle" dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Title") }} />
+                    <div className="gd-arca-warn" dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Warn") }} />
+                    <ol className="gd-arca-steps">
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Li1") }} />
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Li2") }} />
+                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Li3") }} />
+                    </ol>
+                    <p className="gd-arca-note" dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Note") }} />
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(2)} disabled={isLoading}>

@@ -4307,6 +4307,32 @@ body {
 .gd-frame .gd-arca-steps a { color: var(--accent); }
 .gd-frame .gd-arca-steps a:hover { text-decoration: underline; }
 
+/* Títulos de bloque ①②③ del paso AFIP */
+.gd-frame .gd-arca-blocktitle {
+  margin: 18px 0 2px;
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--ink-900);
+}
+/* Caja de advertencia del bloque ③ (autorizar el cert para facturar) */
+.gd-frame .gd-arca-warn {
+  margin: 8px 0 2px;
+  padding: 9px 12px;
+  background: #fff7ed;
+  border: 1px solid #fdba74;
+  border-left: 3px solid #f97316;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #9a3412;
+}
+.gd-frame .gd-arca-warn strong { color: #7c2d12; }
+.gd-frame .gd-arca-note {
+  margin: 10px 0 0;
+  font-size: 13px;
+  color: var(--ink-500);
+}
+
 /* Alias-copy pill inline dentro de las instrucciones */
 .gd-frame .gd-alias-copy {
   display: inline-flex;
