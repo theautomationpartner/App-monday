@@ -453,15 +453,31 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
                      nameX, bannerCenterY - nameFontSize / 2,
                      { width: nameMaxW, align: hasLogo ? 'left' : 'center', lineBreak: false });
 
-            // Letra A/B/C (pegada al borde superior del header, como AFIP clásico)
+            // Letra A/B/C (pegada al borde superior del header, como AFIP clásico).
+            // Si hay leyenda RG 1575, el recuadro se agranda hacia abajo y la
+            // leyenda va ADENTRO (bajo "COD."), compartiendo el borde — como AFIP.
             const BOX_SIZE = 42;
-            const boxX = centerX + (centerW - BOX_SIZE) / 2;
+            const hasHeaderLegend = Boolean(headerLegendText);
+            const boxW = hasHeaderLegend ? 64 : BOX_SIZE;
+            let legInnerH = 0;
+            if (hasHeaderLegend) {
+                doc.font('Helvetica-Bold').fontSize(5);
+                legInnerH = doc.heightOfString(headerLegendText, { width: boxW - 4, align: 'center' }) + 6;
+            }
+            const boxTotalH = BOX_SIZE + legInnerH;
+            const boxX = (centerX + centerW / 2) - boxW / 2;
             const boxY = y;
-            doc.rect(boxX, boxY, BOX_SIZE, BOX_SIZE).stroke('#000');
+            doc.rect(boxX, boxY, boxW, boxTotalH).stroke('#000');
             doc.fontSize(26).font('Helvetica-Bold')
-               .text(tipoLetra, boxX, boxY + 6, { width: BOX_SIZE, align: 'center' });
+               .text(tipoLetra, boxX, boxY + 6, { width: boxW, align: 'center' });
             doc.fontSize(6).font('Helvetica-Bold')
-               .text(`COD. ${tipoCod}`, boxX, boxY + 34, { width: BOX_SIZE, align: 'center' });
+               .text(`COD. ${tipoCod}`, boxX, boxY + 34, { width: boxW, align: 'center' });
+            if (hasHeaderLegend) {
+                doc.moveTo(boxX, boxY + BOX_SIZE).lineTo(boxX + boxW, boxY + BOX_SIZE).stroke('#000');
+                doc.fillColor('#000').font('Helvetica-Bold').fontSize(5)
+                   .text(headerLegendText, boxX + 2, boxY + BOX_SIZE + 3,
+                         { width: boxW - 4, align: 'center' });
+            }
 
             // FACTURA (centrado horizontalmente en su columna, vertical con nombre/logo)
             const rx = centerX + centerW;
@@ -474,22 +490,9 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
                .text(tituloComprobante, rx, bannerCenterY - facturaFontSize / 2,
                      { width: rightColW, align: 'center', lineBreak: false });
 
-            // Línea vertical desde bottom del cuadro de la letra hasta bottom del header
-            doc.moveTo(centerX + centerW / 2, boxY + BOX_SIZE)
+            // Línea vertical desde bottom del recuadro (con leyenda incluida) al bottom del header
+            doc.moveTo(centerX + centerW / 2, boxY + boxTotalH)
                .lineTo(centerX + centerW / 2, y + headerH).stroke('#000');
-
-            // DEMO/preview (RG 1575): recuadro de leyenda bajo la letra, estilo AFIP
-            // ("PAGO EN C.B.U. INFORMADA" / "OPERACIÓN SUJETA A RETENCIÓN"). Solo si
-            // demoLeyendas.headerLegend está seteado; en producción no se dibuja nada.
-            if (headerLegendText) {
-                const legW = 106;
-                const legX = centerX + centerW / 2 - legW / 2;
-                const legY = boxY + BOX_SIZE + 2;
-                doc.rect(legX, legY, legW, 22).stroke('#000');
-                doc.fillColor('#000').font('Helvetica-Bold').fontSize(6.5)
-                   .text(headerLegendText, legX + 2, legY + 4,
-                         { width: legW - 4, align: 'center' });
-            }
 
             // ── SECCIÓN DE DATOS (debajo del banner) ──────────────
             // Emisor (izquierda, full-width en su columna) y comprobante (derecha,
