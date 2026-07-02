@@ -13,6 +13,7 @@
 const PDFDocument = require('pdfkit');
 const QRCode = require('qrcode');
 const invoiceRules = require('./invoiceRules');
+const config = require('../config');
 
 // Códigos AFIP de comprobante (siempre 2 dígitos en el cabezal según ARCA).
 const TIPO_COD = { A: '01', B: '06', C: '11' };
@@ -359,10 +360,18 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
             const headerLegendText = demoLeyendas?.headerLegend
                 || FACTURA_A_LEGENDS[facturaAModalidad]
                 || null;
-            // bodyLegends: reservado para el demo (ej. monotributista RG 5003). La
-            // leyenda RG 1575 va solo en el header (no imprimimos CBU en el PDF —
-            // la CBU se declara en AFIP aparte).
-            const bodyLegendsToDraw = demoLeyendas?.bodyLegends || null;
+            // Leyendas de cuerpo. RG 5003: una Factura A a un Monotributista lleva 2
+            // leyendas obligatorias. Es automático — la letra A implica emisor RI, y
+            // receptorCondicion viene del padrón de AFIP. Son textos legales → van en
+            // español siempre (no se traducen). demoLeyendas tiene prioridad (preview).
+            const MONOTRIBUTO_LEGENDS = [
+                'Receptor del comprobante - Responsable Monotributo',
+                'El crédito fiscal discriminado en el presente comprobante, sólo podrá ser computado a efectos del Régimen de Sostenimiento e Inclusión Fiscal para Pequeños Contribuyentes de la Ley N° 27.618.',
+            ];
+            const esFacturaAMonotributo = isFacturaA
+                && draft.receptorCondicion === config.IVA_CONDITION.MONOTRIBUTO;
+            const bodyLegendsToDraw = demoLeyendas?.bodyLegends
+                || (esFacturaAMonotributo ? MONOTRIBUTO_LEGENDS : null);
 
             const pv = padNum(draft.punto_venta, 5);
             const nroComp = padNum(afipResult?.numero_comprobante, 8);
