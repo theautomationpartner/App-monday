@@ -283,7 +283,10 @@ async function fetchQrImage({ company, draft, afipResult }) {
     return null;
 }
 
-async function generateFacturaPdfBuffer({ company, draft, afipResult, language /*, itemId */ }) {
+// `demoLeyendas` (opcional, SOLO preview): { headerLegend?: string, bodyLegends?: string[] }.
+// En produccion viene undefined → el PDF es byte-identico. Lo usa scripts/demo-leyendas-pdf.js
+// para previsualizar dónde irían las leyendas propuestas (RG 1575 / RG 5003) sin implementarlas.
+async function generateFacturaPdfBuffer({ company, draft, afipResult, language, demoLeyendas /*, itemId */ }) {
     const L = pdfLabelsFor(language); // etiquetas del PDF por idioma (default 'es')
     const tQrStart = Date.now();
     const qrImageBuffer = await fetchQrImage({ company, draft, afipResult });
@@ -344,6 +347,22 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language /
             const monSym      = currencySymbol(moneda);
             const isMonExt    = moneda !== 'PES';
             const isFacturaB = tipoLetra === 'B';
+
+            // Leyenda RG 1575 en Factura A (modalidad declarada en Datos Fiscales).
+            // Solo aplica a la letra A. `demoLeyendas` (preview) tiene prioridad para
+            // el script de muestra; en producción sale de company.factura_a_leyenda.
+            const FACTURA_A_LEGENDS = {
+                cbu_informada:   'PAGO EN C.B.U. INFORMADA',
+                sujeta_retencion: 'OPERACIÓN SUJETA A RETENCIÓN',
+            };
+            const facturaAModalidad = isFacturaA ? (company?.factura_a_leyenda || null) : null;
+            const headerLegendText = demoLeyendas?.headerLegend
+                || FACTURA_A_LEGENDS[facturaAModalidad]
+                || null;
+            const bodyLegendsToDraw = demoLeyendas?.bodyLegends
+                || ((facturaAModalidad === 'cbu_informada' && company?.factura_a_cbu)
+                    ? [`CBU informada para el pago: ${company.factura_a_cbu}`]
+                    : null);
 
             const pv = padNum(draft.punto_venta, 5);
             const nroComp = padNum(afipResult?.numero_comprobante, 8);
@@ -458,6 +477,19 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language /
             // Línea vertical desde bottom del cuadro de la letra hasta bottom del header
             doc.moveTo(centerX + centerW / 2, boxY + BOX_SIZE)
                .lineTo(centerX + centerW / 2, y + headerH).stroke('#000');
+
+            // DEMO/preview (RG 1575): recuadro de leyenda bajo la letra, estilo AFIP
+            // ("PAGO EN C.B.U. INFORMADA" / "OPERACIÓN SUJETA A RETENCIÓN"). Solo si
+            // demoLeyendas.headerLegend está seteado; en producción no se dibuja nada.
+            if (headerLegendText) {
+                const legW = 106;
+                const legX = centerX + centerW / 2 - legW / 2;
+                const legY = boxY + BOX_SIZE + 2;
+                doc.rect(legX, legY, legW, 22).stroke('#000');
+                doc.fillColor('#000').font('Helvetica-Bold').fontSize(6.5)
+                   .text(headerLegendText, legX + 2, legY + 4,
+                         { width: legW - 4, align: 'center' });
+            }
 
             // ── SECCIÓN DE DATOS (debajo del banner) ──────────────
             // Emisor (izquierda, full-width en su columna) y comprobante (derecha,
@@ -763,6 +795,24 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language /
                 doc.moveTo(colLeft, y).lineTo(colLeft, totalsY).stroke('#000');
                 doc.moveTo(colRight, y).lineTo(colRight, totalsY).stroke('#000');
                 y = totalsY;
+            }
+
+            // DEMO/preview (ej. RG 5003 factura a monotributista): leyendas de cuerpo
+            // en la banda libre justo arriba del bloque de totales. Solo si
+            // demoLeyendas.bodyLegends tiene contenido; en producción no dibuja nada.
+            if (bodyLegendsToDraw?.length) {
+                doc.font('Helvetica-BoldOblique').fontSize(7);
+                const heights = bodyLegendsToDraw.map(
+                    (t) => Math.max(11, doc.heightOfString(t, { width: W - 20 }) + 4));
+                const blockH = heights.reduce((a, b) => a + b, 0) + 4;
+                let dly = totalsY - blockH;
+                doc.moveTo(colLeft, dly - 3).lineTo(colRight, dly - 3).stroke('#000');
+                doc.fillColor('#000');
+                bodyLegendsToDraw.forEach((txt, i) => {
+                    doc.font('Helvetica-BoldOblique').fontSize(7)
+                       .text(txt, colLeft + 8, dly + 1, { width: W - 20 });
+                    dly += heights[i];
+                });
             }
 
             // ── TOTALES ──────────────────────────────────────────

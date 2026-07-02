@@ -948,6 +948,77 @@ body {
   color: #b0b0b0;
 }
 
+/* ─── Factura A con leyenda (RG 1575) ─── */
+.fa-leyenda {
+  border-top: 1px solid #e6e9ef;
+  padding-top: 16px;
+  margin-top: 4px;
+}
+.fa-leyenda-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.fa-leyenda-check input[type="checkbox"] {
+  margin-top: 3px;
+  width: 16px;
+  height: 16px;
+  accent-color: #0073ea;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.fa-leyenda-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.fa-leyenda-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #323338;
+}
+.fa-leyenda-sub {
+  font-size: 12px;
+  color: #676879;
+  line-height: 1.4;
+}
+.fa-leyenda-detail {
+  margin: 12px 0 0 26px;
+  padding: 14px 16px;
+  background: #f7f9fc;
+  border: 1px solid #e6e9ef;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fa-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #323338;
+  cursor: pointer;
+}
+.fa-radio input[type="radio"] {
+  margin-top: 2px;
+  accent-color: #0073ea;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+.fa-cbu {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.fa-cbu .form-input {
+  font-family: monospace;
+  letter-spacing: 1px;
+  max-width: 340px;
+}
+
 /* ─── Radio Cards (IVA) ─── */
 .radio-group {
   display: flex;

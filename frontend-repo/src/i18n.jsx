@@ -46,6 +46,15 @@ export const translations = {
     "fiscal.fechaInicio": "Fecha de Inicio de Actividades",
     "fiscal.domicilio": "Domicilio Comercial",
     "fiscal.domicilioPh": "Av. Corrientes 1234, CABA",
+    // ── Factura A con leyenda (RG 1575) ──
+    "fiscal.leyendaCheck": "Mis Facturas A llevan una leyenda especial de AFIP",
+    "fiscal.leyendaWho":
+      "Solo si AFIP te lo exige (Responsables Inscriptos nuevos). La ves debajo de la «A» en una Factura A que ya emitiste.",
+    "fiscal.leyendaCbu": "«PAGO EN C.B.U. INFORMADA» — se imprime en tu factura y te pedimos tu CBU",
+    "fiscal.leyendaRetencion": "«OPERACIÓN SUJETA A RETENCIÓN» — se imprime en tu factura",
+    "fiscal.cbuLabel": "CBU (donde AFIP exige que te depositen)",
+    "fiscal.cbuHint": "22 dígitos.",
+    "fiscal.leyendaViewLabel": "Leyenda Factura A",
     "fiscal.contactTitle": "Datos de contacto y marca",
     "fiscal.contactSub":
       "Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.",
@@ -518,6 +527,15 @@ export const translations = {
     "fiscal.fechaInicio": "Business Start Date",
     "fiscal.domicilio": "Business Address",
     "fiscal.domicilioPh": "e.g. 123 Main St, City",
+    // ── Factura A special legend (RG 1575) ──
+    "fiscal.leyendaCheck": "My Factura A includes a special AFIP legend",
+    "fiscal.leyendaWho":
+      "Only if AFIP requires it (newly-registered VAT taxpayers). You'll see it under the «A» on a Factura A you've already issued.",
+    "fiscal.leyendaCbu": "«PAGO EN C.B.U. INFORMADA» — printed on your invoice; we'll ask for your CBU",
+    "fiscal.leyendaRetencion": "«OPERACIÓN SUJETA A RETENCIÓN» — printed on your invoice",
+    "fiscal.cbuLabel": "CBU (bank account AFIP requires payment into)",
+    "fiscal.cbuHint": "22 digits.",
+    "fiscal.leyendaViewLabel": "Factura A legend",
     "fiscal.contactTitle": "Contact & branding",
     "fiscal.contactSub":
       "These details are optional. We'll use them later to personalize your invoice PDF with your company information.",

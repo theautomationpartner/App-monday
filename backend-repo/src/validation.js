@@ -36,6 +36,9 @@ const CompanySchema = z.object({
     phone: z.string().max(50).optional().nullable(),
     email: z.string().max(255).optional().nullable(),
     website: z.string().max(500).optional().nullable(),
+    // Modalidad de Factura A con leyenda (RG 1575). Default sin leyenda.
+    factura_a_leyenda: z.enum(['none', 'cbu_informada', 'sujeta_retencion']).optional().nullable(),
+    factura_a_cbu: z.string().max(34).optional().nullable(),
 });
 
 // Configuracion de board para automatizaciones (POST /api/board-config)

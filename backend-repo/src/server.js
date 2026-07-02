@@ -590,7 +590,8 @@ async function getCompanyForBoard(mondayAccountId, boardId) {
                 c.trade_name, c.cuit, c.default_point_of_sale, c.address,
                 c.start_date, c.phone, c.email, c.website, c.logo_base64,
                 c.logo_mime_type, c.padron_condicion, c.padron_nombre,
-                c.padron_tipo_persona, c.padron_domicilio, c.padron_fetched_at
+                c.padron_tipo_persona, c.padron_domicilio, c.padron_fetched_at,
+                c.factura_a_leyenda, c.factura_a_cbu
          FROM companies c
          JOIN board_automation_configs bac ON bac.company_id = c.id
          WHERE c.monday_account_id::text = $1
@@ -613,7 +614,8 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
     const baseSelect = `
         SELECT id, monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date,
                phone, email, website, logo_base64, logo_mime_type,
-               padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio, padron_fetched_at
+               padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio, padron_fetched_at,
+               factura_a_leyenda, factura_a_cbu
         FROM companies`;
     if (workspaceId) {
         // Match exacto al workspace solicitado.
@@ -2610,7 +2612,9 @@ async function ensureCompaniesExtraColumns() {
             ADD COLUMN IF NOT EXISTS padron_tipo_persona VARCHAR(20),
             ADD COLUMN IF NOT EXISTS padron_domicilio VARCHAR(500),
             ADD COLUMN IF NOT EXISTS padron_fetched_at TIMESTAMP,
-            ADD COLUMN IF NOT EXISTS workspace_id TEXT
+            ADD COLUMN IF NOT EXISTS workspace_id TEXT,
+            ADD COLUMN IF NOT EXISTS factura_a_leyenda VARCHAR(30),
+            ADD COLUMN IF NOT EXISTS factura_a_cbu VARCHAR(34)
     `);
     // Índice de búsqueda y UNIQUE compuesto para soportar varias empresas
     // por cuenta de monday (una por workspace). El COALESCE permite que la
@@ -4062,7 +4066,9 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                 logo_data_url: (company.logo_base64 && company.logo_mime_type)
                     ? `data:${company.logo_mime_type};base64,${company.logo_base64}`
                     : null,
-                has_logo: Boolean(company.logo_base64)
+                has_logo: Boolean(company.logo_base64),
+                factura_a_leyenda: company.factura_a_leyenda || 'none',
+                factura_a_cbu: company.factura_a_cbu || '',
             },
             certificates: certRow
                 ? {
@@ -4624,7 +4630,7 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
 app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), async (req, res) => {
     const {
         monday_account_id, workspace_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
-        phone, email, website
+        phone, email, website, factura_a_leyenda, factura_a_cbu
     } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
     // workspace_id es opcional. Si no llega, la empresa queda como "legacy"
@@ -4651,6 +4657,14 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
 
     if (emailNorm.error)   return res.status(400).json({ error: emailNorm.error,   code: 'INVALID_EMAIL' });
     if (websiteNorm.error) return res.status(400).json({ error: websiteNorm.error, code: 'INVALID_WEBSITE' });
+
+    // Modalidad de Factura A con leyenda (RG 1575). 'none'/vacío → NULL = sin
+    // leyenda = comportamiento de siempre. La CBU (solo dígitos, 22) se guarda
+    // únicamente para la modalidad "cbu_informada"; en el resto queda NULL.
+    const leyendaA = (factura_a_leyenda && factura_a_leyenda !== 'none') ? factura_a_leyenda : null;
+    const cbuA = leyendaA === 'cbu_informada'
+        ? (String(factura_a_cbu || '').replace(/\D/g, '').slice(0, 22) || null)
+        : null;
 
     try {
         await ensureCompaniesExtraColumns();
@@ -4684,8 +4698,8 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
         // companies_account_workspace_unique soporta el ON CONFLICT con la
         // expresión COALESCE para que NULL se trate de forma determinística.
         const query = `
-            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website, factura_a_leyenda, factura_a_cbu)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
             ON CONFLICT (monday_account_id, COALESCE(workspace_id, '__legacy__'))
             DO UPDATE SET
                 business_name = EXCLUDED.business_name,
@@ -4697,12 +4711,14 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
                 phone = EXCLUDED.phone,
                 email = EXCLUDED.email,
                 website = EXCLUDED.website,
+                factura_a_leyenda = EXCLUDED.factura_a_leyenda,
+                factura_a_cbu = EXCLUDED.factura_a_cbu,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
         `;
         const result = await db.query(query, [
             accountId, workspaceId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
-            phoneNorm.value, emailNorm.value, websiteNorm.value
+            phoneNorm.value, emailNorm.value, websiteNorm.value, leyendaA, cbuA
         ]);
         // Datos fiscales cambiaron → invalidar cache del padrón en DB.
         if (result.rows[0]?.id) await invalidateEmisorPadronDb(result.rows[0].id);
@@ -10034,7 +10050,8 @@ async function reconcileSingleEmission(row) {
         `SELECT id, monday_account_id, workspace_id, business_name, trade_name,
                 cuit, default_point_of_sale, address, phone, email, website,
                 logo_base64, logo_mime_type,
-                padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio
+                padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio,
+                factura_a_leyenda, factura_a_cbu
          FROM companies WHERE id=$1 LIMIT 1`,
         [row.company_id]
     );

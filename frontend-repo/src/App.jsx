@@ -402,6 +402,9 @@ const App = () => {
     telefono: "",
     email: "",
     sitioWeb: "",
+    // Modalidad de Factura A con leyenda (RG 1575). 'none' por defecto = sin leyenda.
+    facturaALeyenda: "none",   // 'none' | 'cbu_informada' | 'sujeta_retencion'
+    facturaACbu: "",
   });
   const [hasSavedFiscalData, setHasSavedFiscalData] = useState(false);
 
@@ -877,6 +880,8 @@ const App = () => {
             telefono: data.fiscalData.phone || "",
             email: data.fiscalData.email || "",
             sitioWeb: data.fiscalData.website || "",
+            facturaALeyenda: data.fiscalData.factura_a_leyenda || "none",
+            facturaACbu: data.fiscalData.factura_a_cbu || "",
           };
           setFiscal(hydratedFiscal);
           setSavedFiscalSnapshot(hydratedFiscal);
@@ -1285,6 +1290,8 @@ const App = () => {
         phone: fiscal.telefono,
         email: fiscal.email,
         website: fiscal.sitioWeb,
+        factura_a_leyenda: fiscal.facturaALeyenda || "none",
+        factura_a_cbu: fiscal.facturaALeyenda === "cbu_informada" ? fiscal.facturaACbu : "",
       };
 
       await api.post(`/companies`, payload);
@@ -2077,6 +2084,19 @@ const App = () => {
                       <span className="data-label">{t("fiscal.domicilio")}</span>
                       <span className={`data-value ${!fiscal.domicilio ? "empty" : ""}`}>{fiscal.domicilio || "—"}</span>
                     </div>
+                    {fiscal.facturaALeyenda && fiscal.facturaALeyenda !== "none" && (
+                      <div className="data-row full-width">
+                        <span className="data-label">{t("fiscal.leyendaViewLabel")}</span>
+                        <span className="data-value">
+                          {fiscal.facturaALeyenda === "cbu_informada"
+                            ? "PAGO EN C.B.U. INFORMADA"
+                            : "OPERACIÓN SUJETA A RETENCIÓN"}
+                          {fiscal.facturaALeyenda === "cbu_informada" && fiscal.facturaACbu
+                            ? ` · CBU ${fiscal.facturaACbu}`
+                            : ""}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2189,6 +2209,63 @@ const App = () => {
                   value={fiscal.domicilio}
                   onChange={(e) => handleFiscalChange("domicilio", e.target.value)}
                 />
+              </div>
+
+              {/* ─── Factura A con leyenda (RG 1575) — solo si AFIP se lo exige ─── */}
+              <div className="form-group full-width fa-leyenda">
+                <label className="fa-leyenda-check">
+                  <input
+                    type="checkbox"
+                    checked={fiscal.facturaALeyenda !== "none"}
+                    onChange={(e) =>
+                      handleFiscalChange("facturaALeyenda", e.target.checked ? "cbu_informada" : "none")
+                    }
+                  />
+                  <span className="fa-leyenda-texts">
+                    <span className="fa-leyenda-title">{t("fiscal.leyendaCheck")}</span>
+                    <span className="fa-leyenda-sub">{t("fiscal.leyendaWho")}</span>
+                  </span>
+                </label>
+
+                {fiscal.facturaALeyenda !== "none" && (
+                  <div className="fa-leyenda-detail">
+                    <label className="fa-radio">
+                      <input
+                        type="radio"
+                        name="facturaALeyenda"
+                        checked={fiscal.facturaALeyenda === "cbu_informada"}
+                        onChange={() => handleFiscalChange("facturaALeyenda", "cbu_informada")}
+                      />
+                      <span>{t("fiscal.leyendaCbu")}</span>
+                    </label>
+                    <label className="fa-radio">
+                      <input
+                        type="radio"
+                        name="facturaALeyenda"
+                        checked={fiscal.facturaALeyenda === "sujeta_retencion"}
+                        onChange={() => handleFiscalChange("facturaALeyenda", "sujeta_retencion")}
+                      />
+                      <span>{t("fiscal.leyendaRetencion")}</span>
+                    </label>
+
+                    {fiscal.facturaALeyenda === "cbu_informada" && (
+                      <div className="fa-cbu">
+                        <label className="form-label">{t("fiscal.cbuLabel")}</label>
+                        <input
+                          className="form-input"
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0000000000000000000000"
+                          value={fiscal.facturaACbu}
+                          onChange={(e) =>
+                            handleFiscalChange("facturaACbu", e.target.value.replace(/\D/g, "").slice(0, 22))
+                          }
+                        />
+                        <p className="form-hint">{t("fiscal.cbuHint")}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
             </div>
