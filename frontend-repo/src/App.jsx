@@ -1291,7 +1291,6 @@ const App = () => {
         email: fiscal.email,
         website: fiscal.sitioWeb,
         factura_a_leyenda: fiscal.facturaALeyenda || "none",
-        factura_a_cbu: fiscal.facturaALeyenda === "cbu_informada" ? fiscal.facturaACbu : "",
       };
 
       await api.post(`/companies`, payload);
@@ -2098,9 +2097,6 @@ const App = () => {
                           {fiscal.facturaALeyenda === "cbu_informada"
                             ? "PAGO EN C.B.U. INFORMADA"
                             : "OPERACIÓN SUJETA A RETENCIÓN"}
-                          {fiscal.facturaALeyenda === "cbu_informada" && fiscal.facturaACbu
-                            ? ` · CBU ${fiscal.facturaACbu}`
-                            : ""}
                         </span>
                       </div>
                     )}
@@ -2254,23 +2250,6 @@ const App = () => {
                       />
                       <span>{t("fiscal.leyendaRetencion")}</span>
                     </label>
-
-                    {fiscal.facturaALeyenda === "cbu_informada" && (
-                      <div className="fa-cbu">
-                        <label className="form-label">{t("fiscal.cbuLabel")}</label>
-                        <input
-                          className="form-input"
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0000000000000000000000"
-                          value={fiscal.facturaACbu}
-                          onChange={(e) =>
-                            handleFiscalChange("facturaACbu", e.target.value.replace(/\D/g, "").slice(0, 22))
-                          }
-                        />
-                        <p className="form-hint">{t("fiscal.cbuHint")}</p>
-                      </div>
-                    )}
                   </div>
                 )}
               </div>

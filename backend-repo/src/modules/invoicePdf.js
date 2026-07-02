@@ -359,10 +359,10 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
             const headerLegendText = demoLeyendas?.headerLegend
                 || FACTURA_A_LEGENDS[facturaAModalidad]
                 || null;
-            const bodyLegendsToDraw = demoLeyendas?.bodyLegends
-                || ((facturaAModalidad === 'cbu_informada' && company?.factura_a_cbu)
-                    ? [`CBU informada para el pago: ${company.factura_a_cbu}`]
-                    : null);
+            // bodyLegends: reservado para el demo (ej. monotributista RG 5003). La
+            // leyenda RG 1575 va solo en el header (no imprimimos CBU en el PDF —
+            // la CBU se declara en AFIP aparte).
+            const bodyLegendsToDraw = demoLeyendas?.bodyLegends || null;
 
             const pv = padNum(draft.punto_venta, 5);
             const nroComp = padNum(afipResult?.numero_comprobante, 8);

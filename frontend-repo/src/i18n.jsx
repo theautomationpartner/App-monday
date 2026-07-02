@@ -50,7 +50,7 @@ export const translations = {
     "fiscal.leyendaCheck": "Mis Facturas A llevan una leyenda especial de AFIP",
     "fiscal.leyendaWho":
       "Solo si AFIP te lo exige (Responsables Inscriptos nuevos). La ves debajo de la «A» en una Factura A que ya emitiste.",
-    "fiscal.leyendaCbu": "«PAGO EN C.B.U. INFORMADA» — se imprime en tu factura y te pedimos tu CBU",
+    "fiscal.leyendaCbu": "«PAGO EN C.B.U. INFORMADA» — se imprime en tu factura",
     "fiscal.leyendaRetencion": "«OPERACIÓN SUJETA A RETENCIÓN» — se imprime en tu factura",
     "fiscal.cbuLabel": "CBU (donde AFIP exige que te depositen)",
     "fiscal.cbuHint": "22 dígitos.",
@@ -531,7 +531,7 @@ export const translations = {
     "fiscal.leyendaCheck": "My Factura A includes a special AFIP legend",
     "fiscal.leyendaWho":
       "Only if AFIP requires it (newly-registered VAT taxpayers). You'll see it under the «A» on a Factura A you've already issued.",
-    "fiscal.leyendaCbu": "«PAGO EN C.B.U. INFORMADA» — printed on your invoice; we'll ask for your CBU",
+    "fiscal.leyendaCbu": "«PAGO EN C.B.U. INFORMADA» — printed on your invoice",
     "fiscal.leyendaRetencion": "«OPERACIÓN SUJETA A RETENCIÓN» — printed on your invoice",
     "fiscal.cbuLabel": "CBU (bank account AFIP requires payment into)",
     "fiscal.cbuHint": "22 digits.",
