@@ -8,6 +8,7 @@ import "./App.css";
 import WelcomePage from "./WelcomePage";
 import iconoFacturacion from "./assets/icono-facturacion.svg";
 import { useT } from "./i18n.jsx";
+import { safeHtml } from "./sanitizeHtml.js";
 
 const monday = mondaySdk();
 
@@ -2270,7 +2271,7 @@ const App = () => {
                         {(logoPreviewUrl || (!removeLogoOnSave && savedLogoDataUrl)) ? (
                           <img src={logoPreviewUrl || savedLogoDataUrl} alt="" />
                         ) : (
-                          <span className="invoice-mockup-logo-empty" dangerouslySetInnerHTML={{ __html: t("map.yourLogoHere") }} />
+                          <span className="invoice-mockup-logo-empty" dangerouslySetInnerHTML={safeHtml(t("map.yourLogoHere"))} />
                         )}
                       </div>
                       <div className="invoice-mockup-data">
@@ -2498,7 +2499,7 @@ const App = () => {
                       </svg>
                     </div>
                     <div className="cert-action-card-title">{t("cert.uploadManualTitle")}</div>
-                    <div className="cert-action-card-desc" dangerouslySetInnerHTML={{ __html: t("cert.manualEntryDesc") }} />
+                    <div className="cert-action-card-desc" dangerouslySetInnerHTML={safeHtml(t("cert.manualEntryDesc"))} />
                     <span className="cert-action-card-cta alt">{t("cert.uploadFiles")}</span>
                   </button>
                 </div>
@@ -2704,7 +2705,7 @@ const App = () => {
                     <h3 className="cert-step-title">{t("cert.s2Title")}</h3>
                     <p
                       className="cert-step-desc"
-                      dangerouslySetInnerHTML={{ __html: t("cert.s2Desc") }}
+                      dangerouslySetInnerHTML={safeHtml(t("cert.s2Desc"))}
                     />
 
                     <div className="gd-download-slot">
@@ -2765,28 +2766,28 @@ const App = () => {
                         />
                         <span
                           className="gd-adhered-title"
-                          dangerouslySetInnerHTML={{ __html: t("cert.s3.adheredTitle") }}
+                          dangerouslySetInnerHTML={safeHtml(t("cert.s3.adheredTitle"))}
                         />
                       </label>
                       {!serviceAdhered && (
                         <div className="gd-adhered-body">
-                          <div dangerouslySetInnerHTML={{ __html: t("cert.s3.firstTime") }} />
+                          <div dangerouslySetInnerHTML={safeHtml(t("cert.s3.firstTime"))} />
                           <ol>
-                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi1") }} />
-                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi2") }} />
-                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi3") }} />
-                            <li dangerouslySetInnerHTML={{ __html: t("cert.s3.adhereLi4") }} />
+                            <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.adhereLi1"))} />
+                            <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.adhereLi2"))} />
+                            <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.adhereLi3"))} />
+                            <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.adhereLi4"))} />
                           </ol>
                         </div>
                       )}
                     </div>
 
-                    <div className="gd-arca-blocktitle" dangerouslySetInnerHTML={{ __html: t("cert.s3.b2Title") }} />
+                    <div className="gd-arca-blocktitle" dangerouslySetInnerHTML={safeHtml(t("cert.s3.b2Title"))} />
                     <ol className="gd-arca-steps">
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li1") }} />
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li2") }} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.li1"))} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.li2"))} />
                       <li>
-                        <span dangerouslySetInnerHTML={{ __html: t("cert.s3.li3Lead") }} />
+                        <span dangerouslySetInnerHTML={safeHtml(t("cert.s3.li3Lead"))} />
                         <div className="gd-alias-copy">
                           <code>{certificateAlias || aliasInput}</code>
                           <button
@@ -2802,20 +2803,20 @@ const App = () => {
                           </button>
                         </div>
                       </li>
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li4") }} />
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.li5") }} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.li4"))} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.li5"))} />
                     </ol>
 
                     {/* Bloque ③ — Autorizar el certificado para facturar (el paso que faltaba
                         y causaba el error "Computador no autorizado"). */}
-                    <div className="gd-arca-blocktitle" dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Title") }} />
-                    <div className="gd-arca-warn" dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Warn") }} />
+                    <div className="gd-arca-blocktitle" dangerouslySetInnerHTML={safeHtml(t("cert.s3.b3Title"))} />
+                    <div className="gd-arca-warn" dangerouslySetInnerHTML={safeHtml(t("cert.s3.b3Warn"))} />
                     <ol className="gd-arca-steps">
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Li1") }} />
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Li2") }} />
-                      <li dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Li3") }} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.b3Li1"))} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.b3Li2"))} />
+                      <li dangerouslySetInnerHTML={safeHtml(t("cert.s3.b3Li3"))} />
                     </ol>
-                    <p className="gd-arca-note" dangerouslySetInnerHTML={{ __html: t("cert.s3.b3Note") }} />
+                    <p className="gd-arca-note" dangerouslySetInnerHTML={safeHtml(t("cert.s3.b3Note"))} />
 
                     <div className="gd-panel-actions">
                       <button className="btn-secondary" onClick={() => setGuidedStep(2)} disabled={isLoading}>
@@ -3156,7 +3157,7 @@ const App = () => {
                   <span
                     className="gd-confirm-hint"
                     style={{ display: "block", marginTop: 2 }}
-                    dangerouslySetInnerHTML={{ __html: t("map.renameExample") }}
+                    dangerouslySetInnerHTML={safeHtml(t("map.renameExample"))}
                   />
                 </span>
               </label>
@@ -3187,7 +3188,7 @@ const App = () => {
                   <span
                     className="gd-confirm-hint"
                     style={{ display: "block", marginTop: 2 }}
-                    dangerouslySetInnerHTML={{ __html: t("map.statusExample") }}
+                    dangerouslySetInnerHTML={safeHtml(t("map.statusExample"))}
                   />
                 </span>
               </label>
@@ -3293,7 +3294,7 @@ const App = () => {
                       )}
                     </span>
                   )}
-                  <span className="gd-confirm-hint" dangerouslySetInnerHTML={{ __html: t("map.currencyHelp") }} />
+                  <span className="gd-confirm-hint" dangerouslySetInnerHTML={safeHtml(t("map.currencyHelp"))} />
                 </div>
 
                 <div className="gd-confirm-row">
@@ -3524,7 +3525,7 @@ const App = () => {
                   {mapSel("tipo_comprobante", t("map.colDropdown"))}
                   <div
                     style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4, lineHeight: 1.35 }}
-                    dangerouslySetInnerHTML={{ __html: t("map.voucherTypeHelp") }}
+                    dangerouslySetInnerHTML={safeHtml(t("map.voucherTypeHelp"))}
                   />
                 </div>
                 <div>
