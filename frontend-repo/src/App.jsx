@@ -1685,6 +1685,13 @@ const App = () => {
       setSavedMappingSnapshot(mapping);
       setIsMappingEditMode(false);
       showToast("success", t("toast.mappingSaved"));
+
+      // "First value created" — señal de activación para monday. Se dispara
+      // cuando el usuario completa la configuración (mapeo guardado con éxito):
+      // ese es el momento en que la app queda lista para emitir comprobantes,
+      // el valor real de la board view. monday trackea solo la PRIMERA vez.
+      // Fire-and-forget: no bloquea la UI si la llamada del SDK falla.
+      monday.execute("valueCreatedForUser").catch(() => {});
     } catch (err) {
       const { msg, hint } = friendlyApiError(err);
       showToast("error", `${msg} — ${hint}`);
