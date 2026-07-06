@@ -4347,111 +4347,14 @@ app.post('/api/board-config', requireMondaySession, validateBody(BoardConfigSche
     }
 });
 
-const getUserApiTokenHandler = async (req, res) => {
-    const { mondayAccountId } = req.params;
-    if (!ensureAccountMatch(req, res, mondayAccountId)) return;
-
-    try {
-        const company = await getCompanyByMondayAccountId(mondayAccountId);
-        if (!company) {
-            return res.json({ has_token: false });
-        }
-
-        await ensureUserApiTokensV3Table();
-        const tokenResult = await db.query(
-            `SELECT id
-             FROM user_api_tokens
-             WHERE monday_account_id = $1
-             LIMIT 1`,
-            [String(accountId)]
-        );
-
-        return res.json({ has_token: tokenResult.rows.length > 0 });
-    } catch (err) {
-        console.error('❌ Error al consultar token de usuario monday:', err);
-        return res.status(500).json({ error: 'Error al consultar token de usuario' });
-    }
-};
-
-app.get('/api/user-api-token/:mondayAccountId', requireMondaySession, getUserApiTokenHandler);
-app.get('/api/user-api-token-v2/:mondayAccountId', requireMondaySession, getUserApiTokenHandler);
-
-const saveUserApiTokenHandler = async (req, res) => {
-    const { monday_account_id, api_token } = req.body;
-    const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
-    const debugId = createDebugId('save_token');
-
-    if (!accountId) {
-        return res.status(400).json({ error: 'monday_account_id es obligatorio' });
-    }
-
-    if (!ensureAccountMatch(req, res, accountId)) return;
-
-    if (!api_token || !String(api_token).trim()) {
-        return res.status(400).json({ error: 'api_token es obligatorio' });
-    }
-
-    if (!process.env.ENCRYPTION_KEY) {
-        return res.status(500).json({ error: 'Falta ENCRYPTION_KEY en backend' });
-    }
-
-    try {
-        console.log('ℹ️ saveUserApiToken start', {
-            debug_id: debugId,
-            account_id: accountId,
-            token_length: String(api_token || '').length,
-            identity_account_id: req.mondayIdentity?.accountId || null,
-        });
-
-        const company = await getCompanyByMondayAccountId(accountId);
-        if (!company) {
-            return res.status(404).json({ error: 'Empresa no encontrada' });
-        }
-
-        await ensureUserApiTokensV3Table();
-        const encryptedToken = CryptoJS.AES.encrypt(String(api_token).trim(), process.env.ENCRYPTION_KEY).toString();
-
-        await db.query(
-            `INSERT INTO user_api_tokens (monday_account_id, encrypted_api_token)
-             VALUES ($1, $2)
-             ON CONFLICT (monday_account_id)
-             DO UPDATE SET
-               encrypted_api_token = EXCLUDED.encrypted_api_token,
-               updated_at = CURRENT_TIMESTAMP`,
-            [String(accountId), encryptedToken]
-        );
-
-        console.log('✅ saveUserApiToken success', {
-            debug_id: debugId,
-            company_id: company.id,
-            storage: 'user_api_tokens',
-        });
-
-        return res.json({
-            message: 'Token de usuario guardado correctamente',
-            debug_id: debugId,
-        });
-    } catch (err) {
-        const diagnostics = await getUserTokenSchemaDiagnostics();
-        console.error('❌ Error al guardar token de usuario monday:', {
-            debug_id: debugId,
-            error_message: err.message,
-            error_code: err.code,
-            error_detail: err.detail,
-            error_where: err.where,
-            diagnostics,
-        });
-        return res.status(500).json({
-            error: 'Error al guardar token de usuario',
-            details: err.message,
-            code: err.code,
-            debug_id: debugId,
-        });
-    }
-};
-
-app.post('/api/user-api-token', requireMondaySession, validateBody(UserApiTokenSchema), saveUserApiTokenHandler);
-app.post('/api/user-api-token-v2', requireMondaySession, validateBody(UserApiTokenSchema), saveUserApiTokenHandler);
+// ── Endpoints de token de usuario ELIMINADOS (2026-07-06) ─────────────────────
+// GET/POST /api/user-api-token[-v2] se quitaron: el frontend NUNCA los llamaba y
+// la tabla user_api_tokens estaba VACÍA en producción (0 filas). La app corre 100%
+// con seamless auth (sessionToken en el board view + shortLivedToken en las recetas).
+// Se elimina toda capacidad de recolectar/guardar un token de usuario (requisito de
+// seguridad del review de monday: "must not collect user credentials").
+// La lectura interna getStoredMondayUserApiToken() se MANTIENE: con la tabla vacía
+// siempre devuelve null → la emisión usa el shortLivedToken, sin cambio de conducta.
 
 app.get('/api/mappings/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
