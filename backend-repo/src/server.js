@@ -489,12 +489,23 @@ app.set('trust proxy', 1);
 // ─── Security headers ───────────────────────────────────────────────────────
 // Requeridos por el privacy & security review de monday:
 // - HSTS: forzar HTTPS por 1 año (la app ya es HTTPS-only, refuerza a nivel browser)
-// - CSP frame-ancestors: solo permite que la embeben subdominios de monday.com
+// - CSP frame-ancestors: solo permite que la embeban subdominios de monday.com
 // - X-Content-Type-Options: previene MIME-sniffing
 // - Referrer-Policy: no filtra paths/queries a sitios externos
+//
+// Excepcion: las paginas publicas de ayuda/legales (onboarding, privacy, terms)
+// deben poder embeberse desde CUALQUIER origen — el review de monday las
+// testea con iframetester.com (no es *.monday.com), y el campo "How to use
+// Link" del form exige que sean embebibles. Son estaticas, sin login ni
+// acciones sensibles, asi que quedan sin restriccion de frame-ancestors. El
+// resto de la app (board view real, con datos de clientes) sigue restringido
+// solo a monday.com.
+const PUBLIC_EMBEDDABLE_PATHS = ['/onboarding', '/privacy', '/terms'];
 app.use((req, res, next) => {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-    res.setHeader('Content-Security-Policy', "frame-ancestors https://*.monday.com https://monday.com");
+    if (!PUBLIC_EMBEDDABLE_PATHS.includes(req.path)) {
+        res.setHeader('Content-Security-Policy', "frame-ancestors https://*.monday.com https://monday.com");
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     next();
