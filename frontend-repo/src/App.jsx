@@ -29,10 +29,10 @@ const DEBUG_ACCOUNT_IDS = (import.meta.env.VITE_DEBUG_ACCOUNT_IDS || "")
 // reemplazá esta constante por tu URL de YouTube/Loom/etc.
 const CERT_TUTORIAL_URL = "https://www.youtube.com/results?search_query=certificado+digital+ARCA+AFIP+paso+a+paso";
 
-// URL de la página de "Cómo usar la app" — visible desde el header.
-// Reemplazá por la URL definitiva cuando esté lista la página de docs en
-// theautomationpartner.com/arca/como-usar (ver checklist Documentation §6).
-const HOW_TO_USE_URL = "https://theautomationpartner.com/arca/como-usar";
+// URL de la página pública "Cómo usar la app" — visible desde el header.
+// Es la misma página bilingüe (onboarding.html) que se envía como "How to use
+// Link" en el form de submission de monday.
+const HOW_TO_USE_URL = "https://arca.theautomationpartner.com/onboarding";
 
 // URL del backend. En monday code el frontend y backend comparten dominio,
 // así que usamos una ruta relativa "/api" que siempre resuelve a la versión actual.
@@ -1908,7 +1908,7 @@ const App = () => {
             </h1>
             <p className="gd-header-sub">{t("header.sub")}</p>
             <a
-              href={HOW_TO_USE_URL}
+              href={`${HOW_TO_USE_URL}?lang=${lang}`}
               target="_blank"
               rel="noopener noreferrer"
               style={{
