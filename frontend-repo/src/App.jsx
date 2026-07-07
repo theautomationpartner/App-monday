@@ -1825,7 +1825,7 @@ const App = () => {
           <img className="gd-sidebar-logo" src={iconoFacturacion} alt={t("brand.title")} />
           <div>
             <div className="gd-sidebar-brand-title">{t("brand.title")}</div>
-            <div className="gd-sidebar-brand-sub">Monday App</div>
+            <div className="gd-sidebar-brand-sub">monday App</div>
           </div>
         </div>
 
