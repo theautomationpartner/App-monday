@@ -429,24 +429,47 @@ async function fexGetPtosVenta(auth) {
     return rows.map((r) => ({ nro: Number(r.Pve_Nro), bloqueado: r.Pve_Bloqueado, baja: r.Pve_FchBaja }));
 }
 
+/** Tipos de entidad del receptor del exterior — el sufijo de las filas de DST_CUIT. */
+const TIPO_ENTIDAD = {
+    JURIDICA: 'Persona Jurídica',
+    FISICA:   'Persona Física',
+    OTRA:     'Otro tipo de Entidad',
+};
+
 /**
- * Resuelve el "CUIT país" a partir del código de país.
+ * Resuelve el "CUIT país" a partir del código de país + el tipo de entidad del
+ * cliente del exterior.
  *
- * AFIP no expone la relación directa: las dos tablas se vinculan por la
- * DESCRIPCIÓN del país (DST_Ds), que es el único campo en común. Por eso el
- * match es por texto normalizado.
+ * Verificado contra la tabla REAL de AFIP (2026-07-16): las dos tablas NO son
+ * 1:1 — DST_pais trae 310 países y DST_CUIT trae 917 filas, o sea ~3 por país,
+ * una por tipo de entidad:
+ *
+ *   DST_pais : 212 -> "ESTADOS UNIDOS"
+ *   DST_CUIT : 50000002124 -> "ESTADOS UNIDOS - Persona Física"
+ *              55000002126 -> "ESTADOS UNIDOS - Persona Jurídica"
+ *              51600002124 -> "ESTADOS UNIDOS - Otro tipo de Entidad"
+ *
+ * Por eso el CUIT país NO se puede resolver solo con el país: hace falta saber
+ * si el cliente es empresa, persona u otra cosa. Confirmado contra una Factura E
+ * real emitida por AFIP: el receptor "M&P CONSULTING SERVICES LLC." figura con
+ * CUIT País 55000002126 = "ESTADOS UNIDOS - Persona Jurídica" — la misma fila.
+ *
+ * El match es contra la descripción COMPLETA ("<PAIS> - <TIPO>") y no por
+ * igualdad con el país solo: hay países cuya descripción ya incluye guiones
+ * ("ZF Colonia - URUGUAY") y no todos tienen los 3 tipos (4 países tienen 2,
+ * uno tiene 5).
  *
  * AFIP exige informar al menos uno entre Cuit_pais_cliente e Id_impositivo
- * (validación 1580) — resolver esto automático evita pedirle al usuario un dato
- * que no tiene por qué conocer.
+ * (validación 1580) -> si esto devuelve null, el caller tiene que exigir
+ * Id_impositivo.
  *
- * @returns {Promise<string|null>} null si no hay correspondencia (→ el caller
- *          tiene que exigir Id_impositivo).
+ * @param {string|number} codigoPais  código de DST_pais
+ * @param {object} auth               { token, sign, cuit }
+ * @param {string} tipoEntidad        uno de TIPO_ENTIDAD. Default: Persona
+ *                                    Jurídica, el caso normal de exportación B2B.
+ * @returns {Promise<string|null>}
  */
-async function fexResolveCuitPais(codigoPais, auth) {
-    // \u0300-\u036f = diacríticos combinantes: "Perú" y "PERU" tienen que matchear.
-    // Va con escapes explícitos y no con los caracteres literales para que no lo
-    // rompa un editor que normalice el archivo.
+async function fexResolveCuitPais(codigoPais, auth, tipoEntidad = TIPO_ENTIDAD.JURIDICA) {
     const norm = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toUpperCase();
 
     const paises = await fexGetPaises(auth);
@@ -454,7 +477,8 @@ async function fexResolveCuitPais(codigoPais, auth) {
     if (!pais) return null;
 
     const cuits = await fexGetCuitPaises(auth);
-    const hit = cuits.find((c) => norm(c.descripcion) === norm(pais.descripcion));
+    const buscado = norm(`${pais.descripcion} - ${tipoEntidad}`);
+    const hit = cuits.find((c) => norm(c.descripcion) === buscado);
     return hit ? String(hit.cuit) : null;
 }
 
@@ -470,6 +494,7 @@ async function fexDummy() {
 
 module.exports = {
     WSFEX_SERVICE,
+    TIPO_ENTIDAD,
     fexDummy,
     fexGetLastId,
     fexGetLastCmp,
