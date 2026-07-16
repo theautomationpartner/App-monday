@@ -16,6 +16,10 @@ require('dotenv').config();
 const afipAuthModule    = require('./modules/afipAuth');
 const afipPadron        = require('./modules/afipPadron');
 const afipWsfex         = require('./modules/afipWsfex');   // comprobantes de exportación (WSFEXv1)
+// config.js expone endpoints + constantes de AFIP. Se importa como `afipConfig` y
+// NO como `config` porque adentro de afipIssueFacturaLocked ya hay un
+// `const config = INVOICE_TYPE_CONFIG[...]` local que lo shadowearía.
+const afipConfig        = require('./config');
 const invoiceRules      = require('./modules/invoiceRules');
 const { generateFacturaPdfBuffer } = require('./modules/invoicePdf');
 
@@ -5972,21 +5976,14 @@ async function comprobanteHandler(req, res) {
                 // sin este chequeo previo se emitiría como una factura común A/B/C
                 // — con IVA 21% a un cliente del exterior. Falla silenciosa y cara.
                 if (/^\s*factura\s+e\b/i.test(tipoComp) || /^\s*export\s+invoice\b/i.test(tipoComp)) {
-                    // TODO(factura-e): reemplazar por `await emitFacturaEHandler(req, res); return;`
-                    // cuando exista el handler. Hasta entonces cortamos ACÁ: el
-                    // objetivo de esta rama es que "Factura E" NUNCA caiga en la
-                    // rama de abajo y se emita como una factura común.
-                    console.warn(`[emit] item ${itemId} marcado "${tipoComp}" → Factura E todavía no implementada, se aborta`);
-                    throw new Error(readiness.boardConfig?.language === 'en'
-                        ? 'Export invoices (Factura E) are not supported yet.\n' +
-                          'This voucher was NOT issued — on purpose: issuing it as a regular invoice ' +
-                          'would apply 21% VAT to a foreign client, which is fiscally wrong.\n' +
-                          'Pick another voucher type, or contact support if you need to invoice exports.'
-                        : 'Las Facturas E (exportación) todavía no están soportadas.\n' +
-                          'El comprobante NO se emitió — a propósito: emitirlo como factura común ' +
-                          'le aplicaría 21% de IVA a un cliente del exterior, que es incorrecto fiscalmente.\n' +
-                          'Elegí otro tipo de comprobante, o escribinos si necesitás facturar exportaciones.'
-                    );
+                    // Comprobante de exportación → circuito paralelo (WSFEXv1). La
+                    // rama va ANTES que la de factura común a propósito: "Factura E"
+                    // matchea /^\s*factura/i, así que sin este corte previo se
+                    // emitiría como A/B/C, con 21% de IVA a un cliente del exterior.
+                    displayKind = 'Factura E';
+                    console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Factura E (exportación)`);
+                    await emitFacturaEHandler(req, res);
+                    return;
                 } else if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
                     // tipoComp empieza con "Factura"/"Invoice" (incluye FCE) → emitir factura.
                 } else if (/cr[eé]dito/i.test(tipoComp) || /credit/i.test(tipoComp)) {
@@ -8174,6 +8171,1435 @@ async function emitNotaHandler(req, res, clase = 'NC') {
 }
 app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, (req, res) => emitNotaHandler(req, res, 'NC'));
 app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, (req, res) => emitNotaHandler(req, res, 'ND'));
+
+// ════════════════════════════════════════════════════════════════════════════
+// FACTURA E — comprobantes de EXPORTACIÓN de servicios (WSFEXv1)
+// ════════════════════════════════════════════════════════════════════════════
+// Circuito PARALELO al de A/B/C, no "una letra más" del flujo de siempre. La
+// Factura E vive en OTRO web service (WSFEXv1): otros campos, otra autorización
+// (servicio 'wsfex'), otra serie de numeración (su propio punto de venta de
+// exportación) y otra clave de idempotencia (el <Id> de requerimiento, que en
+// WSFEv1 no existe). Por eso no pasa por afipIssueFactura.
+//
+// Alcance: SOLO SERVICIOS (Tipo_expo=2). Sin bienes → sin Incoterms (validación
+// 1640) ni permisos de embarque (1550/1736).
+//
+// Exportación NO discrimina IVA: no hay neto, ni alícuotas, ni ImpIVA. Solo
+// Imp_total. Ese es el motivo de fondo por el que 'E' no entra en el flujo de
+// A/B/C — getIvaRate('E') devolvería 21% y le cobraría IVA a un cliente del
+// exterior.
+//
+// Lo invoca comprobanteHandler cuando la columna `tipo_comprobante` dice
+// "Factura E" / "Export Invoice". En ese camino `res` ya respondió 200 → los
+// `res` van guardados con `!res.headersSent`, igual que en emitNotaHandler.
+
+// Fecha de HOY en Argentina, formato AFIP (YYYYMMDD).
+//
+// NO se usa `new Date().toISOString()` (lo que hace el resto del archivo) porque
+// eso da la fecha en UTC y el droplet corre en UTC: entre las 21:00 y las 23:59
+// de Argentina, toISOString() ya devuelve la fecha de MAÑANA. Para un comprobante
+// fiscal eso significa fecharlo un día adelante contra un AFIP que opera en hora
+// argentina — y además haría fallar el chequeo de Fecha_pago >= Fecha_cbte
+// (validación 1674) para un pago fechado hoy.
+//
+// 'en-CA' es el atajo estándar para que toLocaleDateString devuelva YYYY-MM-DD.
+function fechaHoyArgentinaYYYYMMDD() {
+    return new Date()
+        .toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' })
+        .replace(/-/g, '');
+}
+
+// Normalizador para matchear texto libre del usuario contra las tablas de AFIP:
+// sin acentos, sin dobles espacios, en mayúsculas. Las descripciones de AFIP
+// vienen en mayúsculas y con acentos ("ESPAÑA", "Persona Jurídica"), y el
+// usuario escribe como quiere.
+function normalizeExpoText(value) {
+    return String(value ?? '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toUpperCase();
+}
+
+// Tipo de entidad del receptor del exterior. Determina QUÉ "CUIT país" usa AFIP:
+// la tabla DST_CUIT tiene una fila por país Y tipo de entidad (ver afipWsfex.js),
+// así que equivocarse acá manda un CUIT país incorrecto — comprobante mal emitido,
+// sin que AFIP lo rechace.
+//
+// Default Persona Jurídica: es el caso B2B normal de exportación de servicios y
+// es el default que ya documenta la UI ("Si no la mapeás, la app asume empresa").
+// El matcheo es bilingüe y tolerante porque el valor sale de un dropdown que el
+// cliente arma a mano.
+//
+// OJO con el orden: "Persona Jurídica" y "Persona Física" comparten la palabra
+// "Persona" — por eso se matchea contra el sustantivo distintivo (jurídic/físic),
+// nunca contra "persona".
+function resolveTipoEntidadReceptor(raw) {
+    const t = normalizeExpoText(raw);
+    if (!t) return afipWsfex.TIPO_ENTIDAD.JURIDICA;
+    if (/JURIDIC|COMPANY|EMPRESA|CORPORAT|LEGAL ENTITY|BUSINESS/.test(t)) {
+        return afipWsfex.TIPO_ENTIDAD.JURIDICA;
+    }
+    if (/FISIC|INDIVIDUAL|NATURAL PERSON/.test(t)) {
+        return afipWsfex.TIPO_ENTIDAD.FISICA;
+    }
+    // "Otro tipo de Entidad" es una categoría real de AFIP (fideicomisos, organismos,
+    // etc.), así que el resto cae acá a propósito y no es un error.
+    return afipWsfex.TIPO_ENTIDAD.OTRA;
+}
+
+// Resuelve el código de país de destino (Dst_cmp) desde el nombre que el usuario
+// eligió en el dropdown, contra la tabla VIVA de AFIP (FEXGetPARAM_DST_pais).
+//
+// No se hardcodea la lista: son 310 países y AFIP los cambia. El match es exacto
+// primero porque hay descripciones que se contienen entre sí — "URUGUAY" y
+// "ZF Colonia - URUGUAY" (zona franca) son destinos DISTINTOS, y el contains a
+// secas elegiría cualquiera de los dos.
+async function resolvePaisDestinoExpo(raw, auth, language) {
+    const L = (en, es) => (language === 'en' ? en : es);
+    const wanted = normalizeExpoText(raw);
+    const paises = await afipWsfex.fexGetPaises(auth);
+
+    let hit = paises.find((p) => normalizeExpoText(p.descripcion) === wanted);
+    if (!hit) {
+        // Fallback tolerante: solo si es INEQUÍVOCO. Si "URUGUAY" matchea también
+        // la zona franca, preferimos el error a elegir por el usuario.
+        const partial = paises.filter((p) => normalizeExpoText(p.descripcion).includes(wanted));
+        if (partial.length === 1) hit = partial[0];
+        else if (partial.length > 1) {
+            throw new Error(L(
+                `The destination country "${raw}" is ambiguous — it matches several AFIP entries: ` +
+                `${partial.slice(0, 6).map((p) => `"${p.descripcion}"`).join(', ')}. ` +
+                `Write the exact name of the one you need in the column.`,
+                `El país de destino "${raw}" es ambiguo — coincide con varias entradas de AFIP: ` +
+                `${partial.slice(0, 6).map((p) => `"${p.descripcion}"`).join(', ')}. ` +
+                `Escribí en la columna el nombre exacto del que necesitás.`
+            ));
+        }
+    }
+    if (!hit) {
+        const ejemplos = paises
+            .filter((p) => /^(BRASIL|CHILE|URUGUAY|ESTADOS UNIDOS|ESPANA|ESPAÑA|ALEMANIA)$/.test(normalizeExpoText(p.descripcion)))
+            .map((p) => `"${p.descripcion}"`);
+        throw new Error(L(
+            `The destination country "${raw}" is not in AFIP's country list.\n` +
+            `Write it exactly as AFIP names it — for example: ${ejemplos.join(', ') || '"BRASIL", "ESTADOS UNIDOS", "ESPAÑA"'}.`,
+            `El país de destino "${raw}" no está en la lista de países de AFIP.\n` +
+            `Escribilo exactamente como lo nombra AFIP — por ejemplo: ${ejemplos.join(', ') || '"BRASIL", "ESTADOS UNIDOS", "ESPAÑA"'}.`
+        ));
+    }
+    return { codigo: hit.codigo, descripcion: hit.descripcion };
+}
+
+// Resuelve el código de moneda de AFIP (Moneda_Id) desde el texto del item,
+// contra la tabla VIVA (FEXGetPARAM_MON).
+//
+// NO se hardcodean códigos: los de AFIP NO son ISO (el euro no es 'EUR'). Por eso
+// tampoco alcanza con invoiceRules.parseMoneda, que solo conoce PES y DOL — un
+// cliente que exporta a Europa factura en euros y parseMoneda devolvería null.
+// parseMoneda se usa igual como atajo para los dos casos que ya sabe desambiguar
+// ("dólares" → DOL = dólar estadounidense, no el canadiense ni el australiano).
+async function resolveMonedaExpo(raw, auth, language) {
+    const L = (en, es) => (language === 'en' ? en : es);
+    const monedas = await afipWsfex.fexGetMonedas(auth);
+    const findById = (id) => monedas.find((m) => normalizeExpoText(m.id) === normalizeExpoText(id));
+
+    // Sin columna de moneda mapeada o celda vacía → pesos. Una Factura E en pesos
+    // es válida y existe (AFIP la emite igual, con el destino en el encabezado).
+    const wanted = normalizeExpoText(raw);
+    if (!wanted) {
+        const pes = findById('PES');
+        if (!pes) throw new Error(L(
+            `AFIP's currency table doesn't include Argentine pesos ("PES"). Try again in a few minutes.`,
+            `La tabla de monedas de AFIP no trae pesos argentinos ("PES"). Reintentá en unos minutos.`
+        ));
+        return { id: pes.id, descripcion: pes.descripcion };
+    }
+
+    // Atajo para los dos casos que parseMoneda ya sabe desambiguar. Se valida
+    // igual contra la tabla: si AFIP dejara de publicar el código, mejor enterarse.
+    const shortcut = invoiceRules.parseMoneda(wanted);
+    if (shortcut) {
+        const hit = findById(shortcut);
+        if (hit) return { id: hit.id, descripcion: hit.descripcion };
+    }
+
+    // Código de AFIP escrito directo en la columna (ej: "060" para el euro).
+    const byId = findById(wanted);
+    if (byId) return { id: byId.id, descripcion: byId.descripcion };
+
+    // Por descripción: exacta primero (mismo motivo que en los países —
+    // "Dolar Estadounidense" y "Dolar Canadiense" comparten "Dolar").
+    let hit = monedas.find((m) => normalizeExpoText(m.descripcion) === wanted);
+    if (!hit) {
+        const partial = monedas.filter((m) => normalizeExpoText(m.descripcion).includes(wanted));
+        if (partial.length === 1) hit = partial[0];
+        else if (partial.length > 1) {
+            throw new Error(L(
+                `The currency "${raw}" is ambiguous — it matches several AFIP entries: ` +
+                `${partial.slice(0, 6).map((m) => `"${m.descripcion}" (${m.id})`).join(', ')}. ` +
+                `Write the exact name or AFIP's code in the column.`,
+                `La moneda "${raw}" es ambigua — coincide con varias entradas de AFIP: ` +
+                `${partial.slice(0, 6).map((m) => `"${m.descripcion}" (${m.id})`).join(', ')}. ` +
+                `Escribí en la columna el nombre exacto o el código de AFIP.`
+            ));
+        }
+    }
+    if (!hit) {
+        throw new Error(L(
+            `The currency "${raw}" is not in AFIP's currency list.\n` +
+            `Careful: AFIP's codes are NOT the ISO ones (the euro is not "EUR"). Write the ` +
+            `name as AFIP publishes it, or its code.`,
+            `La moneda "${raw}" no está en la lista de monedas de AFIP.\n` +
+            `Ojo: los códigos de AFIP NO son los ISO (el euro no es "EUR"). Escribí el ` +
+            `nombre como lo publica AFIP, o su código.`
+        ));
+    }
+    return { id: hit.id, descripcion: hit.descripcion };
+}
+
+// Resuelve la unidad de medida de AFIP (Pro_umed) para una línea.
+//
+// Diferencia con A/B/C que sorprende: en WSFEv1 la unidad de medida NO se manda
+// a AFIP (es solo un texto del PDF, RG 1415), así que hoy la columna admite lo
+// que el cliente quiera. WSFEX en cambio exige un ID numérico de su tabla
+// (FEXGetPARAM_UMed) → acá el texto SÍ tiene que matchear. Si no matchea
+// cortamos con la lista de válidas en vez de adivinar un ID: mandar la unidad
+// equivocada emite un comprobante fiscal mal.
+async function resolveUnidadMedidaExpo(raw, auth, language) {
+    const L = (en, es) => (language === 'en' ? en : es);
+    const wanted = normalizeExpoText(raw);
+    const unidades = await afipWsfex.fexGetUnidadesMedida(auth);
+
+    const fail = () => {
+        const ejemplos = unidades.slice(0, 12).map((u) => `"${u.descripcion}"`).join(', ');
+        throw new Error(L(
+            `The unit of measure "${raw}" is not in AFIP's list for export vouchers.\n` +
+            `Unlike Factura A/B/C (where this column is free text on the PDF), Factura E ` +
+            `requires AFIP's own unit. Valid ones include: ${ejemplos}.`,
+            `La unidad de medida "${raw}" no está en la lista de AFIP para comprobantes de exportación.\n` +
+            `A diferencia de la Factura A/B/C (donde esta columna es texto libre del PDF), la ` +
+            `Factura E exige la unidad de AFIP. Algunas válidas: ${ejemplos}.`
+        ));
+    };
+    if (!wanted) fail();
+
+    // ID numérico escrito directo en la columna.
+    if (/^\d+$/.test(wanted)) {
+        const byId = unidades.find((u) => Number(u.id) === Number(wanted));
+        if (byId) return byId.id;
+    }
+    let hit = unidades.find((u) => normalizeExpoText(u.descripcion) === wanted);
+    if (!hit) {
+        const partial = unidades.filter((u) => normalizeExpoText(u.descripcion).includes(wanted));
+        if (partial.length === 1) hit = partial[0];
+    }
+    if (!hit) fail();
+    return hit.id;
+}
+
+// Convierte los subítems del item en las líneas del comprobante de exportación.
+//
+// NO reusa buildLinesFromSubitems a propósito, por tres motivos fiscales:
+//   1. Exportación no lleva IVA. buildLinesFromSubitems EXIGE alícuota en todos
+//      los subítems y calcula neto/IVA/total con ella; para una Factura E la
+//      alícuota no existe como concepto. Pasarle letra='E' sería peor: como su
+//      ivaRate solo se anula con letra 'C', calcularía IVA 21% sobre la exportación.
+//   2. WSFEX necesita por línea Pro_umed (ID de AFIP) y Pro_total_item, que
+//      buildLinesFromSubitems no produce.
+//   3. Validación 1610: Imp_total tiene que ser EXACTAMENTE la suma de los
+//      Pro_total_item. Se suma en centavos enteros para que el redondeo cierre
+//      al centavo y no por acumulación de floats.
+async function buildExportLinesFromSubitems({ subitems, mapping, precioColumnId, auth, language = 'es' }) {
+    const L = (en, es) => (language === 'en' ? en : es);
+
+    const rawLines = (subitems || []).map((sub) => ({
+        subitem_name:  sub.name || `Subitem #${sub.id}`,
+        concept:       getColumnTextById(sub.column_values, mapping.concepto) || sub.name || '',
+        quantity:      getColumnTextById(sub.column_values, mapping.cantidad),
+        unit_price:    getColumnTextById(sub.column_values, precioColumnId),
+        unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
+    }));
+
+    // Misma regla de validez que el mercado interno: concepto + cantidad y precio
+    // numéricos > 0 (un total 0 o negativo lo rechaza AFIP con un error críptico).
+    const validLines = rawLines.filter((l) => {
+        const q = toNumberOrNull(l.quantity);
+        const p = toNumberOrNull(l.unit_price);
+        return l.concept && q !== null && q > 0 && p !== null && p > 0;
+    });
+    if (validLines.length === 0) {
+        const detalleStr = rawLines.map((l) => {
+            const faltantes = [];
+            if (!l.concept) faltantes.push(L('Description', 'Concepto'));
+            const q = toNumberOrNull(l.quantity);
+            const p = toNumberOrNull(l.unit_price);
+            if (q === null) faltantes.push(L('Quantity', 'Cantidad'));
+            else if (q <= 0) faltantes.push(L('Quantity (must be greater than 0)', 'Cantidad (tiene que ser mayor a 0)'));
+            if (p === null) faltantes.push(L('Unit Price', 'Precio Unitario'));
+            else if (p <= 0) faltantes.push(L('Unit Price (must be greater than 0)', 'Precio Unitario (tiene que ser mayor a 0)'));
+            return `• "${l.subitem_name}": ${faltantes.join(', ')}`;
+        }).join('\n');
+        throw new Error(
+            L('No valid lines in the subitems.\n', 'No hay líneas válidas en los subítems.\n') +
+            ((subitems || []).length === 0
+                ? L('The item has no subitems created.', 'El item no tiene subítems creados.')
+                : L(`Subitems with problems:\n${detalleStr}`, `Subítems con problemas:\n${detalleStr}`))
+        );
+    }
+
+    const lineas = [];
+    let totalCents = 0;
+    for (const l of validLines) {
+        const cantidad = toNumberOrNull(l.quantity);
+        const precio   = toNumberOrNull(l.unit_price);
+        const umed     = await resolveUnidadMedidaExpo(l.unidad_medida, auth, language);
+        // Sin columna de bonificación en el mapeo: siempre 0 → total = qty * precio.
+        const itemCents = Math.round(cantidad * precio * 100);
+        totalCents += itemCents;
+        lineas.push({
+            concept:       l.concept,
+            quantity:      cantidad,
+            unit_price:    precio,
+            unidad_medida: l.unidad_medida || '',
+            unidad_medida_afip: umed,
+            bonificacion:  0,
+            total_item:    itemCents / 100,
+        });
+    }
+
+    return { lineas, importeTotal: totalCents / 100 };
+}
+
+// Toma el advisory lock de la serie de exportación y ejecuta `fn` adentro.
+//
+// Réplica del patrón de afipIssueFactura (que NO sirve acá: es del flujo WSFEv1
+// y deriva su cbteType con deriveCbteTipoFromLetra, que para 'E' devuelve null).
+// El lock existe por el incidente Polifroni: dos emisiones de la misma serie que
+// leen el mismo "último número" reservan el MISMO número y una queda fantasma.
+// La serie de exportación es (cuit, PV de exportación, 19).
+async function withExportSerieLock(lockKey, fn) {
+    const lockClient = await db.pool.connect();
+    let inTx = false;
+    try {
+        await lockClient.query('BEGIN');
+        inTx = true;
+        // El holder retiene el lock durante los SOAP a AFIP (último nro + último Id
+        // + autorizar + verificar). 120s cubre el peor caso legítimo; pasado eso,
+        // fallar es más seguro que emitir sin serializar.
+        await lockClient.query("SET LOCAL lock_timeout = '120000'");
+        try {
+            await lockClient.query('SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))', ['afip_emit_serie', lockKey]);
+        } catch (lockErr) {
+            throw new Error(`No se pudo serializar la emisión (serie ${lockKey}): otra emisión de la misma serie sigue en curso o el lock quedó trabado (${lockErr.message}). Reintentá en unos segundos.`);
+        }
+        console.log(`[wsfex] lock: serie ${lockKey} adquirida`);
+        const result = await fn();
+        await lockClient.query('COMMIT');
+        inTx = false;
+        return result;
+    } catch (err) {
+        if (inTx) {
+            try { await lockClient.query('ROLLBACK'); } catch (_) {}
+            inTx = false;
+        }
+        throw err;
+    } finally {
+        try { lockClient.release(); } catch (_) {}
+    }
+}
+
+async function emitFacturaEHandler(req, res) {
+    const { payload, runtimeMetadata } = req.body || {};
+    const inbound       = payload?.inboundFieldValues || {};
+    const inputFields   = payload?.inputFields || {};
+    const triggerOutput = payload?.triggerOutputs || {};
+    const callbackUrl   = payload?.callbackUrl || null;
+    const actionUuid    = runtimeMetadata?.actionUuid || null;
+
+    console.log('[fe] received: inbound keys=', Object.keys(inbound).join(','),
+        'inputFields keys=', Object.keys(inputFields).join(','));
+
+    const accountId = String(req.mondayAutomation.accountId || inbound.accountId || '');
+    let itemId = String(
+        inbound.itemId || inputFields.itemId || triggerOutput.itemId || payload?.itemId || ''
+    ).trim();
+    let boardId = String(
+        inbound.boardId || inputFields.boardId || triggerOutput.boardId || payload?.boardId || ''
+    ).trim();
+    // Mismo fallback profundo que factura y NC/ND: hay bloques de monday que
+    // mandan el payload con otra forma.
+    if (!itemId) {
+        const v = deepFindValue(req.body, ['itemId', 'item_id', 'pulseId']);
+        if (v != null) itemId = String(v).trim();
+    }
+    if (!boardId) {
+        const v = deepFindValue(req.body, ['boardId', 'board_id']);
+        if (v != null) boardId = String(v).trim();
+    }
+
+    console.log(`[fe] Resolved: accountId=${accountId}, itemId=${itemId}, boardId=${boardId}`);
+
+    if (!accountId || !itemId) {
+        console.error('[fe] FAIL: faltan datos. accountId:', accountId, 'itemId:', itemId,
+            '| body:', JSON.stringify(req.body || {}).slice(0, 1500));
+        if (!res.headersSent) {
+            res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+        }
+        return;
+    }
+
+    // Plan limit enforcement (requerido por monday). Si nos delegó
+    // comprobanteHandler (res.headersSent ya true), el caller ya chequeó el
+    // límite. Cualquier comprobante — incluida la Factura E — suma al tope.
+    if (!res.headersSent && accountId) {
+        try {
+            const limitCheck = await checkEmissionAllowed(accountId);
+            if (!limitCheck.allowed) {
+                console.warn(`[fe] bloqueado account=${accountId} reason=${limitCheck.reason} used=${limitCheck.used}/${limitCheck.limit}`);
+                return res.status(402).json({
+                    error: 'plan_limit_reached',
+                    reason: limitCheck.reason,
+                    plan: limitCheck.plan.plan_id,
+                    used: limitCheck.used,
+                    limit: limitCheck.limit,
+                    message: (limitCheck.reason && limitCheck.reason.startsWith('subscription_'))
+                        ? 'La suscripción de la app no está activa. Renová tu plan para seguir emitiendo comprobantes.'
+                        : `Alcanzaste el límite mensual de tu plan (${limitCheck.used}/${limitCheck.limit} comprobantes). Upgradeá tu plan para seguir emitiendo.`,
+                });
+            }
+        } catch (err) {
+            // Igual que en factura/NC: si el check falla (bug nuestro) no bloqueamos
+            // al cliente. Queda logueado para auditoría.
+            console.warn('[fe] checkEmissionAllowed falló — permitiendo emisión:', err.message);
+        }
+    }
+
+    if (!res.headersSent) res.status(200).json({ status: 'received', actionUuid });
+
+    // ── Procesar en background ────────────────────────────────────────────────
+    setImmediate(async () => {
+        const tStart = Date.now();
+        let afipResult = null;
+        let statusColumnId   = null;
+        let autoUpdateStatus = true;
+        let autoRenameItem   = true;
+        let successLabel     = COMPROBANTE_STATUS_FLOW.success;
+        let errorLabel       = COMPROBANTE_STATUS_FLOW.error;
+        let processingLabel  = COMPROBANTE_STATUS_FLOW.processing;
+        let feLanguage       = 'es';   // idioma de la APP (mensajes al usuario)
+
+        try {
+            // ── 1. Token de Monday ─────────────────────────────────────────────
+            const mondayToken = req.mondayAutomation.shortLivedToken
+                || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
+            if (!mondayToken) throw new Error('No hay token de Monday para consultar el item');
+
+            // ── 2. Item + empresa ──────────────────────────────────────────────
+            let feItemColumns = [];
+            let feSubitems    = [];
+            try {
+                const itemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
+                feItemColumns = itemData.mainColumns || [];
+                feSubitems    = itemData.subitems || [];
+                if (!boardId) boardId = String(itemData.boardId || '').trim();
+            } catch (fetchErr) {
+                console.warn('[fe] no se pudo traer el item de monday:', fetchErr.message);
+            }
+            if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
+
+            await ensureInvoiceEmissionsTable();
+            const company = await getCompanyForBoard(accountId, boardId);
+            if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
+
+            // GUARD: la instancia de staging NO emite para clientes reales de prod.
+            assertStagingNotBlocked(company);
+
+            console.log(`[fe] Emitiendo Factura E para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+
+            // Config del board: misma columna de status y mismos labels que factura.
+            try {
+                const cfgRes = await db.query(
+                    `SELECT status_column_id, auto_update_status, auto_rename_item,
+                            success_label, error_label, processing_label, language
+                     FROM board_automation_configs
+                     WHERE company_id=$1 AND board_id=$2
+                     ORDER BY updated_at DESC NULLS LAST, id DESC
+                     LIMIT 1`,
+                    [company.id, boardId]
+                );
+                if (cfgRes.rows[0]) {
+                    statusColumnId   = cfgRes.rows[0].status_column_id || null;
+                    autoUpdateStatus = cfgRes.rows[0].auto_update_status !== false;
+                    autoRenameItem   = cfgRes.rows[0].auto_rename_item !== false;
+                    feLanguage = cfgRes.rows[0].language || 'es';
+                    const flowFe = resolveStatusFlow(feLanguage);
+                    successLabel    = cfgRes.rows[0].success_label    || flowFe.success;
+                    errorLabel      = cfgRes.rows[0].error_label      || flowFe.error;
+                    processingLabel = cfgRes.rows[0].processing_label || flowFe.processing;
+                }
+            } catch (cfgErr) {
+                console.warn('[fe] no se pudo leer board config para status:', cfgErr.message);
+            }
+            const L = (en, es) => (feLanguage === 'en' ? en : es);
+            const docLabel = L('Export Invoice', 'Factura E');
+
+            // ── 3. Datos Fiscales de exportación (gate de configuración) ───────
+            // El PV de exportación NO es el default_point_of_sale: AFIP exige que
+            // sea uno distinto, dado de alta como "Comprobantes de Exportación -
+            // Web Services". Sin él no hay serie donde numerar.
+            if (!company.emite_factura_e) {
+                throw new Error(L(
+                    `This company doesn't have export invoicing enabled.\n` +
+                    `Open the app → Tax Details, tick "I issue Factura E (exports)" and complete ` +
+                    `the export point of sale before issuing.`,
+                    'Esta empresa no tiene habilitada la facturación de exportación.\n' +
+                    'Abrí la app → Datos Fiscales, tildá "Emito Facturas E (exportación)" y completá ' +
+                    'el punto de venta de exportación antes de emitir.'
+                ));
+            }
+            const ptoVentaExpo = Number(company.punto_venta_exportacion);
+            if (!Number.isFinite(ptoVentaExpo) || ptoVentaExpo <= 0) {
+                throw new Error(L(
+                    `The export point of sale is not configured.\n` +
+                    `Open the app → Tax Details and pick your export point of sale (AFIP requires a ` +
+                    `point of sale of type "Comprobantes de Exportación - Web Services", different ` +
+                    `from the local one).`,
+                    'Falta configurar el punto de venta de exportación.\n' +
+                    'Abrí la app → Datos Fiscales y elegí tu punto de venta de exportación (AFIP exige ' +
+                    'un punto de venta del tipo "Comprobantes de Exportación - Web Services", distinto ' +
+                    'del de mercado interno).'
+                ));
+            }
+            // Forma_pago es OBLIGATORIA para Cbte_Tipo=19 (validación 1620).
+            const formaPago = String(company.forma_pago_exportacion || '').trim();
+            if (!formaPago) {
+                throw new Error(L(
+                    `The export payment method is not configured.\n` +
+                    `AFIP requires it on every Factura E. Set it in the app → Tax Details ` +
+                    `(e.g. "Transferencia bancaria").`,
+                    'Falta configurar la forma de pago de exportación.\n' +
+                    'AFIP la exige en toda Factura E. Cargala en la app → Datos Fiscales ' +
+                    '(ej: "Transferencia bancaria").'
+                ));
+            }
+            // Idioma DEL COMPROBANTE (campo AFIP Idioma_cbte 1/2/3) — es OTRA cosa
+            // que el idioma de la app: un board en español puede facturarle en
+            // inglés a un cliente de EE.UU. Default español si no lo configuraron.
+            const idiomaCbte = [1, 2, 3].includes(Number(company.idioma_comprobante_default))
+                ? Number(company.idioma_comprobante_default)
+                : afipConfig.IDIOMA_CBTE.ES;
+
+            // ── 4. Mapeo del board ─────────────────────────────────────────────
+            let feMapping = {};
+            try {
+                feMapping = (await loadBoardMappingForEmit(company.id, boardId)) || {};
+            } catch (mapErr) {
+                console.warn('[fe] no se pudo leer el mapeo del board:', mapErr.message);
+            }
+
+            // Las 7 columnas obligatorias de todo comprobante (write-back + ruteo).
+            const feReceptorErrors = checkReceptorWriteBackMapped(feMapping, feLanguage);
+            if (feReceptorErrors.length > 0) {
+                throw new Error(L(
+                    `Can't issue the Export Invoice:\n` + feReceptorErrors.map((e) => `• ${e}`).join('\n'),
+                    `No se puede emitir la Factura E:\n` + feReceptorErrors.map((e) => `• ${e}`).join('\n')
+                ));
+            }
+
+            // Control secundario del Tipo de Comprobante: el disparador real es la
+            // receta, pero si la columna dice otra cosa el item no es una Factura E.
+            if (feMapping.tipo_comprobante) {
+                const tipoCompRaw = (getColumnTextById(feItemColumns, feMapping.tipo_comprobante) || '').trim();
+                if (tipoCompRaw
+                    && !/^\s*factura\s+e\b/i.test(tipoCompRaw)
+                    && !/^\s*export\s+invoice\b/i.test(tipoCompRaw)) {
+                    throw new Error(L(
+                        `The item is marked as "${tipoCompRaw}" in the Voucher Type column, not as an ` +
+                        `Export Invoice. Make sure you're triggering the recipe on the right item.`,
+                        `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
+                        `no como Factura E. Verificá que estés disparando la receta sobre el item correcto.`
+                    ));
+                }
+            }
+
+            // Columnas propias de exportación. Las 3 primeras son obligatorias:
+            // sin país no hay Dst_cmp, sin fecha de pago AFIP rechaza (1672) y sin
+            // domicilio también (1660).
+            const faltanExpo = [];
+            if (!feMapping.pais_destino)           faltanExpo.push(L('Destination Country', 'País de Destino'));
+            if (!feMapping.fecha_pago_exportacion) faltanExpo.push(L('Payment Date', 'Fecha de Pago'));
+            if (!feMapping.receptor_domicilio)     faltanExpo.push(L("Client's Address", 'Domicilio del Cliente'));
+            if (faltanExpo.length > 0) {
+                throw new Error(L(
+                    `The board doesn't have the export columns mapped: ${faltanExpo.join(', ')}.\n` +
+                    `Configure them in the app's Visual Mapping, "Exports (Factura E)" section.`,
+                    `El tablero no tiene mapeadas las columnas de exportación: ${faltanExpo.join(', ')}.\n` +
+                    `Configuralas en el Mapeo Visual de la app, sección "Exportación (Factura E)".`
+                ));
+            }
+
+            // ── 5. Leer los datos del item ─────────────────────────────────────
+            const paisRaw       = (getColumnTextById(feItemColumns, feMapping.pais_destino) || '').trim();
+            const fechaPagoRaw  = (getColumnTextById(feItemColumns, feMapping.fecha_pago_exportacion) || '').trim();
+            const domicilioCli  = (getColumnTextById(feItemColumns, feMapping.receptor_domicilio) || '').trim();
+            const idImpositivo  = feMapping.id_impositivo_receptor
+                ? (getColumnTextById(feItemColumns, feMapping.id_impositivo_receptor) || '').trim()
+                : '';
+            const tipoEntidadRaw = feMapping.tipo_entidad_receptor
+                ? (getColumnTextById(feItemColumns, feMapping.tipo_entidad_receptor) || '').trim()
+                : '';
+            // El receptor del exterior NO está en el padrón de AFIP: la razón social
+            // la carga el usuario. Reusamos la columna de write-back de razón social,
+            // que en Factura E funciona como INPUT (en A/B/C la escribe la app desde
+            // el padrón).
+            const clienteRaw = (getColumnTextById(feItemColumns, feMapping.razon_social_receptor) || '').trim();
+
+            const itemFaltantes = [];
+            if (!paisRaw)      itemFaltantes.push(L('Destination Country', 'País de Destino'));
+            if (!fechaPagoRaw) itemFaltantes.push(L('Payment Date', 'Fecha de Pago'));
+            if (!domicilioCli) itemFaltantes.push(L("Client's Address", 'Domicilio del Cliente'));
+            if (!clienteRaw)   itemFaltantes.push(L("Recipient Legal Name", 'Razón Social del Receptor'));
+            if (itemFaltantes.length > 0) {
+                throw new Error(
+                    L('Item incomplete — fix the following before issuing:\n',
+                      'Item incompleto — corregí los siguientes datos antes de emitir:\n') +
+                    itemFaltantes.map((f) => `• ${f}`).join('\n')
+                );
+            }
+
+            // Fechas en formato AFIP (YYYYMMDD). La de emisión va en hora ARGENTINA
+            // (ver fechaHoyArgentinaYYYYMMDD): AFIP opera en ART y el droplet en UTC.
+            const fechaCbte = fechaHoyArgentinaYYYYMMDD();
+            const fechaPago = String(fechaPagoRaw).replace(/\D/g, '').slice(0, 8);
+            if (fechaPago.length !== 8) {
+                throw new Error(L(
+                    `Couldn't read the Payment Date ("${fechaPagoRaw}"). It must be a date column ` +
+                    `with a valid date — AFIP requires it on every Factura E for services.`,
+                    `No se pudo leer la Fecha de Pago ("${fechaPagoRaw}"). Tiene que ser una columna ` +
+                    `de fecha con una fecha válida — AFIP la exige en toda Factura E de servicios.`
+                ));
+            }
+            // Validación 1674: Fecha_pago >= Fecha_cbte.
+            if (fechaPago < fechaCbte) {
+                const fmt = (d) => `${d.slice(6, 8)}/${d.slice(4, 6)}/${d.slice(0, 4)}`;
+                throw new Error(L(
+                    `The Payment Date (${fmt(fechaPago)}) is earlier than the issue date ` +
+                    `(${fmt(fechaCbte)}). AFIP rejects Factura E with a payment date in the past — ` +
+                    `set it to today or later.`,
+                    `La Fecha de Pago (${fmt(fechaPago)}) es anterior a la fecha de emisión ` +
+                    `(${fmt(fechaCbte)}). AFIP rechaza la Factura E con fecha de pago pasada — ` +
+                    `ponela de hoy en adelante.`
+                ));
+            }
+
+            // Punto de venta: la Factura E sale SIEMPRE del PV de exportación de
+            // Datos Fiscales, no del de la columna (que lista los PV de mercado
+            // interno). Si el board mapea "Punto de Venta" y el usuario eligió otro,
+            // cortamos — así no cree que emite desde el que eligió. Vacía → la
+            // completamos por write-back después de emitir. Mismo criterio que NC/ND.
+            let fePvColumnNeedsBackfill = false;
+            if (feMapping.punto_venta) {
+                const pvSelRaw = (getColumnTextById(feItemColumns, feMapping.punto_venta) || '').trim();
+                if (!pvSelRaw) {
+                    fePvColumnNeedsBackfill = true;
+                } else {
+                    const pvSel = parseInt(pvSelRaw.replace(/\D/g, ''), 10);
+                    if (pvSel && pvSel !== ptoVentaExpo) {
+                        throw new Error(L(
+                            `You selected Point of Sale ${pvSel}, but Export Invoices are always issued ` +
+                            `from the export point of sale (${ptoVentaExpo}) configured in Tax Details — ` +
+                            `AFIP requires a dedicated point of sale for exports. Change it to ` +
+                            `${ptoVentaExpo} or leave that column empty.`,
+                            `Seleccionaste el Punto de Venta ${pvSel}, pero las Facturas E se emiten siempre ` +
+                            `desde el punto de venta de exportación (${ptoVentaExpo}) configurado en Datos ` +
+                            `Fiscales — AFIP exige un punto de venta propio para exportación. Cambialo a ` +
+                            `${ptoVentaExpo} o dejá esa columna vacía.`
+                        ));
+                    }
+                }
+            }
+
+            // ── 6. Un item = un solo comprobante ───────────────────────────────
+            // Si este item ya emitió (o tiene en curso / con número reservado) un
+            // comprobante que NO es esta Factura E, emitir ahora dejaría dos
+            // comprobantes vivos para el mismo item. Mismo control que NC/ND.
+            const otroEnEsteItem = await db.query(
+                `SELECT afip_result_json, invoice_type, status, attempted_cbte_nro
+                   FROM invoice_emissions
+                  WHERE company_id=$1 AND board_id=$2 AND item_id=$3
+                    AND invoice_type <> 'E'
+                    AND (
+                      status='success'
+                      OR (status='processing' AND updated_at > NOW() - INTERVAL '5 minutes')
+                      OR (status<>'success' AND attempted_cbte_nro IS NOT NULL)
+                    )
+                  ORDER BY (status='success') DESC, updated_at DESC
+                  LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            if (otroEnEsteItem.rows[0]) {
+                const r = otroEnEsteItem.rows[0];
+                const docPrev = r.invoice_type === 'NC' ? L('Credit Note', 'Nota de Crédito')
+                    : r.invoice_type === 'ND' ? L('Debit Note', 'Nota de Débito')
+                    : L('invoice', 'factura');
+                if (r.status === 'success') {
+                    const f = r.afip_result_json || {};
+                    throw new Error(L(
+                        `This item already issued a voucher (${docPrev} No. ${f.numero_comprobante || '—'}, ` +
+                        `CAE ${f.cae || '—'}). The Export Invoice must go on a NEW item — each item ` +
+                        `corresponds to a single voucher.`,
+                        `Este item ya emitió un comprobante (${docPrev} N° ${f.numero_comprobante || '—'}, ` +
+                        `CAE ${f.cae || '—'}). La Factura E tiene que ir en un item NUEVO — cada item ` +
+                        `corresponde a un solo comprobante.`
+                    ));
+                } else if (r.status === 'processing') {
+                    throw new Error(L(
+                        `This item is issuing a ${docPrev} right now. Wait a few seconds for it to ` +
+                        `finish — do NOT trigger the recipe again.`,
+                        `Este item está emitiendo una ${docPrev} en este momento. Esperá unos segundos ` +
+                        `a que termine — NO vuelvas a disparar la receta.`
+                    ));
+                } else {
+                    throw new Error(L(
+                        `This item has a ${docPrev} with a number reserved at AFIP but unconfirmed ` +
+                        `(likely a timeout). Wait a few minutes and retry — issuing an Export Invoice ` +
+                        `now could create two live vouchers for the same item.`,
+                        `Este item tiene una ${docPrev} con número reservado en AFIP pero sin confirmar ` +
+                        `(probable timeout). Esperá unos minutos y volvé a intentar — emitir una Factura E ` +
+                        `ahora puede crear dos comprobantes vivos para el mismo item.`
+                    ));
+                }
+            }
+
+            // ── 7. Idempotencia de la Factura E ────────────────────────────────
+            const existingFe = await db.query(
+                `SELECT id, status, afip_result_json, draft_json, attempted_cbte_nro
+                 FROM invoice_emissions
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E' LIMIT 1`,
+                [company.id, boardId, itemId]
+            );
+            if (existingFe.rows[0]?.status === 'success') {
+                const prev = existingFe.rows[0].afip_result_json || {};
+                throw new Error(
+                    `Ya se emitió una Factura E para este item ` +
+                    `(Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
+                );
+            }
+            // Recovery: número + <Id> de requerimiento de un intento previo que no
+            // llegó a confirmarse. El <Id> es la clave de idempotencia de WSFEX:
+            // reenviar el MISMO Id hace que AFIP devuelva Reproceso='S' con el CAE
+            // original en vez de emitir un segundo comprobante.
+            const prevRow = (existingFe.rows[0] && existingFe.rows[0].status !== 'success')
+                ? existingFe.rows[0] : null;
+            const previousCbteNro = prevRow?.attempted_cbte_nro ? Number(prevRow.attempted_cbte_nro) : null;
+            const previousWsfexId = Number.isFinite(Number(prevRow?.draft_json?.wsfex_id))
+                ? Number(prevRow.draft_json.wsfex_id) : null;
+
+            // ── 8. Certificados + token WSAA del servicio 'wsfex' ──────────────
+            // OJO: 'wsfex' es un servicio DISTINTO de 'wsfe'. El cert puede ser el
+            // mismo, pero tiene que estar delegado también a wsfex en el
+            // Administrador de Relaciones; si no, AFIP responde "Computador no
+            // autorizado a acceder al servicio".
+            const certResult = await db.query(
+                'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
+                [company.id]
+            );
+            if (certResult.rows.length === 0) throw new Error('Faltan certificados AFIP para este emisor');
+            const certRow = certResult.rows[0];
+            const emisorCertPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
+            const decryptedKey  = CryptoJS.AES.decrypt(certRow.encrypted_private_key, process.env.ENCRYPTION_KEY)
+                .toString(CryptoJS.enc.Utf8);
+            const emisorKeyPem  = normalizePem(decryptedKey, 'PRIVATE KEY');
+
+            async function getWsfexAuth(force = false) {
+                try {
+                    const t = await afipAuthModule.getToken({
+                        certPem: emisorCertPem, keyPem: emisorKeyPem,
+                        cuit: company.cuit, service: afipWsfex.WSFEX_SERVICE,
+                        companyId: company.id, force,
+                    });
+                    return { token: t.token, sign: t.sign, cuit: company.cuit };
+                } catch (err) {
+                    // El error crudo de AFIP no le dice nada al usuario. Este es EL
+                    // caso común la primera vez: el cert no está delegado a wsfex.
+                    if (/no autorizado|not authorized|Computador/i.test(err.message)) {
+                        throw new Error(L(
+                            `AFIP rejected access to the export web service (wsfex).\n` +
+                            `Your certificate is not delegated to that service yet. In AFIP: ` +
+                            `"Administrador de Relaciones" → Nueva Relación → Servicio → AFIP → WebServices → ` +
+                            `"ws - Facturación Electrónica de Exportación", and pick the same certificate ` +
+                            `alias you already use. The app's Tax Details screen has the step by step.\n` +
+                            `(AFIP said: ${err.message})`,
+                            `AFIP rechazó el acceso al web service de exportación (wsfex).\n` +
+                            `Tu certificado todavía no está delegado a ese servicio. En AFIP: ` +
+                            `"Administrador de Relaciones" → Nueva Relación → Servicio → AFIP → WebServices → ` +
+                            `"ws - Facturación Electrónica de Exportación", y elegí el mismo alias de certificado ` +
+                            `que ya usás. El paso a paso está en la pantalla de Datos Fiscales de la app.\n` +
+                            `(AFIP dijo: ${err.message})`
+                        ));
+                    }
+                    throw err;
+                }
+            }
+            let auth = await getWsfexAuth(false);
+
+            // Si el cert del emisor fue rotado, el token cacheado queda obsoleto y
+            // AFIP responde [600] ValidacionDeToken. Se invalida el caché y se
+            // reintenta UNA vez. Envuelve TODA llamada a AFIP (no solo la emisión):
+            // acá las primeras que salen son las de las tablas de parámetros, así que
+            // si el retry cubriera solo el FEXAuthorize, un cert rotado moriría antes
+            // de llegar y seguiría fallando hasta que venza el caché del token.
+            async function withWsfexTokenRetry(fn) {
+                try {
+                    return await fn(auth);
+                } catch (err) {
+                    const esTokenInvalido = /\[600\]|ValidacionDeToken|No aparecio CUIT en lista de relaciones/i.test(err.message);
+                    if (!esTokenInvalido) throw err;
+                    console.warn('[fe] Token WSAA rechazado por AFIP — invalidando caché y reintentando');
+                    afipAuthModule.invalidateToken(afipWsfex.WSFEX_SERVICE, company.cuit, company.id);
+                    auth = await getWsfexAuth(true);
+                    return await fn(auth);
+                }
+            }
+
+            // ── 9. Resolver país, tipo de entidad y CUIT país ──────────────────
+            const pais = await withWsfexTokenRetry((a) => resolvePaisDestinoExpo(paisRaw, a, feLanguage));
+            const tipoEntidad = resolveTipoEntidadReceptor(tipoEntidadRaw);
+            console.log(`[fe] destino=${pais.codigo} (${pais.descripcion}) tipoEntidad=${tipoEntidad}`);
+
+            // El CUIT país depende de país + tipo de entidad (la tabla DST_CUIT de
+            // AFIP tiene ~3 filas por país). Puede no existir — las zonas francas no
+            // tienen CUIT país propio.
+            let cuitPaisCliente = null;
+            try {
+                cuitPaisCliente = await withWsfexTokenRetry((a) => afipWsfex.fexResolveCuitPais(pais.codigo, a, tipoEntidad));
+            } catch (cpErr) {
+                console.warn(`[fe] no se pudo resolver CUIT país (${pais.codigo}/${tipoEntidad}): ${cpErr.message}`);
+            }
+            // Validación 1580: hace falta AL MENOS UNO entre Cuit_pais_cliente e
+            // Id_impositivo. Cortamos ANTES de pegarle a AFIP para dar un mensaje
+            // útil en vez del código crudo.
+            if (!cuitPaisCliente && !idImpositivo) {
+                throw new Error(L(
+                    `AFIP has no "country CUIT" for ${pais.descripcion} with client type ` +
+                    `"${tipoEntidad}" (typical of free-trade zones).\n` +
+                    `In that case AFIP requires the client's tax ID: fill in the "Client's tax ID" ` +
+                    `column on the item (map it in Visual Mapping if it isn't yet).`,
+                    `AFIP no tiene un "CUIT país" para ${pais.descripcion} con tipo de cliente ` +
+                    `"${tipoEntidad}" (es lo que pasa con las zonas francas).\n` +
+                    `En ese caso AFIP exige el ID impositivo del cliente: completá la columna ` +
+                    `"ID impositivo del cliente" en el item (y mapeala en el Mapeo Visual si no lo está).`
+                ));
+            }
+            if (!cuitPaisCliente) {
+                console.log(`[fe] sin CUIT país para ${pais.codigo}/${tipoEntidad} — se emite con Id_impositivo`);
+            }
+
+            // ── 10. Moneda y cotización ────────────────────────────────────────
+            const monedaRaw = feMapping.moneda ? (getColumnTextById(feItemColumns, feMapping.moneda) || '') : '';
+            const moneda = await withWsfexTokenRetry((a) => resolveMonedaExpo(monedaRaw, a, feLanguage));
+
+            // Precio: si la factura sale en moneda extranjera y el board tiene la
+            // columna de precio en USD, se lee esa (mismo criterio que A/B/C y NC).
+            const precioColumnId = (moneda.id !== 'PES' && feMapping.precio_unitario_usd)
+                ? feMapping.precio_unitario_usd
+                : feMapping.precio_unitario;
+
+            // Cotización. Precedencia idéntica al flujo de A/B/C:
+            //   PES → 1  ·  override del cliente en la columna → ese  ·  si no → AFIP.
+            //
+            // Validación 2053: para servicios con moneda != PES, AFIP exige la
+            // cotización del DÍA HÁBIL ANTERIOR a la fecha de emisión. La consulta
+            // automática va por FEParamGetCotizacion (WSFEv1) y NO por WSFEX: es el
+            // código ya probado en producción, y requiere su propio token de 'wsfe'
+            // (los tokens de WSAA son por servicio, el de wsfex no sirve acá).
+            const cotizacionRaw = feMapping.cotizacion
+                ? getColumnTextById(feItemColumns, feMapping.cotizacion) : '';
+            const cotizacionItem = toNumberOrNull(cotizacionRaw);
+            let monedaCtz = 1.0;
+            if (moneda.id !== 'PES') {
+                if (cotizacionItem && cotizacionItem > 0) {
+                    monedaCtz = cotizacionItem;
+                    console.log(`[fe] cotización override del cliente: ${moneda.id}=${monedaCtz}`);
+                } else {
+                    try {
+                        const tokenForCot = await afipAuthModule.getToken({
+                            certPem: emisorCertPem, keyPem: emisorKeyPem,
+                            cuit: company.cuit, service: 'wsfe',
+                            companyId: company.id,
+                        });
+                        const cotResult = await afipGetCotizacion({
+                            token: tokenForCot.token, sign: tokenForCot.sign,
+                            cuit: company.cuit, monId: moneda.id,
+                        });
+                        monedaCtz = cotResult.monCotiz;
+                        console.log(`[fe] cotización AFIP oficial: ${moneda.id}=${monedaCtz} (fecha ${cotResult.fchCotiz})`);
+                    } catch (cotErr) {
+                        // Un exportador podría tener el cert delegado a wsfex pero no
+                        // a wsfe. En vez de romper con el error crudo, le decimos que
+                        // cargue la cotización a mano.
+                        console.warn(`[fe] no se pudo consultar la cotización de ${moneda.id}: ${cotErr.message}`);
+                        throw new Error(L(
+                            `Couldn't fetch AFIP's official exchange rate for ${moneda.descripcion} ` +
+                            `(${moneda.id}).\n` +
+                            `Enter it manually in the item's exchange-rate column and retry. AFIP requires ` +
+                            `the rate of the business day BEFORE the issue date.\n` +
+                            `(Detail: ${cotErr.message})`,
+                            `No se pudo consultar la cotización oficial de AFIP para ${moneda.descripcion} ` +
+                            `(${moneda.id}).\n` +
+                            `Cargala a mano en la columna de tipo de cambio del item y reintentá. AFIP exige ` +
+                            `la cotización del día hábil ANTERIOR a la fecha de emisión.\n` +
+                            `(Detalle: ${cotErr.message})`
+                        ));
+                    }
+                }
+            }
+
+            // ── 11. Líneas del comprobante ─────────────────────────────────────
+            if (!feSubitems || feSubitems.length === 0) {
+                throw new Error(L(
+                    `The Export Invoice item has no subitems. Add the services you're exporting as ` +
+                    `subitems (description, quantity and price).`,
+                    'El item de Factura E no tiene subítems. Cargá como subítems los servicios que ' +
+                    'estás exportando (concepto, cantidad y precio).'
+                ));
+            }
+            const feLines = await withWsfexTokenRetry((a) => buildExportLinesFromSubitems({
+                subitems: feSubitems, mapping: feMapping,
+                precioColumnId, auth: a, language: feLanguage,
+            }));
+
+            // Observaciones propias del item (opcional).
+            let feObservaciones = (feMapping.observaciones
+                ? (getColumnTextById(feItemColumns, feMapping.observaciones) || '') : '').trim();
+            if (feObservaciones.length > 255) {
+                console.warn(`[fe] observaciones truncadas a 255 chars (original ${feObservaciones.length})`);
+                feObservaciones = feObservaciones.slice(0, 255);
+            }
+
+            // ── 12. Draft ──────────────────────────────────────────────────────
+            // Importes: exportación NO discrimina IVA → importe_neto e importe_iva
+            // van en null a propósito (no son 0: no existen). El audit board y el
+            // PDF ya saltean los null.
+            const feDraft = {
+                tipo_comprobante: 'E',
+                cbte_tipo_afip:   afipConfig.CBTE_TYPE_EXPO.FACTURA,
+                punto_venta:      ptoVentaExpo,
+                fecha_emision:    `${fechaCbte.slice(0, 4)}-${fechaCbte.slice(4, 6)}-${fechaCbte.slice(6, 8)}`,
+                tipo_expo:        afipConfig.TIPO_EXPO.SERVICIOS,
+                // Receptor del exterior: no hay padrón que consultar, todo lo carga
+                // el usuario.
+                receptor_nombre:        clienteRaw,
+                receptor_domicilio:     domicilioCli,
+                receptor_cuit_pais:     cuitPaisCliente || null,
+                receptor_id_impositivo: idImpositivo || null,
+                receptor_tipo_entidad:  tipoEntidad,
+                pais_destino_codigo:      pais.codigo,
+                pais_destino_descripcion: pais.descripcion,
+                forma_pago:    formaPago,
+                fecha_pago:    `${fechaPago.slice(0, 4)}-${fechaPago.slice(4, 6)}-${fechaPago.slice(6, 8)}`,
+                idioma_cbte:   idiomaCbte,
+                moneda:        moneda.id,
+                moneda_descripcion: moneda.descripcion,
+                cotizacion:    monedaCtz,
+                lineas:        feLines.lineas,
+                importe_total: feLines.importeTotal,
+                importe_neto:  null,
+                importe_iva:   null,
+                observaciones: feObservaciones || null,
+                // <Id> de requerimiento WSFEX — se completa dentro del lock, antes
+                // del SOAP. Es lo único que permite recuperar el comprobante si la
+                // respuesta se pierde.
+                wsfex_id: previousWsfexId,
+            };
+
+            // ── 13. Claim atómico ──────────────────────────────────────────────
+            // Solo prospera si la fila NO está ya 'processing' (otra emisión en
+            // curso) ni 'success'. Una 'processing' vieja (>5 min: server caído
+            // mid-emisión) se puede re-reclamar.
+            const feClaim = await db.query(
+                `INSERT INTO invoice_emissions
+                    (company_id, board_id, item_id, invoice_type, status, request_json, draft_json)
+                 VALUES ($1,$2,$3,'E','processing',$4,$5)
+                 ON CONFLICT (company_id, board_id, item_id, invoice_type)
+                 DO UPDATE SET status='processing', error_message=NULL,
+                               request_json=$4, draft_json=$5,
+                               updated_at=CURRENT_TIMESTAMP
+                 WHERE invoice_emissions.status NOT IN ('processing','success')
+                    OR invoice_emissions.updated_at < NOW() - INTERVAL '5 minutes'
+                 RETURNING id`,
+                [company.id, boardId, itemId, JSON.stringify(inbound), JSON.stringify(feDraft)]
+            );
+            if (feClaim.rows.length === 0) {
+                console.warn(`[fe] claim falló item ${itemId} — ya hay una Factura E en curso, abortando sin tocar la fila`);
+                await postMondayUpdate({
+                    apiToken: mondayToken, itemId,
+                    body: L(
+                        '⏳ An Export Invoice is already being issued for this item. Wait for it to finish — don\'t trigger the recipe again.',
+                        '⏳ Ya hay una Factura E en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.'
+                    ),
+                }).catch(() => {});
+                return;
+            }
+
+            // Status del item → "Creando Comprobante" (fire-and-forget).
+            if (autoUpdateStatus && statusColumnId) {
+                updateMondayItemStatus({
+                    apiToken: mondayToken, boardId, itemId,
+                    statusColumnId, label: processingLabel,
+                }).catch((e) => console.warn('[fe] status processing fire-and-forget falló:', e.message));
+            }
+
+            // ── 14. Emitir en AFIP (WSFEXv1), serializado por serie ────────────
+            const cbteTipo = afipConfig.CBTE_TYPE_EXPO.FACTURA;
+            const lockKey  = `${company.cuit}:${ptoVentaExpo}:${cbteTipo}`;
+
+            // Persiste el <Id> de requerimiento en el draft ANTES del SOAP. Es tan
+            // crítico como el cbteNro: sin el Id no se puede pedir el reproceso y un
+            // comprobante emitido cuya respuesta se perdió queda huérfano.
+            async function persistWsfexId(wsfexId) {
+                const r = await db.query(
+                    `UPDATE invoice_emissions
+                     SET draft_json = jsonb_set(draft_json, '{wsfex_id}', to_jsonb($4::bigint)),
+                         updated_at=CURRENT_TIMESTAMP
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'`,
+                    [company.id, boardId, itemId, wsfexId]
+                );
+                if (r.rowCount !== 1) throw new Error(`reserva del Id WSFEX no impactó la fila esperada (rowCount=${r.rowCount})`);
+            }
+
+            // Mismo contrato que el callback del flujo WSFEv1, para que el día que
+            // se unifiquen no haya que tocar el caller.
+            async function onCbteNroAssigned({ cbteType, pointOfSale, cbteNro }) {
+                const r = await db.query(
+                    `UPDATE invoice_emissions
+                     SET attempted_cbte_tipo=$4, attempted_pto_vta=$5,
+                         attempted_cbte_nro=$6, updated_at=CURRENT_TIMESTAMP
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'`,
+                    [company.id, boardId, itemId, cbteType, pointOfSale, cbteNro]
+                );
+                if (r.rowCount !== 1) throw new Error(`reserva de cbteNro (Factura E) no impactó la fila esperada (rowCount=${r.rowCount})`);
+            }
+
+            // Reintento con backoff corto para las dos reservas pre-SOAP: si no
+            // podemos anotar qué vamos a emitir, NO emitimos.
+            async function reservarConReintento(label, fn) {
+                let lastErr = null;
+                for (let i = 0; i < 3; i++) {
+                    try { await fn(); return; } catch (e) {
+                        lastErr = e;
+                        console.warn(`[fe] ${label} intento ${i + 1}/3 falló: ${e.message}`);
+                        if (i < 2) await new Promise((r) => setTimeout(r, 300));
+                    }
+                }
+                throw new Error(`[RESERVA_FALLIDA] No se pudo reservar ${label} en la base antes de emitir: ${lastErr?.message || 'error desconocido'}. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP. Reintentá en unos segundos.`);
+            }
+
+            async function emitirFacturaE(currentAuth) {
+                return withExportSerieLock(lockKey, async () => {
+                    // ── Recovery de un intento previo ──────────────────────────
+                    // Si ya habíamos reservado un número, preguntamos a AFIP si ese
+                    // comprobante existe. Si existe y coincide, lo reutilizamos en
+                    // vez de emitir uno nuevo.
+                    if (previousCbteNro) {
+                        try {
+                            const recovered = await afipWsfex.fexGetCmp({
+                                ...currentAuth, cbteTipo, ptoVenta: ptoVentaExpo, cbteNro: previousCbteNro,
+                            });
+                            if (recovered && recovered.cae) {
+                                // Anti-fantasma: solo se reutiliza con evidencia de que
+                                // es NUESTRO comprobante. Si el importe difiere, el
+                                // número lo pisó otra emisión → abortar para revisión
+                                // manual antes que adjudicarnos un comprobante ajeno.
+                                const importeKnown = recovered.imp_total != null && Number(recovered.imp_total) > 0;
+                                if (importeKnown && Math.abs(Number(recovered.imp_total) - feLines.importeTotal) > 0.01) {
+                                    throw new Error(
+                                        `[RECOVERY_MISMATCH] cbteNro=${previousCbteNro} (PV ${ptoVentaExpo}, tipo ${cbteTipo}) ` +
+                                        `ya existe en AFIP con CAE=${recovered.cae} pero su importe (${recovered.imp_total}) ` +
+                                        `no coincide con el de esta emisión (${feLines.importeTotal}). Probable número pisado ` +
+                                        `por otra emisión — NO se reutiliza, se aborta para revisión manual.`
+                                    );
+                                }
+                                console.log(`[fe] recovery: cbteNro=${previousCbteNro} ya existe en AFIP con CAE=${recovered.cae} — reutilizando`);
+                                return {
+                                    resultado: recovered.resultado || 'A',
+                                    cae: recovered.cae,
+                                    cae_vencimiento: recovered.cae_vencimiento,
+                                    numero_comprobante: recovered.cbte_nro,
+                                    tipo_comprobante: 'E',
+                                    cbte_tipo_afip: cbteTipo,
+                                    imp_neto: null,
+                                    imp_iva: null,
+                                    observacion: null,
+                                    raw_xml: recovered.raw_xml_preview || '',
+                                    recovered: true,
+                                    verification: {
+                                        cae_match: true,
+                                        cbte_nro_match: recovered.cbte_nro === previousCbteNro,
+                                        imp_total_match: !(recovered.imp_total != null
+                                            && Math.abs(Number(recovered.imp_total) - feLines.importeTotal) > 0.01),
+                                        checked_at: new Date().toISOString(),
+                                        source: 'recovery',
+                                    },
+                                };
+                            }
+                            console.log(`[fe] recovery: cbteNro=${previousCbteNro} no existe en AFIP — emisión nueva`);
+                        } catch (recErr) {
+                            // El mismatch es un throw DELIBERADO: propaga. Un error de
+                            // red no: seguimos con emisión nueva (el <Id> reusado es la
+                            // segunda red de contención).
+                            if (/^\[RECOVERY_MISMATCH\]/.test(String(recErr?.message || ''))) throw recErr;
+                            console.warn(`[fe] recovery: error consultando cbteNro=${previousCbteNro}: ${recErr.message} — continuando`);
+                        }
+                    }
+
+                    // <Id> de requerimiento: se REUSA el del intento previo si lo hay.
+                    // Ese es el mecanismo de idempotencia de WSFEX — si AFIP ya lo
+                    // procesó devuelve Reproceso='S' con el CAE original en lugar de
+                    // emitir un segundo comprobante.
+                    let wsfexId = previousWsfexId;
+                    if (wsfexId) {
+                        console.log(`[fe] reusando Id de requerimiento previo=${wsfexId} (reproceso WSFEX)`);
+                    } else {
+                        wsfexId = (await afipWsfex.fexGetLastId(currentAuth)) + 1;
+                        await reservarConReintento('el Id de requerimiento WSFEX', () => persistWsfexId(wsfexId));
+                    }
+
+                    const last = await afipWsfex.fexGetLastCmp({
+                        ...currentAuth, ptoVenta: ptoVentaExpo, cbteTipo,
+                    });
+                    const cbteNro = Number(last.cbteNro) + 1;
+                    await reservarConReintento('el número de comprobante', () => onCbteNroAssigned({
+                        cbteType: cbteTipo, pointOfSale: ptoVentaExpo, cbteNro,
+                    }));
+
+                    console.log(`[fe] autorizando: Id=${wsfexId} PV=${ptoVentaExpo} nro=${cbteNro} total=${feLines.importeTotal} ${moneda.id}`);
+                    const authorized = await afipWsfex.fexAuthorize({
+                        ...currentAuth,
+                        cmp: {
+                            id:        wsfexId,
+                            fechaCbte,
+                            cbteTipo,
+                            ptoVenta:  ptoVentaExpo,
+                            cbteNro,
+                            tipoExpo:  afipConfig.TIPO_EXPO.SERVICIOS,
+                            // Servicios: SIN permiso de embarque y sin bloque de
+                            // permisos (validación 1550).
+                            permisoExistente: '',
+                            dstCmp:    pais.codigo,
+                            cliente:   clienteRaw,
+                            cuitPaisCliente: cuitPaisCliente || '',
+                            domicilioCliente: domicilioCli,
+                            idImpositivo: idImpositivo || '',
+                            monedaId:  moneda.id,
+                            monedaCtz,
+                            impTotal:  feLines.importeTotal,
+                            obs:       feObservaciones || '',
+                            formaPago,
+                            idiomaCbte,
+                            fechaPago,
+                            items: feLines.lineas.map((l) => ({
+                                descripcion:    l.concept,
+                                cantidad:       l.quantity,
+                                unidadMedida:   l.unidad_medida_afip,
+                                precioUnitario: l.unit_price,
+                                bonificacion:   l.bonificacion,
+                                totalItem:      l.total_item,
+                            })),
+                        },
+                    });
+
+                    // Reproceso='S' = AFIP nos devolvió un comprobante YA emitido con
+                    // este mismo Id (nuestro intento anterior sí había llegado). No es
+                    // un error: es la recuperación funcionando. Queda anotado en la
+                    // observación para la auditoría.
+                    if (String(authorized.reproceso || '').toUpperCase() === 'S') {
+                        console.warn(`[fe] AFIP devolvió Reproceso='S' para Id=${wsfexId} — comprobante ya existía, no se re-emitió (CAE=${authorized.cae})`);
+                    }
+
+                    // ── Verificación post-emisión (Fase 2) ─────────────────────
+                    // Confirmar contra AFIP que el comprobante existe y coincide.
+                    // No bloquea (el CAE es válido y el comprobante existe), pero un
+                    // mismatch se taggea para que salte la alerta.
+                    const phase2Mismatches = [];
+                    let verification = null;
+                    let verificationError = null;
+                    try {
+                        verification = await afipWsfex.fexGetCmp({
+                            ...currentAuth, cbteTipo, ptoVenta: ptoVentaExpo,
+                            cbteNro: authorized.numero_comprobante,
+                        });
+                        if (!verification) {
+                            console.warn(`[fe] verify: AFIP no encontró el comprobante recién emitido nro=${authorized.numero_comprobante} (posible delay de propagación)`);
+                        } else {
+                            if (verification.cae !== authorized.cae) {
+                                phase2Mismatches.push(`CAE: emitido=${authorized.cae} vs verificado=${verification.cae}`);
+                            }
+                            if (Number(verification.cbte_nro) !== Number(authorized.numero_comprobante)) {
+                                phase2Mismatches.push(`cbteNro: emitido=${authorized.numero_comprobante} vs verificado=${verification.cbte_nro}`);
+                            }
+                            if (verification.imp_total != null
+                                && Math.abs(Number(verification.imp_total) - feLines.importeTotal) > 0.01) {
+                                phase2Mismatches.push(`importe: emitido=${feLines.importeTotal} vs verificado=${verification.imp_total}`);
+                            }
+                            if (phase2Mismatches.length > 0) {
+                                console.warn(`[fe] verify: MISMATCH nro=${authorized.numero_comprobante}: ${phase2Mismatches.join(' | ')}`);
+                            } else {
+                                console.log(`[fe] verify: OK nro=${authorized.numero_comprobante} CAE=${authorized.cae}`);
+                            }
+                        }
+                    } catch (verifyErr) {
+                        verificationError = verifyErr.message;
+                        console.warn(`[fe] verify: error consultando nro=${authorized.numero_comprobante}: ${verifyErr.message}`);
+                    }
+
+                    const obsParts = [];
+                    if (authorized.motivos_obs) obsParts.push(authorized.motivos_obs);
+                    if (String(authorized.reproceso || '').toUpperCase() === 'S') {
+                        obsParts.push(`[REPROCESO] AFIP devolvió el comprobante ya emitido con el Id ${wsfexId} — no se re-emitió.`);
+                    }
+                    if (phase2Mismatches.length > 0) {
+                        obsParts.unshift(`[FASE2_MISMATCH] ${phase2Mismatches.join(' | ')}`);
+                    }
+
+                    return {
+                        resultado: authorized.resultado,
+                        cae: authorized.cae,
+                        cae_vencimiento: authorized.cae_vencimiento,
+                        numero_comprobante: authorized.numero_comprobante,
+                        // Hay consumidores que leen la letra y otros el tipo AFIP:
+                        // se publican los dos.
+                        tipo_comprobante: 'E',
+                        cbte_tipo_afip: authorized.cbte_tipo_afip || cbteTipo,
+                        // Exportación no discrimina IVA: null, no 0.
+                        imp_neto: null,
+                        imp_iva: null,
+                        observacion: obsParts.length > 0 ? obsParts.join(' — ') : null,
+                        raw_xml: authorized.raw_xml || '',
+                        wsfex_id: wsfexId,
+                        reproceso: authorized.reproceso || null,
+                        verification: verification ? {
+                            cae_match: verification.cae === authorized.cae,
+                            cbte_nro_match: Number(verification.cbte_nro) === Number(authorized.numero_comprobante),
+                            imp_total_match: !(verification.imp_total != null
+                                && Math.abs(Number(verification.imp_total) - feLines.importeTotal) > 0.01),
+                            mismatches: phase2Mismatches,
+                            checked_at: new Date().toISOString(),
+                        } : (verificationError
+                            ? { error: verificationError, checked_at: new Date().toISOString() }
+                            : { skipped: 'no_response', checked_at: new Date().toISOString() }),
+                    };
+                });
+            }
+
+            // El retry por token rotado ya está en withWsfexTokenRetry. Es seguro
+            // reintentar la emisión entera: adentro del lock se re-consulta AFIP por
+            // el número reservado y se reusa el <Id> de requerimiento, así que un
+            // segundo intento recupera el comprobante en vez de duplicarlo.
+            afipResult = await withWsfexTokenRetry((a) => emitirFacturaE(a));
+
+            console.log(`[fe] AFIP respuesta — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
+            if (!afipResult?.cae) throw new Error('AFIP no devolvió CAE para la Factura E');
+
+            // Sincronizar el <Id> de requerimiento REALMENTE usado antes de persistir.
+            // NO es cosmético: feDraft se armó ANTES del lock (con el Id previo, o
+            // null si es la primera vez) y el Id nuevo lo genera y graba
+            // persistWsfexId() adentro del lock, directo contra la fila. Como el
+            // UPDATE de abajo pisa draft_json entero con este objeto, sin esta línea
+            // el Id grabado se perdería — y con él la única forma de pedirle a AFIP el
+            // reproceso. En el camino de recovery afipResult no trae wsfex_id, así que
+            // el ?? conserva el previo.
+            feDraft.wsfex_id = afipResult.wsfex_id ?? feDraft.wsfex_id;
+
+            // Fase 2 mismatch → alerta a Slack (mismo patrón que factura y NC).
+            if (afipResult?.observacion && /\[FASE2_MISMATCH\]/.test(afipResult.observacion)) {
+                console.warn(`[fe] FASE2_MISMATCH detectado en Factura E — alertando a Slack: ${afipResult.observacion}`);
+                notifySlackSystemError({
+                    accountId,
+                    clientItemName: null,
+                    errorMessage: `[FASE2_MISMATCH] Verificación post-emisión de Factura E difiere de lo enviado. CAE: ${afipResult.cae}, item: ${itemId}. Detalle: ${afipResult.observacion}`,
+                    auditItemId: null,
+                }).catch((e) => console.warn('[slack] FASE2_MISMATCH alert (Factura E) falló:', e.message));
+            }
+
+            // ── 15. Persistir resultado final ──────────────────────────────────
+            await db.query(
+                `UPDATE invoice_emissions
+                 SET status='success', draft_json=$4, afip_result_json=$5,
+                     moneda=$6, cotizacion=$7, updated_at=CURRENT_TIMESTAMP
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'`,
+                [company.id, boardId, itemId,
+                 JSON.stringify(feDraft), JSON.stringify(afipResult),
+                 feDraft.moneda, feDraft.cotizacion]
+            );
+            console.log('[fe] CAE de la Factura E persistido en DB');
+
+            // Status del item → "Comprobante Creado" (fire-and-forget).
+            if (autoUpdateStatus && statusColumnId) {
+                updateMondayItemStatus({
+                    apiToken: mondayToken, boardId, itemId,
+                    statusColumnId, label: successLabel,
+                }).catch((e) => console.warn('[fe] status success fire-and-forget falló:', e.message));
+            }
+
+            // Write-back del N° / letra / CAE. Se pasa `cae` (como NC/ND) porque la
+            // Factura E no tiene el bloque propio de escritura de CAE que sí tiene
+            // la factura de mercado interno.
+            //
+            // receptorCondicion va SIN valor a propósito: el receptor del exterior no
+            // tiene condición frente al IVA argentino, y escribir una sería mentira.
+            writeComprobanteColumns({
+                apiToken: mondayToken, boardId, itemId, mapping: feMapping,
+                letra: 'E',
+                puntoVenta: ptoVentaExpo,
+                numero:     afipResult.numero_comprobante,
+                cae:        afipResult.cae,
+                receptorNombre:    null,   // lo cargó el usuario; no lo pisamos
+                receptorCondicion: null,
+                language:          feLanguage,
+            }).catch((e) => console.warn('[fe] write-back columnas comprobante falló:', e.message));
+
+            if (fePvColumnNeedsBackfill && feMapping.punto_venta) {
+                const pvCol = feMapping.punto_venta;
+                const pvWrite = pvCol.startsWith('dropdown_')
+                    ? writeMondayDropdownColumn({ apiToken: mondayToken, boardId, itemId, columnId: pvCol, label: String(ptoVentaExpo) })
+                    : writeMondayNumericColumn({ apiToken: mondayToken, boardId, itemId, columnId: pvCol, value: ptoVentaExpo });
+                pvWrite.catch((e) => console.warn('[fe] write-back punto_venta falló:', e.message));
+            }
+
+            // TODO(factura-e fase 4): PDF de exportación. El layout es distinto al de
+            // A/B/C (título "FACTURA DE EXPORTACIÓN", leyenda "IVA EXENTO OPERACIÓN
+            // DE EXPORTACIÓN", bloques de CUIT País / Destino / Forma de Pago, cero
+            // discriminación de IVA, y el QR con tipoCmp=19 SIN tipoDocRec/nroDocRec).
+            // Hasta entonces NO se genera ni se sube PDF — y el flujo NO falla por
+            // eso: el comprobante ya tiene CAE válido en AFIP y el resto del
+            // registro (write-back, status, comentario, audit board) va igual.
+            console.log('[fe] PDF de exportación todavía no implementado (fase 4) — se omite y se continúa');
+
+            // ── 16. Comentario de éxito ────────────────────────────────────────
+            const pvLargo  = String(ptoVentaExpo).padStart(4, '0');
+            const nroLargo = String(afipResult.numero_comprobante || '').padStart(8, '0');
+            const isEnFe = feLanguage === 'en';
+            const okBody = (isEnFe
+                ? `✅ <b>Export Invoice issued</b><br/><br/>` +
+                  `Voucher: <b>Factura E N° ${pvLargo}-${nroLargo}</b><br/>` +
+                  `CAE: ${afipResult.cae} (exp. ${afipResult.cae_vencimiento || '—'})<br/>` +
+                  `Destination: ${pais.descripcion}<br/>` +
+                  `Amount: ${feLines.importeTotal.toFixed(2)} ${moneda.id}` +
+                  (feDraft.cotizacion !== 1 ? ` (exchange rate ${feDraft.cotizacion})` : '') + `<br/><br/>` +
+                  `<i>Export operation — VAT exempt.</i><br/>` +
+                  `<i>The export invoice PDF isn't generated yet: download it from AFIP's ` +
+                  `"Comprobantes en línea" if you need it.</i>`
+                : `✅ <b>Factura E emitida</b><br/><br/>` +
+                  `Comprobante: <b>Factura E N° ${pvLargo}-${nroLargo}</b><br/>` +
+                  `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>` +
+                  `Destino: ${pais.descripcion}<br/>` +
+                  `Importe: ${feLines.importeTotal.toFixed(2)} ${moneda.id}` +
+                  (feDraft.cotizacion !== 1 ? ` (tipo de cambio ${feDraft.cotizacion})` : '') + `<br/><br/>` +
+                  `<i>Operación de exportación — IVA exento.</i><br/>` +
+                  `<i>El PDF de exportación todavía no se genera: si lo necesitás, ` +
+                  `descargalo desde "Comprobantes en línea" de AFIP.</i>`);
+            await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
+                .catch((e) => console.warn('[fe] no se pudo postear comentario de éxito:', e.message));
+
+            // Renombrar el item (si está activado). Fire-and-forget: cosmético.
+            if (autoRenameItem && afipResult?.numero_comprobante) {
+                renameMondayItem({
+                    apiToken: mondayToken, boardId, itemId,
+                    newName: `${isEnFe ? 'Export Invoice' : 'Factura E'} N° ${pvLargo}-${nroLargo}`,
+                }).catch((e) => console.warn('[fe] rename fire-and-forget falló:', e.message));
+            }
+
+            // Audit board de TAP (fire-and-forget). tipo='E' es la letra del
+            // comprobante; la clase sigue siendo "Factura" (una Factura E es una
+            // factura), así que no se pasan los flags de NC/ND.
+            logEmissionToAuditBoard({
+                accountId,
+                success: true,
+                clientItemId: itemId,
+                sourceItemName: null,
+                draft: feDraft,
+                afipResult,
+                tipo: 'E',
+                durationMs: Date.now() - tStart,
+                receptorRazonSocial: feDraft.receptor_nombre || null,
+                company,
+            }).catch((e) => console.warn('[fe] audit-log fire-and-forget falló:', e.message));
+
+            if (callbackUrl) {
+                notifyCallback(callbackUrl, actionUuid, true, null, {
+                    invoiceType: 'Factura E',
+                    cae:    afipResult.cae,
+                    numero: afipResult.numero_comprobante,
+                }).catch((e) => console.warn('[fe] callback fire-and-forget falló:', e.message));
+            }
+
+            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: feLanguage })
+                .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
+
+            console.log(`[fe] ── OK item ${itemId} ── Factura E ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
+
+        } catch (err) {
+            console.error('❌ [fe] Error emitiendo Factura E:', err.message);
+
+            // "Ya se emitió" (idempotencia) NO es una falla: el comprobante existe y
+            // está bien. NO pisar la fila success ni marcar el item como error.
+            const isIdempotencyError = AFIP_IDEMPOTENT_ERROR_PATTERN.test(err?.message || '');
+
+            try {
+                const errToken = req.mondayAutomation?.shortLivedToken
+                    || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
+                if (errToken && itemId) {
+                    await postMondayErrorComment({
+                        apiToken: errToken, itemId, error: err,
+                        displayKind: feLanguage === 'en' ? 'Export Invoice' : 'Factura E',
+                        language: feLanguage,
+                    });
+                    // Idempotencia → restaurar a "Comprobante Creado" (la Factura E ya
+                    // existe en success; el status había pasado a "Creando" antes del
+                    // claim y quedaría colgado en amarillo).
+                    if (autoUpdateStatus && statusColumnId && boardId) {
+                        await updateMondayItemStatus({
+                            apiToken: errToken, boardId, itemId,
+                            statusColumnId, label: isIdempotencyError ? successLabel : errorLabel,
+                        });
+                    }
+                }
+            } catch (feedbackErr) {
+                console.warn('[fe] no se pudo postear feedback de error al item:', feedbackErr?.message);
+            }
+
+            if (!isIdempotencyError) {
+                try {
+                    const company = await getCompanyForBoard(accountId, boardId).catch(() => null);
+                    if (company && boardId) {
+                        await db.query(
+                            `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'
+                               AND status <> 'success'`,
+                            [company.id, boardId, itemId, err.message]
+                        );
+                    }
+                    logEmissionToAuditBoard({
+                        accountId,
+                        success: false,
+                        clientItemId: itemId,
+                        sourceItemName: null,
+                        draft: null,
+                        afipResult: null,
+                        tipo: null,
+                        error: err,
+                        durationMs: Date.now() - tStart,
+                        company: company || null,
+                    }).catch((e) => console.warn('[fe] audit-log error fire-and-forget falló:', e.message));
+                } catch (_) {}
+            }
+
+            if (callbackUrl) await notifyCallback(callbackUrl, actionUuid, false, err.message).catch(() => {});
+        }
+    });
+}
 
 // ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
 // M6: displayKind define el texto user-facing del comprobante en el mensaje.
