@@ -9757,6 +9757,20 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Volvé a disparar la receta. Si sigue fallando, esperá unos minutos y reintentá.',
         },
         {
+            // AFIP CONTESTÓ y rechazó el comprobante de exportación por una
+            // validación suya (trae código: "[wsfex:FEXAuthorize] [1550] ...").
+            // Va ANTES del patrón genérico de abajo porque ese matchea /wsfe/ y
+            // "[wsfex:...]" lo contiene → si no, esto sale como "AFIP no está
+            // respondiendo", que es mentira y manda al usuario a esperar 30
+            // minutos al pedo en vez de mirar el dato que está mal.
+            match: /\[wsfex:\w+\]\s*\[\d+\]/i,
+            title: 'AFIP rechazó la Factura E',
+            detail: 'AFIP respondió, pero no aceptó el comprobante. <b>No se emitió</b> (no hay número quemado).<br/><br/>' +
+                'Lo que dijo AFIP:<br/>' +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^\[wsfex:\w+\]\s*/, '')}`,
+            solucion: 'Si el mensaje menciona un dato del item (país de destino, fecha de pago, domicilio del cliente), corregilo y volvé a disparar la receta. Si no le encontrás sentido, pasale este mensaje al soporte de la app.',
+        },
+        {
             match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
             title: 'AFIP no está respondiendo correctamente',
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
@@ -9912,6 +9926,16 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             title: 'Temporary connection failure with AFIP',
             detail: 'It was a network glitch, not a problem with your data. The voucher was <b>not issued</b> (no duplicate).',
             solucion: 'Trigger the recipe again. If it keeps failing, wait a few minutes and retry.',
+        },
+        {
+            // Espejo del de KNOWN_ERRORS: AFIP contestó y rechazó. Va ANTES del
+            // genérico porque "[wsfex:...]" matchea /wsfe/.
+            match: /\[wsfex:\w+\]\s*\[\d+\]/i,
+            title: 'AFIP rejected the Factura E',
+            detail: 'AFIP responded, but did not accept the voucher. It <b>was not issued</b> (no number was burned).<br/><br/>' +
+                'What AFIP said:<br/>' +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^\[wsfex:\w+\]\s*/, '')}`,
+            solucion: "If the message mentions an item field (destination country, payment date, client's address), fix it and re-trigger the recipe. If it doesn't make sense to you, pass this message to the app's support.",
         },
         {
             match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,

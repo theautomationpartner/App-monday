@@ -284,6 +284,14 @@ async function fexGetCmp({ token, sign, cuit, cbteTipo, ptoVenta, cbteNro }) {
  *   - Incoterms no aplica (solo obligatorio para bienes, validación 1640).
  *   - Fecha_pago es OBLIGATORIA (validación 1672).
  *   - Forma_pago es OBLIGATORIA para Cbte_Tipo=19 (validación 1620).
+ *
+ * ⚠️ `Permiso_existente` se manda SIEMPRE, aunque vaya vacío — NO con optTag.
+ * Para AFIP "vacío" significa `<Permiso_existente></Permiso_existente>`, no
+ * "omitir el campo": si no viene el tag rechaza con
+ *   [1550] Campo Permiso_existente mandatorio: Debe ser S, N o vacio (debe enviarse tag)
+ * Verificado contra AFIP producción el 2026-07-16 (primer intento real de
+ * emisión). El manual dice "Posibles Valores: S, N, NULL (vacío)" y se presta
+ * justo a la confusión.
  */
 function buildCmpXml(cmp) {
     const items = (cmp.items || []).map((it) => `          <Item>
@@ -303,7 +311,7 @@ function buildCmpXml(cmp) {
         <Punto_vta>${xmlEscape(cmp.ptoVenta)}</Punto_vta>
         <Cbte_nro>${xmlEscape(cmp.cbteNro)}</Cbte_nro>
         <Tipo_expo>${xmlEscape(cmp.tipoExpo)}</Tipo_expo>
-        ${optTag('Permiso_existente', cmp.permisoExistente)}
+        <Permiso_existente>${xmlEscape(cmp.permisoExistente ?? '')}</Permiso_existente>
         <Dst_cmp>${xmlEscape(cmp.dstCmp)}</Dst_cmp>
         <Cliente>${xmlEscape(cmp.cliente)}</Cliente>
         ${optTag('Cuit_pais_cliente', cmp.cuitPaisCliente)}
