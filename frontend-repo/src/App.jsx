@@ -405,6 +405,11 @@ const App = () => {
     // Modalidad de Factura A con leyenda (RG 1575). 'none' por defecto = sin leyenda.
     facturaALeyenda: "none",   // 'none' | 'cbu_informada' | 'sujeta_retencion'
     facturaACbu: "",
+    // Factura E (exportación de servicios). Apagado por defecto = comportamiento
+    // de siempre: el bloque de mapeo de exportación ni se muestra.
+    emiteFacturaE: false,
+    expoFormaPago: "",
+    expoIdioma: 1,             // 1=Español · 2=Inglés · 3=Portugués (Idioma_cbte de AFIP)
   });
   const [hasSavedFiscalData, setHasSavedFiscalData] = useState(false);
 
@@ -882,6 +887,9 @@ const App = () => {
             sitioWeb: data.fiscalData.website || "",
             facturaALeyenda: data.fiscalData.factura_a_leyenda || "none",
             facturaACbu: data.fiscalData.factura_a_cbu || "",
+            emiteFacturaE: Boolean(data.fiscalData.emite_factura_e),
+            expoFormaPago: data.fiscalData.forma_pago_exportacion || "",
+            expoIdioma: data.fiscalData.idioma_comprobante_default || 1,
           };
           setFiscal(hydratedFiscal);
           setSavedFiscalSnapshot(hydratedFiscal);
@@ -1291,6 +1299,9 @@ const App = () => {
         email: fiscal.email,
         website: fiscal.sitioWeb,
         factura_a_leyenda: fiscal.facturaALeyenda || "none",
+        emite_factura_e: Boolean(fiscal.emiteFacturaE),
+        forma_pago_exportacion: fiscal.emiteFacturaE ? (fiscal.expoFormaPago || "") : "",
+        idioma_comprobante_default: fiscal.emiteFacturaE ? (Number(fiscal.expoIdioma) || 1) : null,
       };
 
       await api.post(`/companies`, payload);
@@ -2100,6 +2111,20 @@ const App = () => {
                         </span>
                       </div>
                     )}
+                    {fiscal.emiteFacturaE && (
+                      <div className="data-row full-width">
+                        <span className="data-label">{t("fiscal.expoViewLabel")}</span>
+                        <span className="data-value">
+                          {t("fiscal.expoViewValue")
+                            .replace("{formaPago}", fiscal.expoFormaPago || "—")
+                            .replace("{idioma}", t(
+                              fiscal.expoIdioma === 2 ? "fiscal.expoIdiomaEn"
+                              : fiscal.expoIdioma === 3 ? "fiscal.expoIdiomaPt"
+                              : "fiscal.expoIdiomaEs"
+                            ))}
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -2250,6 +2275,61 @@ const App = () => {
                       />
                       <span>{t("fiscal.leyendaRetencion")}</span>
                     </label>
+                  </div>
+                )}
+              </div>
+
+              {/* ─── Factura E (exportación de servicios) ─── */}
+              {/* Apagado por defecto: quien no exporta no ve nada de esto, ni    */}
+              {/* acá ni en el Mapeo Visual. Reusa las clases de fa-leyenda.      */}
+              <div className="form-group full-width fa-leyenda">
+                <label className="fa-leyenda-check">
+                  <input
+                    type="checkbox"
+                    checked={fiscal.emiteFacturaE}
+                    onChange={(e) => handleFiscalChange("emiteFacturaE", e.target.checked)}
+                  />
+                  <span className="fa-leyenda-texts">
+                    <span className="fa-leyenda-title">{t("fiscal.expoCheck")}</span>
+                    <span className="fa-leyenda-sub">{t("fiscal.expoWho")}</span>
+                  </span>
+                </label>
+
+                {fiscal.emiteFacturaE && (
+                  <div className="fa-leyenda-detail">
+                    <div style={{ marginBottom: 12 }}>
+                      <label className="form-label" htmlFor="expo-forma-pago">
+                        {t("fiscal.expoFormaPago")}
+                      </label>
+                      <input
+                        id="expo-forma-pago"
+                        type="text"
+                        maxLength={50}
+                        placeholder={t("fiscal.expoFormaPagoPh")}
+                        value={fiscal.expoFormaPago}
+                        onChange={(e) => handleFiscalChange("expoFormaPago", e.target.value)}
+                      />
+                      <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4 }}>
+                        {t("fiscal.expoFormaPagoHint")}
+                      </div>
+                    </div>
+                    <div>
+                      <label className="form-label" htmlFor="expo-idioma">
+                        {t("fiscal.expoIdioma")}
+                      </label>
+                      <select
+                        id="expo-idioma"
+                        value={fiscal.expoIdioma}
+                        onChange={(e) => handleFiscalChange("expoIdioma", Number(e.target.value))}
+                      >
+                        <option value={1}>{t("fiscal.expoIdiomaEs")}</option>
+                        <option value={2}>{t("fiscal.expoIdiomaEn")}</option>
+                        <option value={3}>{t("fiscal.expoIdiomaPt")}</option>
+                      </select>
+                      <div style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 4 }}>
+                        {t("fiscal.expoIdiomaHint")}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -3631,6 +3711,48 @@ const App = () => {
                 </div>
               </div>
             </div>
+
+            {/* ─── Exportación (Factura E) ─── */}
+            {/* Bloque aparte y opcional: la enorme mayoría de los clientes no    */}
+            {/* exporta. Dejarlo vacío no afecta en nada a las Facturas A/B/C.    */}
+            {/* Solo se muestra si la empresa activó "Emito Facturas E" en Datos  */}
+            {/* Fiscales — así no le agrega ruido a quien no exporta.             */}
+            {fiscal.emiteFacturaE && (
+              <div className="rf-mapping-frame">
+                <div className="rf-mapping-frame-head">
+                  <div>
+                    <div className="rf-mapping-frame-eyebrow">{t("map.expoCols")}</div>
+                    <div className="rf-mapping-frame-title">{t("map.expoColsDesc")}</div>
+                  </div>
+                </div>
+                <div className="rf-invoice-client cols-3">
+                  <div>
+                    <div className="rf-invoice-client-label">{t("map.expoPaisDestino")}</div>
+                    {mapSel("pais_destino", t("map.colDropdown"))}
+                    <div style={{fontSize:11, color:"var(--ink-500)", marginTop:4}}
+                         dangerouslySetInnerHTML={safeHtml(t("map.expoPaisDestinoHelp"))} />
+                  </div>
+                  <div>
+                    <div className="rf-invoice-client-label">{t("map.expoFechaPago")}</div>
+                    {mapSel("fecha_pago_exportacion", t("map.optional"))}
+                    <div style={{fontSize:11, color:"var(--ink-500)", marginTop:4}}
+                         dangerouslySetInnerHTML={safeHtml(t("map.expoFechaPagoHelp"))} />
+                  </div>
+                  <div>
+                    <div className="rf-invoice-client-label">{t("map.expoDomicilio")}</div>
+                    {mapSel("receptor_domicilio", t("map.optional"))}
+                    <div style={{fontSize:11, color:"var(--ink-500)", marginTop:4}}
+                         dangerouslySetInnerHTML={safeHtml(t("map.expoDomicilioHelp"))} />
+                  </div>
+                  <div>
+                    <div className="rf-invoice-client-label">{t("map.expoIdImpositivo")}</div>
+                    {mapSel("id_impositivo_receptor", t("map.optional"))}
+                    <div style={{fontSize:11, color:"var(--ink-500)", marginTop:4}}
+                         dangerouslySetInnerHTML={safeHtml(t("map.expoIdImpositivoHelp"))} />
+                  </div>
+                </div>
+              </div>
+            )}
 
             {inMappingEditMode && (
               <div className="form-actions" style={{marginTop: "8px"}}>

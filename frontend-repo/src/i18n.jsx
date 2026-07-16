@@ -55,6 +55,21 @@ export const translations = {
     "fiscal.cbuLabel": "CBU (donde AFIP exige que te depositen)",
     "fiscal.cbuHint": "22 dígitos.",
     "fiscal.leyendaViewLabel": "Leyenda Factura A",
+    // ── Factura E (exportación de servicios) ──
+    "fiscal.expoCheck": "Emito Facturas E (exportación de servicios al exterior)",
+    "fiscal.expoWho":
+      "Solo si le facturás servicios a clientes de otros países. Requiere un punto de venta de exportación habilitado en AFIP.",
+    "fiscal.expoFormaPago": "Forma de pago",
+    "fiscal.expoFormaPagoPh": "Transferencia bancaria",
+    "fiscal.expoFormaPagoHint": "AFIP la exige en toda Factura E. Máximo 50 caracteres.",
+    "fiscal.expoIdioma": "Idioma del comprobante",
+    "fiscal.expoIdiomaHint":
+      "El idioma en que se emite la factura para tu cliente del exterior. No cambia el idioma de la app.",
+    "fiscal.expoIdiomaEs": "Español",
+    "fiscal.expoIdiomaEn": "Inglés",
+    "fiscal.expoIdiomaPt": "Portugués",
+    "fiscal.expoViewLabel": "Factura E (exportación)",
+    "fiscal.expoViewValue": "Forma de pago: {formaPago} · Idioma: {idioma}",
     "fiscal.contactTitle": "Datos de contacto y marca",
     "fiscal.contactSub":
       "Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.",
@@ -287,6 +302,22 @@ export const translations = {
     "map.voucherNum": "N° Comprobante",
     "map.optionalCols": "Columnas opcionales",
     "map.optionalColsDesc": "Mapealas solo si las usás. La app las completa o las lee al emitir.",
+    // ── Bloque de mapeo de Factura E (exportación) ──
+    "map.expoCols": "Exportación (Factura E)",
+    "map.expoColsDesc":
+      "Solo si exportás servicios al exterior. Si no, dejá este bloque vacío: no afecta a tus Facturas A, B ni C.",
+    "map.expoPaisDestino": "País de destino",
+    "map.expoPaisDestinoHelp":
+      "Dropdown con el país del cliente. Tiene que coincidir con la lista de AFIP (ej: <b>Brasil</b>, <b>Estados Unidos</b>, <b>España</b>).",
+    "map.expoFechaPago": "Fecha de pago",
+    "map.expoFechaPagoHelp":
+      "Columna de fecha. AFIP la exige en las Facturas E de servicios. No puede ser anterior a la fecha de emisión.",
+    "map.expoDomicilio": "Domicilio del cliente",
+    "map.expoDomicilioHelp":
+      "Columna de texto. AFIP lo exige y, al ser un cliente del exterior, no se puede buscar en el padrón: lo cargás vos.",
+    "map.expoIdImpositivo": "ID impositivo del cliente",
+    "map.expoIdImpositivoHelp":
+      "Opcional. El número de identificación fiscal del cliente en su país. Si lo dejás vacío, la app usa el «CUIT país» que AFIP asigna al destino.",
     "map.saveInitial": "Guardar Mapeo Visual",
     "common.close": "Cerrar",
     // ── WelcomePage ──
@@ -536,6 +567,21 @@ export const translations = {
     "fiscal.cbuLabel": "CBU (bank account AFIP requires payment into)",
     "fiscal.cbuHint": "22 digits.",
     "fiscal.leyendaViewLabel": "Factura A legend",
+    // ── Factura E (service exports) ──
+    "fiscal.expoCheck": "I issue Factura E (service exports abroad)",
+    "fiscal.expoWho":
+      "Only if you invoice services to clients in other countries. Requires an export point of sale enabled at AFIP.",
+    "fiscal.expoFormaPago": "Payment method",
+    "fiscal.expoFormaPagoPh": "Wire transfer",
+    "fiscal.expoFormaPagoHint": "AFIP requires it on every Factura E. Max 50 characters.",
+    "fiscal.expoIdioma": "Voucher language",
+    "fiscal.expoIdiomaHint":
+      "The language the invoice is issued in for your foreign client. It does not change the app's language.",
+    "fiscal.expoIdiomaEs": "Spanish",
+    "fiscal.expoIdiomaEn": "English",
+    "fiscal.expoIdiomaPt": "Portuguese",
+    "fiscal.expoViewLabel": "Factura E (exports)",
+    "fiscal.expoViewValue": "Payment method: {formaPago} · Language: {idioma}",
     "fiscal.contactTitle": "Contact & branding",
     "fiscal.contactSub":
       "These details are optional. We'll use them later to personalize your invoice PDF with your company information.",
@@ -768,6 +814,22 @@ export const translations = {
     "map.voucherNum": "Voucher No.",
     "map.optionalCols": "Optional columns",
     "map.optionalColsDesc": "Map them only if you use them. The app fills or reads them when issuing.",
+    // ── Factura E (export) mapping block ──
+    "map.expoCols": "Exports (Factura E)",
+    "map.expoColsDesc":
+      "Only if you export services abroad. If you don't, leave this block empty: it does not affect your Factura A, B or C.",
+    "map.expoPaisDestino": "Destination country",
+    "map.expoPaisDestinoHelp":
+      "Dropdown with the client's country. It must match AFIP's list (e.g. <b>Brasil</b>, <b>Estados Unidos</b>, <b>España</b>).",
+    "map.expoFechaPago": "Payment date",
+    "map.expoFechaPagoHelp":
+      "Date column. AFIP requires it on Factura E for services. It cannot be earlier than the issue date.",
+    "map.expoDomicilio": "Client's address",
+    "map.expoDomicilioHelp":
+      "Text column. AFIP requires it and, since the client is abroad, it can't be looked up in AFIP's registry: you enter it.",
+    "map.expoIdImpositivo": "Client's tax ID",
+    "map.expoIdImpositivoHelp":
+      "Optional. The client's tax identification number in their country. If left empty, the app uses the \"country CUIT\" AFIP assigns to the destination.",
     "map.saveInitial": "Save Visual Mapping",
     "common.close": "Close",
     // ── WelcomePage ──

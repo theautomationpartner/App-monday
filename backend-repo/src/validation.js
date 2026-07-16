@@ -39,6 +39,12 @@ const CompanySchema = z.object({
     // Modalidad de Factura A con leyenda (RG 1575). Default sin leyenda.
     factura_a_leyenda: z.enum(['none', 'cbu_informada', 'sujeta_retencion']).optional().nullable(),
     factura_a_cbu: z.string().max(34).optional().nullable(),
+    // Factura E (exportacion). emite_factura_e=false (default) = la empresa no
+    // exporta = comportamiento de siempre.
+    // Forma_pago es C50 en AFIP; Idioma_cbte es 1=Espanol, 2=Ingles, 3=Portugues.
+    emite_factura_e: z.boolean().optional().nullable(),
+    forma_pago_exportacion: z.string().max(50).optional().nullable(),
+    idioma_comprobante_default: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().nullable(),
 });
 
 // Configuracion de board para automatizaciones (POST /api/board-config)

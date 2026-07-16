@@ -602,7 +602,8 @@ async function getCompanyForBoard(mondayAccountId, boardId) {
                 c.start_date, c.phone, c.email, c.website, c.logo_base64,
                 c.logo_mime_type, c.padron_condicion, c.padron_nombre,
                 c.padron_tipo_persona, c.padron_domicilio, c.padron_fetched_at,
-                c.factura_a_leyenda, c.factura_a_cbu
+                c.factura_a_leyenda, c.factura_a_cbu,
+                c.emite_factura_e, c.forma_pago_exportacion, c.idioma_comprobante_default
          FROM companies c
          JOIN board_automation_configs bac ON bac.company_id = c.id
          WHERE c.monday_account_id::text = $1
@@ -626,7 +627,8 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
         SELECT id, monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date,
                phone, email, website, logo_base64, logo_mime_type,
                padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio, padron_fetched_at,
-               factura_a_leyenda, factura_a_cbu
+               factura_a_leyenda, factura_a_cbu,
+               emite_factura_e, forma_pago_exportacion, idioma_comprobante_default
         FROM companies`;
     if (workspaceId) {
         // Match exacto al workspace solicitado.
@@ -2692,7 +2694,18 @@ async function ensureCompaniesExtraColumns() {
             ADD COLUMN IF NOT EXISTS padron_fetched_at TIMESTAMP,
             ADD COLUMN IF NOT EXISTS workspace_id TEXT,
             ADD COLUMN IF NOT EXISTS factura_a_leyenda VARCHAR(30),
-            ADD COLUMN IF NOT EXISTS factura_a_cbu VARCHAR(34)
+            ADD COLUMN IF NOT EXISTS factura_a_cbu VARCHAR(34),
+            -- Factura E (exportación). OJO con la regla "defaults TRUE en flags
+            -- nuevos": esa regla busca que los clientes existentes mantengan el
+            -- comportamiento de siempre, y acá eso es NO exportar → el default
+            -- correcto es FALSE. Con FALSE la app se comporta exactamente como hoy.
+            ADD COLUMN IF NOT EXISTS emite_factura_e BOOLEAN DEFAULT FALSE,
+            -- Forma_pago es C50 en AFIP y obligatorio para Cbte_Tipo=19 (val. 1620).
+            ADD COLUMN IF NOT EXISTS forma_pago_exportacion VARCHAR(50),
+            -- Idioma_cbte: 1=Español, 2=Inglés, 3=Portugués (val. 1630). Es el idioma
+            -- del COMPROBANTE para el cliente del exterior — no tiene nada que ver
+            -- con el idioma de la app (board_automation_configs.language).
+            ADD COLUMN IF NOT EXISTS idioma_comprobante_default SMALLINT
     `);
     // Índice de búsqueda y UNIQUE compuesto para soportar varias empresas
     // por cuenta de monday (una por workspace). El COALESCE permite que la
@@ -4147,6 +4160,11 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                 has_logo: Boolean(company.logo_base64),
                 factura_a_leyenda: company.factura_a_leyenda || 'none',
                 factura_a_cbu: company.factura_a_cbu || '',
+                // Factura E: '' / null = la empresa no exporta (todos los clientes
+                // actuales) → el bloque de exportación arranca vacío y sin efecto.
+                emite_factura_e: Boolean(company.emite_factura_e),
+                forma_pago_exportacion: company.forma_pago_exportacion || '',
+                idioma_comprobante_default: company.idioma_comprobante_default || null,
             },
             certificates: certRow
                 ? {
@@ -4611,7 +4629,8 @@ app.post('/api/mappings', requireMondaySession, validateBody(MappingSchema), asy
 app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), async (req, res) => {
     const {
         monday_account_id, workspace_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
-        phone, email, website, factura_a_leyenda, factura_a_cbu
+        phone, email, website, factura_a_leyenda, factura_a_cbu,
+        emite_factura_e, forma_pago_exportacion, idioma_comprobante_default
     } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
     // workspace_id es opcional. Si no llega, la empresa queda como "legacy"
@@ -4647,6 +4666,18 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
         ? (String(factura_a_cbu || '').replace(/\D/g, '').slice(0, 22) || null)
         : null;
 
+    // Factura E. Si la empresa NO exporta (default y caso de todos los clientes
+    // actuales), los datos de exportación se guardan en NULL: así no queda
+    // configuración colgada si alguien prueba el toggle y lo vuelve a apagar.
+    // AFIP corta Forma_pago en 50 (C50).
+    const emiteE = Boolean(emite_factura_e);
+    const formaPagoExpo = emiteE
+        ? (String(forma_pago_exportacion || '').trim().slice(0, 50) || null)
+        : null;
+    const idiomaExpo = emiteE && [1, 2, 3].includes(Number(idioma_comprobante_default))
+        ? Number(idioma_comprobante_default)
+        : null;
+
     try {
         await ensureCompaniesExtraColumns();
 
@@ -4679,8 +4710,8 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
         // companies_account_workspace_unique soporta el ON CONFLICT con la
         // expresión COALESCE para que NULL se trate de forma determinística.
         const query = `
-            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website, factura_a_leyenda, factura_a_cbu)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website, factura_a_leyenda, factura_a_cbu, emite_factura_e, forma_pago_exportacion, idioma_comprobante_default)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
             ON CONFLICT (monday_account_id, COALESCE(workspace_id, '__legacy__'))
             DO UPDATE SET
                 business_name = EXCLUDED.business_name,
@@ -4694,12 +4725,15 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
                 website = EXCLUDED.website,
                 factura_a_leyenda = EXCLUDED.factura_a_leyenda,
                 factura_a_cbu = EXCLUDED.factura_a_cbu,
+                emite_factura_e = EXCLUDED.emite_factura_e,
+                forma_pago_exportacion = EXCLUDED.forma_pago_exportacion,
+                idioma_comprobante_default = EXCLUDED.idioma_comprobante_default,
                 updated_at = CURRENT_TIMESTAMP
             RETURNING *;
         `;
         const result = await db.query(query, [
             accountId, workspaceId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
-            phoneNorm.value, emailNorm.value, websiteNorm.value, leyendaA, cbuA
+            phoneNorm.value, emailNorm.value, websiteNorm.value, leyendaA, cbuA, emiteE, formaPagoExpo, idiomaExpo
         ]);
         // Datos fiscales cambiaron → invalidar cache del padrón en DB.
         if (result.rows[0]?.id) await invalidateEmisorPadronDb(result.rows[0].id);
@@ -10138,7 +10172,8 @@ async function reconcileSingleEmission(row) {
                 cuit, default_point_of_sale, address, phone, email, website,
                 logo_base64, logo_mime_type,
                 padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio,
-                factura_a_leyenda, factura_a_cbu
+                factura_a_leyenda, factura_a_cbu,
+                emite_factura_e, forma_pago_exportacion, idioma_comprobante_default
          FROM companies WHERE id=$1 LIMIT 1`,
         [row.company_id]
     );
