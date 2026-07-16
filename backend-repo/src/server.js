@@ -1335,6 +1335,73 @@ function assertStagingNotBlocked(company) {
     }
 }
 
+// ── Ruteo staging → producción por workspace ────────────────────────────────
+// Evolución del guard de arriba: en vez de NEGARSE a emitir (que deja al cliente
+// sin poder facturar mientras el dev testea), la instancia de staging REENVÍA a
+// producción todo lo que no venga de un workspace de desarrollo. El cliente no se
+// entera de que existe staging: su factura la emite prod y se guarda en defaultdb.
+//
+// El ruteo es por WORKSPACE, no por CUIT: el CUIT de testing del dev
+// (20327446348) tiene boards tanto en workspaces de dev como en uno normal, así
+// que filtrar por CUIT rompería uno de los dos casos.
+//
+// Default fail-safe: ante cualquier duda (board sin config, boardId vacío, error
+// de DB, bug inesperado) se reenvía a prod. Prod es el comportamiento correcto
+// para el 100% de los clientes; el costo de un falso reenvío es que el dev note
+// que su código no corrió — el del error inverso es el incidente fiscal.
+const DEFAULT_PROD_FORWARD_URL = 'http://127.0.0.1:3000';
+const PROXY_HOP_HEADER = 'x-tap-proxy-hop';
+const STAGING_PROXY_TIMEOUT_MS = 15000;
+
+function parseCsvEnv(name) {
+    return (process.env[name] || '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+// Devuelve la base del forward, o null si la config es inválida. null hace que
+// forwardToProd responda 503 en vez de emitir local: si no podemos reenviar con
+// seguridad, NO emitimos — emitir local es exactamente el incidente que evitamos.
+function getProdForwardUrl() {
+    const raw = (process.env.PROD_FORWARD_URL || DEFAULT_PROD_FORWARD_URL).trim().replace(/\/+$/, '');
+    let u;
+    try { u = new URL(raw); } catch { return null; }
+    // Anti self-forward: un destino que huele a staging o que usa nuestro propio
+    // puerto es una mala config (loop). Preferimos 503 antes que emitir local.
+    if (/staging/i.test(u.hostname)) return null;
+    if (u.port && String(u.port) === String(process.env.PORT || 3001)) return null;
+    return raw;
+}
+
+function isDevWorkspace(workspaceId) {
+    if (!workspaceId) return false;
+    return parseCsvEnv('STAGING_DEV_WORKSPACES').includes(String(workspaceId));
+}
+
+// Resuelve el workspace_id de un board SOLO para decidir ruteo. Deliberadamente
+// NO usa getCompanyForBoard: esa función, cuando el board no matchea, cae a
+// getCompanyByMondayAccountId → devuelve una company arbitraria de la cuenta →
+// el workspace_id sería una mentira (podría rutear el board de un cliente real
+// como si fuera de dev). Acá preferimos NO SABER (null → se reenvía a prod).
+async function resolveWorkspaceForRouting(mondayAccountId, boardId) {
+    if (!mondayAccountId || !boardId) return null;
+    try {
+        const r = await db.query(
+            `SELECT COALESCE(bac.workspace_id, c.workspace_id) AS workspace_id
+               FROM board_automation_configs bac
+               JOIN companies c ON c.id = bac.company_id
+              WHERE c.monday_account_id::text = $1
+                AND bac.board_id = $2
+              ORDER BY bac.updated_at DESC NULLS LAST, bac.id DESC
+              LIMIT 1`,
+            [String(mondayAccountId), String(boardId)]
+        );
+        const ws = r.rows[0]?.workspace_id;
+        return ws ? String(ws) : null;
+    } catch (err) {
+        console.error(`[staging-proxy] error resolviendo workspace board=${boardId}: ${err.message} — se reenvía a prod`);
+        return null;
+    }
+}
+
 function xmlEscape(value) {
     return String(value)
         .replace(/&/g, '&amp;')
@@ -6906,8 +6973,114 @@ async function comprobanteHandler(req, res) {
         }
     });
 }
-app.post('/api/invoices/emit',     emitLimiter, requireAutomationBlock, comprobanteHandler);
-app.post('/api/comprobantes/emit', emitLimiter, requireAutomationBlock, comprobanteHandler);
+// Extrae el boardId con la misma cascada que los handlers (ver comprobanteHandler),
+// más el fallback profundo de deepFindValue (hoisted, definida más abajo). Si queda
+// vacío NO se resuelve contra la API de monday: costaría un roundtrip antes del ACK
+// y el default (reenviar a prod) ya es el seguro.
+function resolveBoardIdForRouting(req) {
+    const payload = req.body?.payload || {};
+    let boardId = String(
+        payload.inboundFieldValues?.boardId
+        || payload.inputFields?.boardId
+        || payload.triggerOutputs?.boardId
+        || payload.boardId
+        || ''
+    ).trim();
+    if (!boardId) {
+        const v = deepFindValue(req.body, ['boardId', 'board_id']);
+        if (v != null) boardId = String(v).trim();
+    }
+    return boardId;
+}
+
+// Reenvía el request tal cual a producción y devuelve su respuesta. Ambas
+// instancias comparten los secretos de monday, así que prod re-verifica el mismo
+// JWT sin tocar nada.
+async function forwardToProd(req, res) {
+    const base = getProdForwardUrl();
+    if (!base) {
+        console.error('[staging-proxy] PROD_FORWARD_URL inválida — NO se emite local. Revisar el .env de staging.');
+        return res.status(503).json({ error: 'staging_proxy_misconfigured' });
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), STAGING_PROXY_TIMEOUT_MS);
+    try {
+        const r = await fetch(base + req.originalUrl, {
+            method: req.method,
+            // Allowlist explícita: copiar req.headers en bloque rompería el vhost
+            // de nginx (host) y mandaría un content-length que no matchea el body
+            // re-serializado.
+            headers: {
+                'content-type':      req.headers['content-type'] || 'application/json',
+                'authorization':     req.headers.authorization || '',
+                'x-forwarded-for':   req.ip,        // prod tiene trust proxy → keyea bien el rate limit
+                'x-forwarded-proto': 'https',
+                'x-request-id':      req.id || '',  // correlaciona los logs de ambas instancias
+                [PROXY_HOP_HEADER]:  'staging',
+            },
+            body: Buffer.from(JSON.stringify(req.body ?? {})),
+            signal: controller.signal,
+            redirect: 'manual',                     // nunca mandar el Authorization a un redirect
+        });
+        const text = await r.text();
+        const ct = r.headers.get('content-type');
+        if (ct) res.setHeader('Content-Type', ct);
+        console.log(`[staging-proxy] prod respondió ${r.status}`);
+        return res.status(r.status).send(text);
+    } catch (err) {
+        // No sabemos si prod llegó a recibirlo. NO reintentamos acá: monday
+        // reintenta solo, y el claim atómico de invoice_emissions en prod dedupea
+        // por (company, board, item, tipo) → no re-emite. Responder 200 {received}
+        // sería peor: perdería la factura en silencio.
+        console.error(`[staging-proxy] forward FALLÓ (${err.name}: ${err.message}) → 502, monday reintenta`);
+        return res.status(502).json({ error: 'staging_proxy_forward_failed', requestId: req.id });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+// Decide si esta instancia procesa la emisión o la reenvía a prod. Va DESPUÉS de
+// requireAutomationBlock (necesita el accountId del JWT verificado, no el del body
+// sin firmar) y ANTES del handler, que ACKea 200 apenas entra.
+async function stagingRouteGuard(req, res, next) {
+    if (process.env.APP_ENV !== 'staging') return next();   // prod: no-op absoluto
+
+    // Loop breaker: si el request ya viene reenviado, esta instancia es el destino
+    // de un forward — y prod nunca reenvía. Solo puede ser una mala config
+    // (PROD_FORWARD_URL apuntando a staging, o APP_ENV=staging en prod). Cortamos
+    // ruidoso: procesar local ES el incidente que este proxy evita.
+    if (req.headers[PROXY_HOP_HEADER]) {
+        console.error('[staging-proxy] LOOP detectado: llegó un request ya reenviado. Revisar PROD_FORWARD_URL / APP_ENV.');
+        return res.status(502).json({ error: 'staging_proxy_loop_detected' });
+    }
+
+    try {
+        const accountId = String(req.mondayAutomation?.accountId || '');
+        const boardId   = resolveBoardIdForRouting(req);
+
+        // Escape hatch sin DB: cubre boards de dev recién creados que todavía no
+        // tienen config en stagingdb (si no, caerían en el default → prod).
+        if (boardId && parseCsvEnv('STAGING_DEV_BOARDS').includes(boardId)) {
+            console.log(`[staging-proxy] board=${boardId} → local (STAGING_DEV_BOARDS)`);
+            return next();
+        }
+
+        const workspaceId = await resolveWorkspaceForRouting(accountId, boardId);
+        if (isDevWorkspace(workspaceId)) {
+            console.log(`[staging-proxy] board=${boardId || '?'} ws=${workspaceId} → local (dev)`);
+            return next();
+        }
+        console.log(`[staging-proxy] board=${boardId || '?'} ws=${workspaceId || 'desconocido'} → prod`);
+        return forwardToProd(req, res);
+    } catch (err) {
+        // Nunca emitir local por un bug nuestro: ante lo inesperado, a prod.
+        console.error(`[staging-proxy] error inesperado (${err.message}) — se reenvía a prod`);
+        return forwardToProd(req, res);
+    }
+}
+
+app.post('/api/invoices/emit',     emitLimiter, requireAutomationBlock, stagingRouteGuard, comprobanteHandler);
+app.post('/api/comprobantes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, comprobanteHandler);
 
 // Busca recursivamente el primer valor de cualquiera de las claves dadas dentro
 // de un objeto. Permite extraer itemId/boardId del webhook sin depender del
@@ -7858,8 +8031,8 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         }
     });
 }
-app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, (req, res) => emitNotaHandler(req, res, 'NC'));
-app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, (req, res) => emitNotaHandler(req, res, 'ND'));
+app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, (req, res) => emitNotaHandler(req, res, 'NC'));
+app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, (req, res) => emitNotaHandler(req, res, 'ND'));
 
 // ─── Mapeo de errores → mensaje claro con HTML para Monday updates ───────────
 // M6: displayKind define el texto user-facing del comprobante en el mensaje.
@@ -10670,6 +10843,18 @@ app.post('/api/admin/run-audit-backfill', async (req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, async () => {
     console.log(`Backend corriendo en puerto ${PORT} | AFIP_ENV: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+
+    // Deja asentado el ruteo del proxy en el log de arranque: si algo se rutea
+    // raro, esta línea dice exactamente con qué config levantó la instancia.
+    if (process.env.APP_ENV === 'staging') {
+        const ws = parseCsvEnv('STAGING_DEV_WORKSPACES');
+        const fwd = getProdForwardUrl();
+        console.log(
+            `[staging-proxy] activo | workspaces de dev=[${ws.join(',') || 'NINGUNO — todo se reenvía a prod'}]` +
+            ` | forward=${fwd || 'INVÁLIDO (las emisiones responden 503)'}`
+        );
+    }
+
     await runStartupMigrations();
 
     // Inyectar el storage de DB en afipAuth para que los tokens sobrevivan

@@ -83,9 +83,11 @@ la siguiente Draft — v19, v20, etc. Los números suben, el flujo es el mismo.)
 ### Paso 3 — Probar el cambio en la versión Draft
 
 - TAP es **owner** de la app en monday → al abrir la app en cualquier board de tu cuenta, monday auto-aplica la Draft más reciente.
-- Polifroni y Sofia siguen viendo la versión Live (producción) — no se enteran.
+- **Polifroni** está en OTRA cuenta de monday (30446835) → la Draft no le llega, sigue en Live.
+- ⚠️ **Sofia, Pamela y TAP SA tienen su board en la cuenta de TAP** (28569993) → la Draft **SÍ** les llega y sus recetas apuntan a staging. Esto causó 3 incidentes de fuga (facturas reales emitidas por staging y guardadas en stagingdb, invisibles para prod).
+- ✅ **Hoy eso está resuelto por el proxy de ruteo** (`stagingRouteGuard`, ver regla 8): staging solo procesa los workspaces de `STAGING_DEV_WORKSPACES` y **reenvía todo el resto a producción**. Sofia/Pamela facturan normal aunque tengas la Draft activa. Verificá con `pm2 logs tap-monday-staging | grep staging-proxy`.
 - Si stagingdb no tiene los datos para probar, podés copiarlos de `defaultdb` (solo de TAP) con SQL — pedile al asistente que lo haga.
-- ⚠️ **Cuidado al emitir**: el `.env` de staging tiene `AFIP_ENV=PRODUCTION`, así que cualquier emisión va a AFIP real. Para test sin riesgo, solo navegá la UI / probá validaciones / no dispares la receta.
+- ⚠️ **Cuidado al emitir desde un workspace de dev**: el `.env` de staging tiene `AFIP_ENV=PRODUCTION`, así que emitir desde `STAGING_DEV_WORKSPACES` genera un **CAE real** con el CUIT de testing. Para test sin riesgo, navegá la UI / probá validaciones / no dispares la receta.
 
 ### Paso 4 — Si funciona, mergear a main y deployar a producción
 
@@ -125,7 +127,7 @@ Para un commit específico no reciente: `git revert <hash>`. Nunca uses `git res
 
 2. **Datos en `defaultdb` son sagrados.** `stagingdb` es para tests. **NUNCA** hagas `DELETE` o `UPDATE` en `defaultdb` sin estar 100% seguro y haber chequeado el `WHERE`.
 
-3. **`APP_ENV=staging` en el `.env` de staging clone.** Controla el skip de las **alertas de Slack** (`notifySlackSystemError` + resumen nocturno de auditoría) — los errores de staging son ruido para el canal de prod. **NO** skipea el audit board: staging emite con `AFIP_ENV=production`, así que sus comprobantes son reales (CAE real) y SÍ se registran en "Comp Emitidos" (staging y prod comparten `MONDAY_AUDIT_BOARD_ID`; el dedup de `logEmissionToAuditBoard` es por DB local, así que no colisionan items de distintos entornos).
+3. **`APP_ENV=staging` en el `.env` de staging clone.** Controla dos cosas: (a) el skip de las **alertas de Slack** (`notifySlackSystemError` + resumen nocturno de auditoría) — los errores de staging son ruido para el canal de prod; (b) el **proxy de ruteo** hacia prod (regla 8). **NO** skipea el audit board: staging emite con `AFIP_ENV=production`, así que sus comprobantes son reales (CAE real) y SÍ se registran en "Comp Emitidos" (staging y prod comparten `MONDAY_AUDIT_BOARD_ID`; el dedup de `logEmissionToAuditBoard` es por DB local, así que no colisionan items de distintos entornos).
 
 4. **Migrations idempotentes en `runStartupMigrations()`** (en `server.js`). Toda migración de schema va ahí, con `IF NOT EXISTS` o `try/catch`. Corren al arrancar `pm2` → cada DB (defaultdb y stagingdb) se migra sola.
 
@@ -140,6 +142,16 @@ Para un commit específico no reciente: `git revert <hash>`. Nunca uses `git res
 6. **El frontend tiene UN solo bundle servido por el backend** (`backend-repo/public/`). Vite genera assets con hash (`index-XXX.js`); esos cachean forever en Cloudflare. El `index.html` siempre es `no-cache` (los headers están en `server.js` `express.static`).
 
 7. **`/etc/nginx/sites-enabled/tap-monday` ES UN SYMLINK** a `/etc/nginx/sites-available/tap-monday`. Si alguien lo rompe, los cambios al config de nginx no se cargan. Siempre verificá con `nginx -T | grep server_name`.
+
+8. **Staging solo emite para los workspaces de dev — el resto lo reenvía a prod.** `stagingRouteGuard` (en `server.js`, encadenado en las 4 rutas de emisión después de `requireAutomationBlock`) resuelve el `workspace_id` del board y decide:
+   - workspace ∈ `STAGING_DEV_WORKSPACES` → staging procesa local (CAE real con el CUIT de testing, registro en `stagingdb`).
+   - cualquier otro → **reenvía a producción** (`PROD_FORWARD_URL`, default `http://127.0.0.1:3000`). El cliente factura normal y no se entera de que existe staging.
+
+   **El ruteo es por WORKSPACE, no por CUIT** — el CUIT de testing del dev (20327446348) tiene boards tanto en workspaces de dev como en uno normal, así que un filtro por CUIT rompería uno de los dos casos.
+
+   **Default fail-safe: ante la duda, prod.** Si no se puede resolver el workspace (board sin config, `boardId` vacío, error de DB) se reenvía. El costo de un falso reenvío es que notás que tu código no corrió; el del error inverso es una fuga fiscal.
+
+   Anti-loop en 3 capas: prod es no-op (`APP_ENV != 'staging'`); un request que llega con el header `x-tap-proxy-hop` responde 502 (nunca re-reenvía ni procesa local); y `getProdForwardUrl()` devuelve null (→ 503) si el destino huele a staging o usa el puerto propio. `assertStagingNotBlocked` (`STAGING_BLOCKED_CUITS`) queda como backstop de último recurso.
 
 ---
 
@@ -193,8 +205,12 @@ README.md                        # info pública
 | `MONDAY_AUDIT_BOARD_ID` | board "Comp Emitidos" donde se loggean emisiones (staging y prod comparten el mismo board) |
 | `DEV_MONDAY_TOKEN` | API token del developer (para escribir al audit board) |
 | `SLACK_WEBHOOK_URL` | alertas de errores sistema y auditoría nocturna |
-| `APP_ENV` | `staging` o no seteado (prod). Cuando `staging` skipea SOLO las alertas de Slack (errores sistema + resumen nocturno). El audit board SÍ se escribe en staging. |
+| `APP_ENV` | `staging` o no seteado (prod). Cuando `staging`: (a) skipea las alertas de Slack (errores sistema + resumen nocturno); (b) activa el proxy de ruteo a prod (regla 8). El audit board SÍ se escribe en staging. |
 | `PORT` | 3000 prod, 3001 staging |
+| `STAGING_DEV_WORKSPACES` | **solo staging**. CSV de workspace_ids que staging procesa local; todo el resto se reenvía a prod (regla 8). Vacío → todo a prod. |
+| `PROD_FORWARD_URL` | **solo staging** (opcional). Destino del reenvío. Default `http://127.0.0.1:3000` (misma droplet, sin pasar por Cloudflare). |
+| `STAGING_DEV_BOARDS` | **solo staging** (opcional). CSV de board_ids de dev, para boards nuevos que todavía no tienen config en `stagingdb`. |
+| `STAGING_BLOCKED_CUITS` | **solo staging**. Backstop: CUITs para los que staging se niega a emitir si algo esquiva el proxy. |
 
 ---
 
