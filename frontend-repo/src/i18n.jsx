@@ -349,6 +349,9 @@ export const translations = {
     "map.expoIdImpositivo": "ID impositivo del cliente",
     "map.expoIdImpositivoHelp":
       "Opcional. El número de identificación fiscal del cliente en su país. Si lo dejás vacío, la app usa el «CUIT país» que AFIP asigna al destino.",
+    "map.expoTipoEntidad": "Tipo de cliente",
+    "map.expoTipoEntidadHelp":
+      "Opcional. Dropdown con <b>Persona Jurídica</b> (empresa), <b>Persona Física</b> u <b>Otro tipo de Entidad</b>. Si no la mapeás, la app asume <b>empresa</b>. AFIP usa un «CUIT país» distinto según el tipo.",
     "map.saveInitial": "Guardar Mapeo Visual",
     "common.close": "Cerrar",
     // ── WelcomePage ──
@@ -892,6 +895,9 @@ export const translations = {
     "map.expoIdImpositivo": "Client's tax ID",
     "map.expoIdImpositivoHelp":
       "Optional. The client's tax identification number in their country. If left empty, the app uses the \"country CUIT\" AFIP assigns to the destination.",
+    "map.expoTipoEntidad": "Client type",
+    "map.expoTipoEntidadHelp":
+      "Optional. Dropdown with <b>Persona Jurídica</b> (company), <b>Persona Física</b> (individual) or <b>Otro tipo de Entidad</b>. If you don't map it, the app assumes <b>company</b>. AFIP uses a different \"country CUIT\" per type.",
     "map.saveInitial": "Save Visual Mapping",
     "common.close": "Close",
     // ── WelcomePage ──

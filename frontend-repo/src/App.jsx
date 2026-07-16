@@ -3869,6 +3869,12 @@ const App = () => {
                     <div style={{fontSize:11, color:"var(--ink-500)", marginTop:4}}
                          dangerouslySetInnerHTML={safeHtml(t("map.expoIdImpositivoHelp"))} />
                   </div>
+                  <div>
+                    <div className="rf-invoice-client-label">{t("map.expoTipoEntidad")}</div>
+                    {mapSel("tipo_entidad_receptor", t("map.optional"))}
+                    <div style={{fontSize:11, color:"var(--ink-500)", marginTop:4}}
+                         dangerouslySetInnerHTML={safeHtml(t("map.expoTipoEntidadHelp"))} />
+                  </div>
                 </div>
               </div>
             )}
