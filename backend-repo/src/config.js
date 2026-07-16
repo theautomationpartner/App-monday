@@ -23,11 +23,13 @@ const AFIP_ENDPOINTS = {
     production: {
         wsaa:   'https://wsaa.afip.gov.ar/ws/services/LoginCms',
         wsfe:   'https://servicios1.afip.gov.ar/wsfev1/service.asmx',
+        wsfex:  'https://servicios1.afip.gov.ar/wsfexv1/service.asmx',
         padron: 'https://aws.arca.gob.ar/sr-padron/webservices/personaServiceA5',
     },
     homologation: {
         wsaa:   'https://wsaahomo.afip.gov.ar/ws/services/LoginCms',
         wsfe:   'https://wswhomo.afip.gov.ar/wsfev1/service.asmx',
+        wsfex:  'https://wswhomo.afip.gov.ar/wsfexv1/service.asmx',
         padron: 'https://awshomo.afip.gov.ar/sr-padron/webservices/personaServiceA5',
     },
 };
@@ -54,6 +56,31 @@ module.exports = {
         A: 1,
         B: 6,
         C: 11,
+    },
+
+    /**
+     * Comprobantes de EXPORTACIÓN (WSFEXv1, no WSFEv1 — otro web service).
+     * Fuente: manual oficial AFIP "WSFEX - Factura de Exportación v2.1.0",
+     * validación 1530. La letra siempre es E; lo que cambia es la clase.
+     */
+    CBTE_TYPE_EXPO: {
+        FACTURA: 19,
+        ND:      20,   // Nota de Débito por operaciones con el Exterior
+        NC:      21,   // Nota de Crédito por operaciones con el Exterior
+    },
+
+    /** Tipo de exportación (campo Tipo_expo, validación 1540) */
+    TIPO_EXPO: {
+        BIENES:    1,
+        SERVICIOS: 2,
+        OTROS:     4,
+    },
+
+    /** Idioma del comprobante de exportación (campo Idioma_cbte, validación 1630) */
+    IDIOMA_CBTE: {
+        ES: 1,
+        EN: 2,
+        PT: 3,
     },
 
     /** Condiciones IVA normalizadas (lo que devuelve el padrón) */
