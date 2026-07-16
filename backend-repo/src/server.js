@@ -5880,7 +5880,28 @@ async function comprobanteHandler(req, res) {
                 // factura se emitiría como Nota de Crédito → comprobante fiscal
                 // incorrecto. Anclando al inicio con /^\s*factura/i nos aseguramos
                 // que cualquier "Factura ..." cae acá, no en NC.
-                if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
+                //
+                // Factura E (exportación) va ANTES que la rama de factura por el
+                // mismo motivo que FCE: "Factura E" matchea /^\s*factura/i, así que
+                // sin este chequeo previo se emitiría como una factura común A/B/C
+                // — con IVA 21% a un cliente del exterior. Falla silenciosa y cara.
+                if (/^\s*factura\s+e\b/i.test(tipoComp) || /^\s*export\s+invoice\b/i.test(tipoComp)) {
+                    // TODO(factura-e): reemplazar por `await emitFacturaEHandler(req, res); return;`
+                    // cuando exista el handler. Hasta entonces cortamos ACÁ: el
+                    // objetivo de esta rama es que "Factura E" NUNCA caiga en la
+                    // rama de abajo y se emita como una factura común.
+                    console.warn(`[emit] item ${itemId} marcado "${tipoComp}" → Factura E todavía no implementada, se aborta`);
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? 'Export invoices (Factura E) are not supported yet.\n' +
+                          'This voucher was NOT issued — on purpose: issuing it as a regular invoice ' +
+                          'would apply 21% VAT to a foreign client, which is fiscally wrong.\n' +
+                          'Pick another voucher type, or contact support if you need to invoice exports.'
+                        : 'Las Facturas E (exportación) todavía no están soportadas.\n' +
+                          'El comprobante NO se emitió — a propósito: emitirlo como factura común ' +
+                          'le aplicaría 21% de IVA a un cliente del exterior, que es incorrecto fiscalmente.\n' +
+                          'Elegí otro tipo de comprobante, o escribinos si necesitás facturar exportaciones.'
+                    );
+                } else if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
                     // tipoComp empieza con "Factura"/"Invoice" (incluye FCE) → emitir factura.
                 } else if (/cr[eé]dito/i.test(tipoComp) || /credit/i.test(tipoComp)) {
                     displayKind = 'Nota de Crédito';
