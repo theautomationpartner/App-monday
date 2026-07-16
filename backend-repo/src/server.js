@@ -8419,14 +8419,38 @@ async function resolveUnidadMedidaExpo(raw, auth, language) {
     const unidades = await afipWsfex.fexGetUnidadesMedida(auth);
 
     const fail = () => {
-        const ejemplos = unidades.slice(0, 12).map((u) => `"${u.descripcion}"`).join(', ');
+        // Las sugerencias NO pueden ser "las primeras N de la tabla": AFIP
+        // devuelve miligramos/gramos/quilates/curie primero, que para servicios
+        // no le sirven a nadie. Se filtran las que aplican a una exportación de
+        // servicios y, si el usuario escribió algo, se le muestran también las
+        // que se le parecen.
+        const norm = (u) => normalizeExpoText(u.descripcion);
+        const paraServicios = unidades.filter((u) => /^(UNIDADES|OTRAS UNIDADES)$/.test(norm(u)));
+        const parecidas = wanted
+            ? unidades.filter((u) => norm(u).includes(wanted.slice(0, 4)) && !paraServicios.includes(u))
+            : [];
+        const comunes = unidades.filter((u) =>
+            /^(KILOGRAMOS|METROS|LITROS|DOCENAS|PARES|PACKS|TONELADAS|METROS CUADRADOS)$/.test(norm(u)));
+
+        const listar = (arr) => arr.map((u) => `"${u.descripcion}"`).join(', ');
+        const sug = paraServicios.length ? listar(paraServicios) : '"unidades", "otras unidades"';
+
         throw new Error(L(
-            `The unit of measure "${raw}" is not in AFIP's list for export vouchers.\n` +
-            `Unlike Factura A/B/C (where this column is free text on the PDF), Factura E ` +
-            `requires AFIP's own unit. Valid ones include: ${ejemplos}.`,
-            `La unidad de medida "${raw}" no está en la lista de AFIP para comprobantes de exportación.\n` +
-            `A diferencia de la Factura A/B/C (donde esta columna es texto libre del PDF), la ` +
-            `Factura E exige la unidad de AFIP. Algunas válidas: ${ejemplos}.`
+            `The unit of measure "${raw}" is not one of AFIP's units.\n` +
+            `Heads up: in Factura A/B/C this column is free text (it only shows on the PDF), ` +
+            `but Factura E sends it to AFIP, so it has to be one of theirs.\n` +
+            `For services use: ${sug}.` +
+            (parecidas.length ? `\nSimilar ones: ${listar(parecidas.slice(0, 5))}.` : '') +
+            (comunes.length ? `\nFor goods: ${listar(comunes)}.` : '') +
+            `\nAFIP has no "hour" unit — bill hours as "unidades".`,
+
+            `La unidad de medida "${raw}" no es una de las de AFIP.\n` +
+            `Ojo: en la Factura A/B/C esta columna es texto libre (solo se imprime en el PDF), ` +
+            `pero la Factura E se la manda a AFIP, así que tiene que ser una de las suyas.\n` +
+            `Para servicios usá: ${sug}.` +
+            (parecidas.length ? `\nParecidas: ${listar(parecidas.slice(0, 5))}.` : '') +
+            (comunes.length ? `\nPara bienes: ${listar(comunes)}.` : '') +
+            `\nAFIP no tiene una unidad "hora" — las horas se facturan como "unidades".`
         ));
     };
     if (!wanted) fail();
