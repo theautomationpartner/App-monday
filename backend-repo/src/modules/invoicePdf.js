@@ -6,6 +6,9 @@
  *    "Alícuota IVA" y "Subtotal c/IVA" en la grilla, y desglosa Neto Gravado +
  *    IVA por alícuota (27/21/10.5/5/2.5/0) en el pie.
  *  - Factura B/C: layout sin discriminación (IVA incluido o no aplicable).
+ *  - Factura E (exportación): layout PROPIO, en generateFacturaEPdfBuffer() al
+ *    final del archivo. No comparte la función de A/B/C a propósito — ver el
+ *    comentario de esa función.
  */
 
 'use strict';
@@ -16,8 +19,10 @@ const invoiceRules = require('./invoiceRules');
 const config = require('../config');
 
 // Códigos AFIP de comprobante (siempre 2 dígitos en el cabezal según ARCA).
-const TIPO_COD = { A: '01', B: '06', C: '11' };
-const TIPO_CBTE_NUM = { A: 1, B: 6, C: 11 };
+// E = 19 (Factura de Exportación): no es una "letra" más, es otra serie y otro
+// web service (WSFEX), pero en el cabezal se imprime igual — "E" + "COD. 19".
+const TIPO_COD = { A: '01', B: '06', C: '11', E: '19' };
+const TIPO_CBTE_NUM = { A: 1, B: 6, C: 11, E: 19 };
 
 // Alícuotas de IVA habilitadas por AFIP (RG 4291 / WSFEv1).
 const ALICUOTAS_IVA = ['27', '21', '10.5', '5', '2.5', '0'];
@@ -239,7 +244,16 @@ function drawLogo(doc, x, y, w, h, logoBuffer) {
     }
 }
 
-async function fetchQrImage({ company, draft, afipResult }) {
+// `isExportacion` (Factura E) cambia DOS cosas del payload, ambas por spec de AFIP
+// (RG 4892 — el QR aplica también a exportación, no está exceptuada):
+//   - el fallback de tipoCmp pasa a 19 (una Factura E con fallback 11 publicaría
+//     un QR de Factura C: comprobante inexistente para AFIP);
+//   - se OMITEN tipoDocRec/nroDocRec. En la spec son "de corresponder" (opcionales)
+//     y el receptor del exterior no tiene documento argentino que informar. Mandar
+//     99/0 sería declarar "doc tipo Otro, número 0", que es un dato inventado.
+// En A/B/C nada de esto se activa y el orden de las claves queda intacto (el spread
+// se evalúa en el lugar donde estaban), así que el JSON → base64 → QR es idéntico.
+async function fetchQrImage({ company, draft, afipResult, isExportacion = false }) {
     const tStart = Date.now();
     try {
         // PASO 3 USD — moneda y cotizacion del draft (defaults preservan
@@ -251,13 +265,19 @@ async function fetchQrImage({ company, draft, afipResult }) {
             fecha: draft.fecha_emision || new Date().toISOString().slice(0, 10),
             cuit: Number(String(company.cuit).replace(/\D/g, '')),
             ptoVta: Number(draft.punto_venta),
-            tipoCmp: afipResult?.cbte_tipo_afip ?? TIPO_CBTE_NUM[afipResult?.tipo_comprobante] ?? 11,
+            tipoCmp: afipResult?.cbte_tipo_afip
+                ?? TIPO_CBTE_NUM[afipResult?.tipo_comprobante]
+                ?? (isExportacion ? TIPO_CBTE_NUM.E : 11),
             nroCmp: Number(afipResult?.numero_comprobante || 0),
             importe: Number(draft.importe_total || 0),
             moneda: qrMoneda,
             ctz: qrCotizacion,
-            tipoDocRec: Number(draft.docTipo ?? 99),
-            nroDocRec: Number(draft.docNro ?? 0),
+            ...(isExportacion ? {} : {
+                tipoDocRec: Number(draft.docTipo ?? 99),
+                nroDocRec: Number(draft.docNro ?? 0),
+            }),
+            // 'E' = CAE (vs 'A' = CAEA). NO es la letra del comprobante — que en la
+            // Factura E también sea "E" es pura coincidencia.
             tipoCodAut: 'E',
             codAut: Number(afipResult?.cae || 0),
         };
@@ -994,8 +1014,552 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
     });
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// FACTURA E — Comprobante de exportación (CbteTipo 19, WSFEX)
+// ════════════════════════════════════════════════════════════════════════════
+//
+// Función SEPARADA de generateFacturaPdfBuffer a propósito. La exportación no
+// comparte casi nada con A/B/C: no hay neto ni alícuotas ni subtotales (la
+// operación es exenta), el receptor no tiene CUIT ni condición frente al IVA
+// argentinos, y aparecen bloques que en mercado interno no existen (CUIT País,
+// Divisa/Destino, Forma de Pago/Incoterms). Meter todo eso como ramas dentro de
+// la función de A/B/C la convertiría en un campo minado para los clientes que
+// hoy facturan en producción. Con dos funciones, el PDF de A/B/C queda
+// byte-idéntico por construcción, no por cuidado.
+//
+// El layout está copiado de dos Facturas E REALES emitidas por "Comprobantes en
+// línea" de AFIP con el mismo CUIT (una en pesos, otra en USD con tipo de
+// cambio). Lo que no se pudo verificar contra esas dos está marcado con OJO.
+
+// El comprobante de exportación NO agrupa miles: AFIP imprime "150000,00", no
+// "150.000,00" (verificado en los dos comprobantes reales, tanto en el precio
+// unitario como en el total). Tiene sentido para un papel que lee un extranjero:
+// el punto de miles del formato argentino es justo el separador DECIMAL en la
+// mayoría de los países destino, y "6.900,00" se puede leer como 6,9. Por eso la
+// Factura E tiene sus propios formatters en vez de reusar fmtMoney (que sí agrupa,
+// y que NO se toca para no alterar el PDF de A/B/C).
+function fmtExpoMoney(n) {
+    return Number(n || 0).toLocaleString('es-AR', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+        useGrouping: false,
+    });
+}
+
+// Cantidad y precio unitario van con 6 decimales ("1,000000" / "6000,000000").
+function fmtExpoCantidad(n) {
+    return Number(n || 0).toLocaleString('es-AR', {
+        minimumFractionDigits: 6,
+        maximumFractionDigits: 6,
+        useGrouping: false,
+    });
+}
+
+// Font size más grande (arrancando en `max`) con el que `text` entra en `width`.
+// Los encabezados de la grilla de exportación llevan la moneda pegada
+// ("Total por ítem (USD)") y en una columna angosta no entran a 7pt: sin esto el
+// header wrapea a 2 líneas y se derrama sobre el primer renglón. AFIP resuelve lo
+// mismo achicando ese rótulo en su propio comprobante.
+function fitFontSize(doc, text, width, max = 7, min = 4.5) {
+    let f = max;
+    doc.font('Helvetica-Bold');
+    while (f > min && doc.fontSize(f).widthOfString(text) > width) f -= 0.25;
+    return f;
+}
+
+// ─── Etiquetas del PDF de exportación por idioma ────────────────────────────
+// Mismo criterio que PDF_LABELS (ver :120): se traducen SOLO los rótulos de
+// campo. Los textos de AFIP van SIEMPRE en español y por eso no están acá sino
+// hardcodeados abajo: "FACTURA DE EXPORTACIÓN", "IVA EXENTO OPERACIÓN DE
+// EXPORTACIÓN", "ORIGINAL", "COD.", "Comprobante Autorizado", "CAE", "Esta
+// Agencia no se responsabiliza…".
+//
+// Dos rótulos NO se traducen a propósito:
+//   - "CUIT País": CUIT es un identificador argentino y la fila que lo describe
+//     es de una tabla de AFIP. Es el mismo criterio que en A/B/C, donde 'CUIT: '
+//     está hardcodeado fuera de PDF_LABELS.
+//   - "Incoterms": es la misma palabra en los tres idiomas (es un término de la
+//     Cámara de Comercio Internacional, no se traduce en ningún idioma).
+const PDF_LABELS_E = {
+    es: {
+        razonSocial: 'Razón Social: ', domicilioComercial: 'Domicilio Comercial: ',
+        condFrenteIva: 'Condición frente al IVA: ',
+        comprNro: 'Compr. Nro: ', fechaEmision: 'Fecha de Emisión: ',
+        ingresosBrutos: 'Ingresos Brutos: ',
+        fechaInicio: 'Fecha de Inicio de Actividades: ',
+        senores: 'Señor(es): ', domicilio: 'Domicilio: ',
+        idImpositivo: 'ID Impositivo: ',
+        divisa: 'Divisa: ', destinoCbte: 'Destino del Comprobante: ',
+        formaPago: 'Forma de Pago: ', fechaPago: 'Fecha de Pago: ',
+        thItem: 'Ítem', thDescripcion: 'Descripción', thCantidad: 'Cantidad',
+        thPrecioUnit: 'Precio Unit.', thTotalItem: 'Total por ítem',
+        uMedida: 'U. Medida:', observaciones: 'Observaciones:',
+        tipoCambio: 'Tipo de Cambio: ', importeTotal: 'Importe Total: ',
+        caeVto: 'Fecha de Vto. de CAE: ', pendiente: 'PENDIENTE',
+    },
+    en: {
+        razonSocial: 'Legal Name: ', domicilioComercial: 'Business Address: ',
+        condFrenteIva: 'VAT Condition: ',
+        comprNro: 'Voucher No.: ', fechaEmision: 'Issue Date: ',
+        ingresosBrutos: 'Gross Income Tax: ',
+        fechaInicio: 'Start of Activities Date: ',
+        senores: 'Client: ', domicilio: 'Address: ',
+        idImpositivo: 'Tax ID: ',
+        divisa: 'Currency: ', destinoCbte: 'Voucher Destination: ',
+        formaPago: 'Payment Method: ', fechaPago: 'Payment Date: ',
+        thItem: 'Item', thDescripcion: 'Description', thCantidad: 'Quantity',
+        thPrecioUnit: 'Unit Price', thTotalItem: 'Item Total',
+        uMedida: 'Unit:', observaciones: 'Remarks:',
+        tipoCambio: 'Exchange Rate: ', importeTotal: 'Total Amount: ',
+        caeVto: 'CAE Due Date: ', pendiente: 'PENDING',
+    },
+};
+
+/**
+ * Elige el idioma de los RÓTULOS del PDF de exportación.
+ *
+ * OJO — hay DOS idiomas en juego y son cosas distintas:
+ *   • `language`          → idioma de la APP (config del board). Lo lee el USUARIO
+ *                           de monday: mensajes, status, comentarios.
+ *   • `draft.idioma_cbte` → campo AFIP Idioma_cbte (1=ES / 2=EN / 3=PT). Es el
+ *                           idioma en el que el usuario DECLARÓ ANTE AFIP que
+ *                           emite este comprobante. Lo lee el CLIENTE DEL EXTERIOR.
+ *
+ * Manda `idioma_cbte`. El PDF de exportación no es una pantalla de la app: es el
+ * papel que viaja al importador. Que el emisor tenga su board en español no dice
+ * nada sobre qué idioma entiende su cliente de Texas — `idioma_cbte` sí, y encima
+ * ya está declarado ante AFIP, así que emitir el PDF en otro idioma que el
+ * declarado sería incoherente con el propio comprobante.
+ *
+ * `language` queda SOLO como fallback para drafts que no traigan el campo (PDFs
+ * regenerados de una fila vieja).
+ *
+ * PT (3) no tiene tabla de rótulos → cae a español, que es el idioma nativo del
+ * comprobante fiscal argentino y el más cercano al portugués. Forzar inglés sería
+ * meter un tercer idioma que nadie pidió.
+ */
+function resolveExportLang(idiomaCbte, language) {
+    const i = Number(idiomaCbte);
+    if (i === 2) return 'en';
+    if (i === 1 || i === 3) return 'es';
+    return language === 'en' ? 'en' : 'es';
+}
+
+async function generateFacturaEPdfBuffer({ company, draft, afipResult, language }) {
+    // `langCbte` manda en TODO el PDF: rótulos y también los pocos VALORES que la
+    // app traduce (la condición frente al IVA del emisor sale de condicionLabel).
+    // Si se usara `language` para el valor saldría el rótulo en inglés y el valor
+    // en español dentro de la misma línea.
+    const langCbte = resolveExportLang(draft.idioma_cbte, language);
+    const L = PDF_LABELS_E[langCbte];
+    const qrImageBuffer = await fetchQrImage({ company, draft, afipResult, isExportacion: true });
+    const logoBuffer = decodeCompanyLogo(company);
+    const tRenderStart = Date.now();
+
+    return new Promise((resolve, reject) => {
+        try {
+            const M = 18;
+            const doc = new PDFDocument({ size: 'A4', margin: M });
+            const buffers = [];
+            doc.on('data', (chunk) => buffers.push(chunk));
+            doc.on('end', () => {
+                const buf = Buffer.concat(buffers);
+                console.log(`[timing] pdf_render_fe: ${Date.now() - tRenderStart}ms bytes=${buf.length}`);
+                resolve(buf);
+            });
+            doc.on('error', reject);
+
+            const W = 595.28 - M * 2;
+            const colLeft = M;
+            const colRight = M + W;
+
+            // Tipo AFIP: la fuente autoritativa es afipResult (lo que AFIP confirmó).
+            // El resto de la cadena cubre PDFs regenerados desde un draft viejo.
+            const cbteTipoNum = afipResult?.cbte_tipo_afip
+                ?? draft.cbte_tipo_afip
+                ?? TIPO_CBTE_NUM.E;
+            const tipoCod = String(cbteTipoNum).padStart(2, '0');
+
+            // Divisa: AFIP la imprime como "<símbolo> - <descripción>"
+            // ("$ - Pesos Argentinos" / "USD - Dólar Estadounidense"). La
+            // descripción sale de la tabla de monedas de WSFEX → es un dato de
+            // AFIP, viene en español y NO se traduce.
+            const moneda      = draft.moneda || 'PES';
+            const monSym      = currencySymbol(moneda);
+            const isMonExt    = moneda !== 'PES';
+            const cotizacion  = Number(draft.cotizacion) || 1;
+            const divisaTxt   = `${monSym} - ${draft.moneda_descripcion || moneda}`;
+
+            const pv           = padNum(draft.punto_venta, 5);
+            const nroComp      = padNum(afipResult?.numero_comprobante, 8);
+            const fechaEmision = fmtDate(draft.fecha_emision);
+            const caeVto       = fmtDate(afipResult?.cae_vencimiento);
+            const startDate    = fmtDate(company.start_date);
+
+            // ── ORIGINAL ─────────────────────────────────────────
+            // Sin el letter-spacing que usa el PDF de A/B/C: el comprobante de
+            // exportación de AFIP lo imprime derecho.
+            let y = M;
+            doc.rect(colLeft, y, W, 16).stroke('#000');
+            doc.fontSize(8).font('Helvetica-Bold')
+               .text('ORIGINAL', colLeft, y + 4, { width: W, align: 'center' });
+            y += 16;
+
+            // ── HEADER ───────────────────────────────────────────
+            // Misma geometría que A/B/C (mismo producto, mismo marco de página):
+            // emisor a la izquierda, recuadro de letra al medio, comprobante a la
+            // derecha, y el divisor vertical justo en W/2.
+            const headerH = 134;
+            const BANNER_H = 56;
+            const hy = y;
+            doc.rect(colLeft, hy, W, headerH).stroke('#000');
+
+            const centerW  = W * 0.08;
+            const leftW    = (W - centerW) / 2;
+            const centerX  = colLeft + leftW;
+            const pad      = 8;
+            const contentX = colLeft + pad;
+            const contentW = leftW - pad * 2;
+            const bannerCenterY = hy + BANNER_H / 2;
+
+            // Logo + nombre de fantasía (igual que A/B/C — AFIP no tiene logo,
+            // pero nuestros comprobantes sí y no hay razón para que la Factura E
+            // sea el único sin la marca del emisor).
+            const LOGO_SIZE = 50;
+            const hasLogo = Boolean(logoBuffer);
+            let nameX = contentX;
+            let nameMaxW = contentW;
+            if (hasLogo) {
+                drawLogo(doc, contentX, hy + (BANNER_H - LOGO_SIZE) / 2, LOGO_SIZE, LOGO_SIZE, logoBuffer);
+                nameX = contentX + LOGO_SIZE + 10;
+                nameMaxW = contentW - LOGO_SIZE - 10;
+            }
+            const displayName = company.trade_name
+                ? company.trade_name
+                : invoiceRules.toTitleCase(company.business_name || '');
+            doc.fontSize(14).font('Helvetica-Bold')
+               .text(displayName, nameX, bannerCenterY - 7,
+                     { width: nameMaxW, align: hasLogo ? 'left' : 'center', lineBreak: false });
+
+            // Recuadro "E" + "COD. 19"
+            const BOX_SIZE = 42;
+            const boxX = (centerX + centerW / 2) - BOX_SIZE / 2;
+            doc.rect(boxX, hy, BOX_SIZE, BOX_SIZE).stroke('#000');
+            doc.fontSize(26).font('Helvetica-Bold')
+               .text('E', boxX, hy + 6, { width: BOX_SIZE, align: 'center' });
+            doc.fontSize(6).font('Helvetica-Bold')
+               .text(`COD. ${tipoCod}`, boxX, hy + 34, { width: BOX_SIZE, align: 'center' });
+
+            // "FACTURA DE EXPORTACIÓN" — leyenda de AFIP, NO se traduce ni se
+            // abrevia a "Factura E": así la titula el comprobante oficial.
+            const rx = centerX + centerW;
+            const rightColW = colRight - rx - 8;
+            doc.fontSize(16).font('Helvetica-Bold')
+               .text('FACTURA DE EXPORTACIÓN', rx, bannerCenterY - 8,
+                     { width: rightColW, align: 'center', lineBreak: false });
+
+            doc.moveTo(centerX + centerW / 2, hy + BOX_SIZE)
+               .lineTo(centerX + centerW / 2, hy + headerH).stroke('#000');
+
+            // Emisor. Los offsets son fijos (no encadenados) para que el bloque no
+            // se corra cuando el domicilio ocupa 1 línea en vez de 2.
+            drawKV(doc, contentX, hy + 74, contentW,
+                L.razonSocial, invoiceRules.toTitleCase(company.business_name || ''));
+            // El domicilio del emisor puede necesitar 2 líneas. `ellipsis` corta si
+            // no entra: preferimos truncar antes que pisar la fila de abajo.
+            doc.fontSize(8).font('Helvetica-Bold');
+            const domComLabelW = doc.widthOfString(L.domicilioComercial);
+            doc.text(L.domicilioComercial, contentX, hy + 94, { lineBreak: false });
+            doc.font('Helvetica').text(
+                invoiceRules.toTitleCase(company.address || '-'),
+                contentX + domComLabelW, hy + 94,
+                { width: contentW - domComLabelW, height: 20, ellipsis: true });
+            drawKV(doc, contentX, hy + 122, contentW, L.condFrenteIva,
+                invoiceRules.toTitleCase(invoiceRules.condicionLabel(draft.emisorCondicion || '', langCbte)));
+
+            // Comprobante. AFIP no separa "Punto de Venta" del número en la Factura E:
+            // imprime un solo "Compr. Nro: 00004-00000045".
+            const compX = centerX + centerW + 8;
+            const compW = colRight - compX - 8;
+            drawKV(doc, compX, hy + 53, compW, L.comprNro, `${pv}-${nroComp}`);
+            drawKV(doc, compX, hy + 66, compW, L.fechaEmision, fechaEmision);
+            drawKV(doc, compX, hy + 85, compW, 'CUIT: ', String(company.cuit || '').replace(/\D/g, ''));
+            drawKV(doc, compX, hy + 98, compW, L.ingresosBrutos, fmtCuit(company.cuit));
+            drawKV(doc, compX, hy + 111, compW, L.fechaInicio, startDate);
+            // Va donde en A/B/C irían neto/IVA. Leyenda de AFIP → siempre español.
+            doc.fontSize(8).font('Helvetica-Bold')
+               .text('IVA EXENTO OPERACIÓN DE EXPORTACIÓN', compX, hy + 124,
+                     { width: compW, lineBreak: false });
+            y += headerH;
+
+            // ── RECEPTOR ─────────────────────────────────────────
+            // Sin CUIT ni condición frente al IVA: el receptor es del exterior. En
+            // su lugar van CUIT País (la fila de AFIP que identifica país + tipo de
+            // entidad) e ID Impositivo (el tax ID que le dio SU país).
+            const receptorH = 52;
+            doc.rect(colLeft, y, W, receptorH).stroke('#000');
+            doc.fontSize(7.5);
+            // Nombre y domicilio del receptor se respetan TAL CUAL los cargó el
+            // usuario: acá no hay padrón de AFIP que devuelva todo en mayúsculas
+            // (el criterio de A/B/C), y toTitleCase rompería razones sociales del
+            // exterior ("M&P ... LLC." → "M&p ... Llc.") y códigos postales
+            // ("WY 82801" → "Wy 82801"). Mismo criterio que el nombre de fantasía.
+            doc.font('Helvetica-Bold').text(L.senores, colLeft + 8, y + 6, { lineBreak: false });
+            doc.font('Helvetica').text(
+                draft.receptor_nombre || '-',
+                colLeft + W * 0.145, y + 6,
+                { width: W * 0.29, height: 10, ellipsis: true });
+            doc.font('Helvetica-Bold').text(L.domicilio, colLeft + W * 0.445, y + 6, { lineBreak: false });
+            // Domicilio del exterior: suele necesitar 2 líneas (así sale en el
+            // comprobante real de referencia).
+            doc.font('Helvetica').text(
+                draft.receptor_domicilio || '-',
+                colLeft + W * 0.525, y + 6,
+                { width: W * 0.475 - 8, height: 20, ellipsis: true });
+
+            // "55000002126 (ESTADOS UNIDOS - Persona Jurídica)". La glosa entre
+            // paréntesis es EXACTAMENTE la descripción de la fila DST_CUIT de AFIP:
+            // fexResolveCuitPais() matchea justamente por `"<país> - <tipo entidad>"`,
+            // así que rearmarla con esas dos partes da el mismo string que imprime
+            // "Comprobantes en línea". Sin CUIT país (zonas francas) no hay fila que
+            // glosar → el rótulo va vacío y el receptor queda identificado por su
+            // ID Impositivo, que en ese caso AFIP exige (validación 1580).
+            const glosaCuitPais = [draft.pais_destino_descripcion, draft.receptor_tipo_entidad]
+                .filter(Boolean).join(' - ');
+            const cuitPaisTxt = draft.receptor_cuit_pais
+                ? `${draft.receptor_cuit_pais}${glosaCuitPais ? ` (${glosaCuitPais})` : ''}`
+                : '';
+            // OJO: los anchos se miden ANTES de dibujar. Medir con
+            // `doc.font('Helvetica-Bold').widthOfString(...)` dentro de los
+            // argumentos de un `.text()` deja la fuente en negrita antes de que ese
+            // text() corra, y sale el valor en bold junto con el rótulo.
+            const cuitPaisLabelW = doc.font('Helvetica-Bold').widthOfString('CUIT País: ');
+            const idImpLabelW    = doc.font('Helvetica-Bold').widthOfString(L.idImpositivo);
+            doc.font('Helvetica-Bold').text('CUIT País: ', colLeft + 8, y + 27, { lineBreak: false });
+            doc.font('Helvetica').text(cuitPaisTxt, colLeft + 8 + cuitPaisLabelW, y + 27,
+                { width: W - 16 - cuitPaisLabelW, height: 10, ellipsis: true });
+            doc.font('Helvetica-Bold').text(L.idImpositivo, colLeft + 8, y + 39, { lineBreak: false });
+            doc.font('Helvetica').text(draft.receptor_id_impositivo || '',
+                colLeft + 8 + idImpLabelW, y + 39,
+                { width: W - 16 - idImpLabelW, height: 10, ellipsis: true });
+            y += receptorH;
+
+            // ── DIVISA / DESTINO ─────────────────────────────────
+            const divisaH = 46;
+            doc.rect(colLeft, y, W, divisaH).stroke('#000');
+            doc.fontSize(7.5);
+            const divisaLabelW  = doc.font('Helvetica-Bold').widthOfString(L.divisa);
+            const destinoLabelW = doc.font('Helvetica-Bold').widthOfString(L.destinoCbte);
+            doc.font('Helvetica-Bold').text(L.divisa, colLeft + 8, y + 6, { lineBreak: false });
+            doc.font('Helvetica').text(divisaTxt, colLeft + 8 + divisaLabelW, y + 6, { lineBreak: false });
+            doc.font('Helvetica-Bold').text(L.destinoCbte, colLeft + 8, y + 18, { lineBreak: false });
+            doc.font('Helvetica').text(draft.pais_destino_descripcion || '',
+                colLeft + 8 + destinoLabelW, y + 18, { lineBreak: false });
+            y += divisaH;
+
+            // Corte visual: en el comprobante oficial el bloque de la operación
+            // arranca separado del encabezado, sin bordes que los unan.
+            y += 14;
+
+            // ── FORMA DE PAGO / FECHA DE PAGO / INCOTERMS ────────
+            const pagoH = 18;
+            doc.rect(colLeft, y, W, pagoH).stroke('#000');
+            doc.fontSize(7.5);
+            doc.font('Helvetica-Bold').text(L.formaPago, colLeft + 8, y + 5, { lineBreak: false });
+            doc.font('Helvetica').text(draft.forma_pago || '', colLeft + W * 0.20, y + 5,
+                { width: W * 0.25, height: 10, ellipsis: true });
+            // La X de Incoterms se calcula a partir de dónde TERMINA la fecha de pago
+            // en vez de fijarse en una fracción del ancho: los rótulos cambian de
+            // largo entre español e inglés y con una X fija se pisan.
+            const fpX      = colLeft + W * 0.46;
+            const fpValue  = fmtDate(draft.fecha_pago);
+            const fpLabelW = doc.font('Helvetica-Bold').widthOfString(L.fechaPago);
+            const fpValW   = doc.font('Helvetica').widthOfString(fpValue);
+            doc.font('Helvetica-Bold').text(L.fechaPago, fpX, y + 5, { lineBreak: false });
+            doc.font('Helvetica').text(fpValue, fpX + fpLabelW, y + 5, { lineBreak: false });
+            // Incoterms: el rótulo va SIEMPRE aunque no haya valor — así sale en los
+            // dos comprobantes reales (ambos de servicios). Los Incoterms describen
+            // reparto de flete/seguro/riesgo de MERCADERÍA: en una exportación de
+            // servicios no aplican, y hoy la app sólo emite servicios (Tipo_expo=2).
+            doc.font('Helvetica-Bold').text('Incoterms: ', fpX + fpLabelW + fpValW + 16, y + 5,
+                { lineBreak: false });
+            y += pagoH;
+
+            // ── TABLA DE ÍTEMS ───────────────────────────────────
+            // Sin columna de IVA ni de bonificación: la operación es exenta y el
+            // mapeo de exportación no tiene columna de bonificación.
+            // La moneda va en el encabezado de las columnas con importes.
+            const monSuffix = ` (${monSym})`;
+            const cols = [
+                { label: L.thItem,                        w: W * 0.06, align: 'center' },
+                { label: L.thDescripcion,                 w: W * 0.53, align: 'left'   },
+                { label: L.thCantidad,                    w: W * 0.15, align: 'right'  },
+                { label: `${L.thPrecioUnit}${monSuffix}`, w: W * 0.14, align: 'right'  },
+                { label: `${L.thTotalItem}${monSuffix}`,  w: W * 0.12, align: 'right'  },
+            ];
+            const headRowH = 16;
+            doc.rect(colLeft, y, W, headRowH).fill('#f1f1f1').stroke('#000');
+            let cx = colLeft;
+            doc.fillColor('#000');
+            for (const col of cols) {
+                doc.rect(cx, y, col.w, headRowH).stroke('#000');
+                // Cada rótulo se achica lo necesario para entrar en UNA línea: si
+                // wrapea, se derrama sobre el primer renglón de ítems.
+                const f = fitFontSize(doc, col.label, col.w - 4);
+                doc.fontSize(f).font('Helvetica-Bold')
+                   .text(col.label, cx + 2, y + (headRowH - f) / 2 - 0.5,
+                         { width: col.w - 4, align: 'center', lineBreak: false });
+                cx += col.w;
+            }
+            y += headRowH;
+
+            const lineas = draft.lineas || [];
+            const CANT_COL_X = colLeft + cols[0].w + cols[1].w;
+            lineas.forEach((line, idx) => {
+                const qty   = Number(line.quantity || 0);
+                const price = Number(line.unit_price || 0);
+                // El total por ítem lo calcula buildExportLinesFromSubitems y es EL
+                // que se envió a AFIP: se usa ese, no se recalcula, para que el PDF
+                // no pueda diferir del comprobante autorizado por un redondeo.
+                const totalItem = line.total_item != null ? Number(line.total_item) : qty * price;
+                const vals = [
+                    padNum(idx + 1, 4),
+                    line.concept || '',
+                    fmtExpoCantidad(qty),
+                    fmtExpoCantidad(price),
+                    fmtExpoMoney(totalItem),
+                ];
+
+                // Alto dinámico: si la descripción wrapea, la fila crece.
+                doc.fontSize(7).font('Helvetica');
+                const descH = doc.heightOfString(vals[1], { width: cols[1].w - 6 });
+                const rowH = Math.max(14, Math.ceil(descH) + 6);
+
+                // Sin grilla en las filas: el comprobante oficial sólo tiene bordes
+                // en el encabezado gris; los renglones van sueltos.
+                cx = colLeft;
+                for (let i = 0; i < cols.length; i++) {
+                    doc.fontSize(7).font(i === 0 ? 'Helvetica-Bold' : 'Helvetica')
+                       .text(vals[i], cx + 3, y + 3, { width: cols[i].w - 6, align: cols[i].align });
+                    cx += cols[i].w;
+                }
+                y += rowH;
+
+                // "U. Medida:" debajo del renglón, bajo la columna Cantidad. En los
+                // dos comprobantes reales el rótulo aparece SIN valor — los dos son
+                // de servicios, donde no hay unidad de medida que informar. Si el
+                // board mapeó la columna, imprimimos el valor: el rótulo pelado no
+                // le dice nada a nadie. Sin mapeo, el resultado es idéntico al oficial.
+                const umed = (line.unidad_medida || '').trim();
+                doc.fontSize(7);
+                const umedLabelW = doc.font('Helvetica-Bold').widthOfString(L.uMedida);
+                const umedValW   = umed ? doc.font('Helvetica').widthOfString(` ${umed}`) : 0;
+                // Rótulo + valor centrados COMO PAR en la columna Cantidad. No se usa
+                // `continued` con align:'center': pdfkit centra sólo el primer tramo y
+                // pega el segundo corrido, y sale "U. Medida:Horas" descolocado.
+                const umedX = CANT_COL_X + (cols[2].w - umedLabelW - umedValW) / 2;
+                doc.font('Helvetica-Bold').text(L.uMedida, umedX, y, { lineBreak: false });
+                if (umed) doc.font('Helvetica').text(` ${umed}`, umedX + umedLabelW, y, { lineBreak: false });
+                y += 12;
+            });
+
+            // ── OBSERVACIONES (opcional) ─────────────────────────
+            // Mismo criterio que A/B/C: apoyadas contra el bloque de totales, con el
+            // blanco arriba. El pie del cuerpo se fija a la misma altura que en
+            // A/B/C para que el footer (QR + CAE) quede en el mismo lugar en todos
+            // los comprobantes que emite la app.
+            const CONTENT_BOTTOM = M + 720;
+            const totalesH = 46;
+            const totalsY  = CONTENT_BOTTOM - totalesH;
+            const obsText  = (draft.observaciones || '').trim();
+            if (obsText) {
+                doc.fontSize(8).font('Helvetica-Bold');
+                const obsLabelW = doc.widthOfString(`${L.observaciones} `);
+                const obsW = W - 16 - obsLabelW;
+                doc.font('Helvetica');
+                const obsH = Math.max(doc.heightOfString(obsText, { width: obsW }), 11);
+                const obsY = totalsY - obsH - 6;
+                doc.fillColor('#000').font('Helvetica-Bold')
+                   .text(L.observaciones, colLeft + 8, obsY, { lineBreak: false });
+                doc.font('Helvetica').text(obsText, colLeft + 8 + obsLabelW, obsY, { width: obsW });
+            }
+
+            // ── TOTALES ──────────────────────────────────────────
+            // CERO IVA: ni neto, ni alícuotas, ni subtotales, ni "Otros Tributos".
+            // La exportación es exenta — el único importe del pie es el total.
+            doc.rect(colLeft, totalsY, W, totalesH).stroke('#000');
+            let ty = totalsY + 8;
+
+            // "Tipo de Cambio: 950.000000" — SOLO en moneda extranjera. En pesos el
+            // comprobante real no lo imprime (la cotización es 1 y no aporta nada).
+            // Con punto decimal y 6 dígitos: así lo imprime AFIP.
+            // El `width` es obligatorio: pdfkit calcula el subrayado a partir del
+            // ancho de la línea y con lineBreak:false le queda NaN.
+            if (isMonExt) {
+                const tcTxt = `${L.tipoCambio}${Number(cotizacion).toFixed(6)}`;
+                doc.fontSize(8).font('Helvetica-Bold')
+                   .text(tcTxt, colLeft + 8, ty,
+                         { width: doc.widthOfString(tcTxt) + 1, underline: true });
+            }
+            doc.fontSize(8).font('Helvetica-Bold')
+               .text(`${L.divisa}${divisaTxt}`, colLeft + 8, ty,
+                     { width: W - 16, align: 'right', underline: true });
+            ty += 18;
+
+            // "Importe Total: USD    6000,00" — rótulo, símbolo chico y monto,
+            // los tres pegados al margen derecho.
+            const impValW = 90;
+            const impValX = colRight - 8 - impValW;
+            const impSymW = 24;
+            const impSymX = impValX - impSymW - 2;
+            const impLabW = 140;
+            doc.fontSize(9.5).font('Helvetica-Bold')
+               .text(L.importeTotal, impSymX - impLabW - 2, ty + 1, { width: impLabW, align: 'right' });
+            doc.fontSize(7).font('Helvetica')
+               .text(monSym, impSymX, ty + 3, { width: impSymW, align: 'right' });
+            doc.fontSize(11).font('Helvetica-Bold')
+               .text(fmtExpoMoney(draft.importe_total), impValX, ty, { width: impValW, align: 'right' });
+
+            // ── FOOTER (fuera del recuadro) ──────────────────────
+            const footerY = CONTENT_BOTTOM + 8;
+            const QR_SIZE = 75;
+            if (qrImageBuffer) {
+                try {
+                    doc.image(qrImageBuffer, colLeft, footerY, { width: QR_SIZE, height: QR_SIZE });
+                } catch (imgErr) {
+                    console.warn('[pdf-fe] No se pudo insertar QR en PDF:', imgErr.message);
+                }
+            }
+            const arcaX = colLeft + (qrImageBuffer ? QR_SIZE + 10 : 0);
+            doc.fillColor('#000');
+            doc.fontSize(16).font('Helvetica-Bold').text('ARCA', arcaX, footerY);
+            doc.fontSize(5).font('Helvetica-Bold')
+               .text('AGENCIA DE RECAUDACIÓN Y CONTROL ADUANERO', arcaX, footerY + 18);
+            doc.fontSize(9).font('Helvetica-BoldOblique')
+               .text('Comprobante Autorizado', arcaX, footerY + 28);
+            // OJO: el comprobante de exportación dice "por la veracidad de los datos",
+            // mientras que el de A/B/C que emite la app dice "por los datos". Acá se
+            // copia el texto tal cual sale de "Comprobantes en línea" para la E.
+            doc.fontSize(5.5).font('Helvetica')
+               .text('Esta Agencia no se responsabiliza por la veracidad de los datos ingresados en el detalle de la operación',
+                     arcaX, footerY + 40);
+
+            doc.fontSize(8).font('Helvetica-Bold')
+               .text(`CAE N°: ${afipResult?.cae || L.pendiente}`, colRight - 180, footerY + 18,
+                     { width: 180, align: 'right' });
+            doc.fontSize(8).font('Helvetica')
+               .text(`${L.caeVto}${caeVto}`, colRight - 180, footerY + 30, { width: 180, align: 'right' });
+
+            doc.end();
+        } catch (err) {
+            reject(err);
+        }
+    });
+}
+
 module.exports = {
     generateFacturaPdfBuffer,
+    generateFacturaEPdfBuffer,
     calcularDesgloseIva,
     normalizeAlicuota,
 };

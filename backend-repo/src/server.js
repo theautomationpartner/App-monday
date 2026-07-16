@@ -21,7 +21,7 @@ const afipWsfex         = require('./modules/afipWsfex');   // comprobantes de e
 // `const config = INVOICE_TYPE_CONFIG[...]` local que lo shadowearía.
 const afipConfig        = require('./config');
 const invoiceRules      = require('./modules/invoiceRules');
-const { generateFacturaPdfBuffer } = require('./modules/invoicePdf');
+const { generateFacturaPdfBuffer, generateFacturaEPdfBuffer } = require('./modules/invoicePdf');
 
 // ─── Validación de inputs (Zod) ─────────────────────────────────────────────
 const {
@@ -9149,6 +9149,20 @@ async function emitFacturaEHandler(req, res) {
                 feObservaciones = feObservaciones.slice(0, 255);
             }
 
+            // Condición del emisor frente al IVA. WSFEX no la pide (la operación es
+            // exenta) — se usa SOLO para el rótulo del PDF. Best-effort a propósito:
+            // primero lo cacheado en la company y, si el padrón responde, el dato
+            // fresco. Si AFIP no contesta seguimos igual: un comprobante no se puede
+            // caer por un rótulo. Va en el draft (y no se resuelve al generar el PDF)
+            // para que quede persistido en draft_json y una regeneración futura lo tenga.
+            let feEmisorCondicion = company.padron_condicion || null;
+            try {
+                const emisorInfoFe = await getOrRefreshEmisorPadron(company);
+                feEmisorCondicion = emisorInfoFe?.condicion || feEmisorCondicion;
+            } catch (padronErr) {
+                console.warn('[fe] padrón del emisor no disponible para el PDF:', padronErr.message);
+            }
+
             // ── 12. Draft ──────────────────────────────────────────────────────
             // Importes: exportación NO discrimina IVA → importe_neto e importe_iva
             // van en null a propósito (no son 0: no existen). El audit board y el
@@ -9159,6 +9173,7 @@ async function emitFacturaEHandler(req, res) {
                 punto_venta:      ptoVentaExpo,
                 fecha_emision:    `${fechaCbte.slice(0, 4)}-${fechaCbte.slice(4, 6)}-${fechaCbte.slice(6, 8)}`,
                 tipo_expo:        afipConfig.TIPO_EXPO.SERVICIOS,
+                emisorCondicion:  feEmisorCondicion,
                 // Receptor del exterior: no hay padrón que consultar, todo lo carga
                 // el usuario.
                 receptor_nombre:        clienteRaw,
@@ -9539,14 +9554,39 @@ async function emitFacturaEHandler(req, res) {
                 pvWrite.catch((e) => console.warn('[fe] write-back punto_venta falló:', e.message));
             }
 
-            // TODO(factura-e fase 4): PDF de exportación. El layout es distinto al de
-            // A/B/C (título "FACTURA DE EXPORTACIÓN", leyenda "IVA EXENTO OPERACIÓN
-            // DE EXPORTACIÓN", bloques de CUIT País / Destino / Forma de Pago, cero
-            // discriminación de IVA, y el QR con tipoCmp=19 SIN tipoDocRec/nroDocRec).
-            // Hasta entonces NO se genera ni se sube PDF — y el flujo NO falla por
-            // eso: el comprobante ya tiene CAE válido en AFIP y el resto del
-            // registro (write-back, status, comentario, audit board) va igual.
-            console.log('[fe] PDF de exportación todavía no implementado (fase 4) — se omite y se continúa');
+            // ── PDF de exportación + upload a monday ───────────────────────────
+            // Ambos best-effort, igual que en factura y NC/ND: si el PDF falla, el
+            // comprobante YA tiene CAE válido en AFIP y no se puede deshacer. Se
+            // loguea y el resto del registro (status, comentario, audit board) sigue.
+            let fePdfBuffer = null;
+            try {
+                fePdfBuffer = await generateFacturaEPdfBuffer({
+                    company, draft: feDraft, afipResult, language: feLanguage,
+                });
+                console.log(`[fe] PDF generado, ${fePdfBuffer?.length || 0} bytes`);
+            } catch (pdfErr) {
+                console.error('[fe] ⚠ Error generando PDF de exportación:', pdfErr.message);
+            }
+            if (fePdfBuffer && mondayToken) {
+                try {
+                    const fePdfColumnId = await getInvoicePdfColumnId({ companyId: company.id, boardId });
+                    if (fePdfColumnId) {
+                        const pvPad  = String(ptoVentaExpo).padStart(2, '0');
+                        const nroPad = String(afipResult?.numero_comprobante || '').padStart(4, '0');
+                        await uploadPdfToMondayFileColumn({
+                            apiToken: mondayToken, itemId,
+                            fileColumnId: fePdfColumnId,
+                            pdfBuffer: fePdfBuffer,
+                            filename: `${feLanguage === 'en' ? 'Export_Invoice' : 'Factura'}_E_Nro_${pvPad}-${nroPad}.pdf`,
+                        });
+                        console.log('[fe] PDF de la Factura E subido a Monday');
+                    } else {
+                        console.warn('[fe] No hay columna de PDF configurada en el mapeo');
+                    }
+                } catch (upErr) {
+                    console.error('[fe] ⚠ Error subiendo PDF a Monday:', upErr.message);
+                }
+            }
 
             // ── 16. Comentario de éxito ────────────────────────────────────────
             const pvLargo  = String(ptoVentaExpo).padStart(4, '0');
@@ -9559,18 +9599,14 @@ async function emitFacturaEHandler(req, res) {
                   `Destination: ${pais.descripcion}<br/>` +
                   `Amount: ${feLines.importeTotal.toFixed(2)} ${moneda.id}` +
                   (feDraft.cotizacion !== 1 ? ` (exchange rate ${feDraft.cotizacion})` : '') + `<br/><br/>` +
-                  `<i>Export operation — VAT exempt.</i><br/>` +
-                  `<i>The export invoice PDF isn't generated yet: download it from AFIP's ` +
-                  `"Comprobantes en línea" if you need it.</i>`
+                  `<i>Export operation — VAT exempt.</i>`
                 : `✅ <b>Factura E emitida</b><br/><br/>` +
                   `Comprobante: <b>Factura E N° ${pvLargo}-${nroLargo}</b><br/>` +
                   `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>` +
                   `Destino: ${pais.descripcion}<br/>` +
                   `Importe: ${feLines.importeTotal.toFixed(2)} ${moneda.id}` +
                   (feDraft.cotizacion !== 1 ? ` (tipo de cambio ${feDraft.cotizacion})` : '') + `<br/><br/>` +
-                  `<i>Operación de exportación — IVA exento.</i><br/>` +
-                  `<i>El PDF de exportación todavía no se genera: si lo necesitás, ` +
-                  `descargalo desde "Comprobantes en línea" de AFIP.</i>`);
+                  `<i>Operación de exportación — IVA exento.</i>`);
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[fe] no se pudo postear comentario de éxito:', e.message));
 

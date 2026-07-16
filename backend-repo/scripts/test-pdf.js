@@ -3,32 +3,43 @@
  * diseño sin emitir una factura real en AFIP.
  *
  * Uso:
- *   node scripts/test-pdf.js [A|B|C] [PES|DOL] [cotizacion]
+ *   node scripts/test-pdf.js [A|B|C|E] [PES|DOL] [cotizacion] [es|en] [idiomaCbte]
  *
  * Ejemplos:
  *   node scripts/test-pdf.js A                  → Factura A en pesos
  *   node scripts/test-pdf.js A DOL 1364         → Factura A en USD, ctz 1364
  *   node scripts/test-pdf.js C DOL 1400         → Factura C en USD, ctz 1400
+ *   node scripts/test-pdf.js E                  → Factura E (exportación) en pesos
+ *   node scripts/test-pdf.js E DOL 950          → Factura E en USD, ctz 950
+ *   node scripts/test-pdf.js E DOL 950 es 2     → Factura E, board en español pero
+ *                                                 comprobante declarado en inglés
  *
- * Sale: backend-repo/test-output/factura-<tipo>-<moneda>-test.pdf
+ * El 5º argumento es el idioma de la APP (el board). El 6º, SOLO para Factura E,
+ * es el Idioma_cbte de AFIP (1=ES / 2=EN / 3=PT) — el idioma que el usuario
+ * declaró ante AFIP para el comprobante. Son cosas distintas y en el PDF de
+ * exportación manda el segundo (ver pdfLabelsForExport en invoicePdf.js): por eso
+ * se pueden pasar por separado, para poder probar justamente ese cruce.
+ *
+ * Sale: backend-repo/test-output/factura-<tipo>-<moneda>-<lang>-test.pdf
  */
 
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const { generateFacturaPdfBuffer } = require('../src/modules/invoicePdf');
+const { generateFacturaPdfBuffer, generateFacturaEPdfBuffer } = require('../src/modules/invoicePdf');
 const { IVA_CONDITION } = require('../src/config');
 
 const tipoArg = (process.argv[2] || 'A').toUpperCase();
-if (!['A', 'B', 'C'].includes(tipoArg)) {
-    console.error(`Tipo de comprobante inválido: ${tipoArg}. Usar A, B o C.`);
+if (!['A', 'B', 'C', 'E'].includes(tipoArg)) {
+    console.error(`Tipo de comprobante inválido: ${tipoArg}. Usar A, B, C o E.`);
     process.exit(1);
 }
 
 const monedaArg     = (process.argv[3] || 'PES').toUpperCase();
 const cotizacionArg = Number(process.argv[4] || 1);
 const langArg       = (process.argv[5] || 'es').toLowerCase() === 'en' ? 'en' : 'es';
+const idiomaCbteArg = [1, 2, 3].includes(Number(process.argv[6])) ? Number(process.argv[6]) : 1;
 if (!['PES', 'DOL'].includes(monedaArg)) {
     console.error(`Moneda inválida: ${monedaArg}. Usar PES o DOL.`);
     process.exit(1);
@@ -122,9 +133,70 @@ const afipResult = {
     tipo_comprobante:   tipoArg,
 };
 
+// ── Factura E (exportación) ──────────────────────────────────────────────
+// Draft con la misma forma que arma emitFacturaEHandler (verificado contra una
+// emisión real). Diferencias de fondo con A/B/C: importe_neto e importe_iva van
+// en null (la operación es exenta: no son 0, no existen), el receptor no tiene
+// CUIT ni condición frente al IVA argentinos, y las líneas traen total_item ya
+// calculado (es el que se le mandó a AFIP).
+const draftE = {
+    tipo_comprobante: 'E',
+    cbte_tipo_afip:   19,
+    punto_venta:      7,
+    fecha_emision:    new Date().toISOString().slice(0, 10),
+    tipo_expo:        2,          // servicios — lo único que emite la app hoy
+    idioma_cbte:      idiomaCbteArg,
+    emisorCondicion:  IVA_CONDITION.MONOTRIBUTO,
+    receptor_nombre:        'M&P Consulting Services LLC.',
+    receptor_domicilio:     '30 N. Gould Street, Suite R, Sheridan, WY 82801',
+    receptor_cuit_pais:     '55000002126',
+    receptor_tipo_entidad:  'Persona Jurídica',
+    receptor_id_impositivo: '36-5056685',
+    pais_destino_codigo:      '212',
+    pais_destino_descripcion: 'ESTADOS UNIDOS',
+    forma_pago:  'Transferencia bancaria',
+    fecha_pago:  new Date().toISOString().slice(0, 10),
+    moneda:      monedaArg,
+    moneda_descripcion: monedaArg === 'DOL' ? 'Dólar Estadounidense' : 'Pesos Argentinos',
+    cotizacion:  monedaArg === 'PES' ? 1 : cotizacionArg,
+    importe_neto: null,
+    importe_iva:  null,
+    importe_total: 6900,
+    observaciones: null,
+    lineas: [
+        { concept: 'Consulting services in information technology - Product management services',
+          quantity: 1, unit_price: 6000, total_item: 6000,
+          unidad_medida: '', unidad_medida_afip: 7, bonificacion: 0 },
+        { concept: 'Software maintenance retainer', quantity: 3, unit_price: 300, total_item: 900,
+          unidad_medida: 'Horas', unidad_medida_afip: 7, bonificacion: 0 },
+    ],
+    wsfex_id: 1001,
+};
+
+const afipResultE = {
+    cae:                '74358934743338',
+    cae_vencimiento:    '2026-08-15',
+    numero_comprobante: 45,
+    tipo_comprobante:   'E',
+    cbte_tipo_afip:     19,
+};
+
 // ── Generar y guardar ────────────────────────────────────────────────────
 (async () => {
     try {
+        if (tipoArg === 'E') {
+            console.log(`Generando PDF de prueba — Factura E / exportación (${monedaArg}${monedaArg === 'DOL' ? `, ctz=${cotizacionArg}` : ''}, board=${langArg}, Idioma_cbte=${idiomaCbteArg})…`);
+            const buf = await generateFacturaEPdfBuffer({
+                company, draft: draftE, afipResult: afipResultE, language: langArg,
+            });
+            const outDirE = path.join(__dirname, '..', 'test-output');
+            fs.mkdirSync(outDirE, { recursive: true });
+            const outFileE = path.join(outDirE, `factura-E-${monedaArg}-${langArg}-idioma${idiomaCbteArg}-test.pdf`);
+            fs.writeFileSync(outFileE, buf);
+            console.log(`PDF generado: ${outFileE} (${buf.length} bytes)`);
+            return;
+        }
+
         console.log(`Generando PDF de prueba — Factura ${tipoArg} (${monedaArg}${monedaArg === 'DOL' ? `, ctz=${cotizacionArg}` : ''})…`);
         const pdfBuffer = await generateFacturaPdfBuffer({ company, draft, afipResult, language: langArg });
 
