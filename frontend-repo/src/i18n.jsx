@@ -339,7 +339,7 @@ export const translations = {
       "Solo si exportás servicios al exterior. Si no, dejá este bloque vacío: no afecta a tus Facturas A, B ni C.",
     "map.expoPaisDestino": "País de destino",
     "map.expoPaisDestinoHelp":
-      "Dropdown con el país del cliente. Tiene que coincidir con la lista de AFIP (ej: <b>Brasil</b>, <b>Estados Unidos</b>, <b>España</b>).",
+      "Dropdown con el país del cliente, en español o en inglés (ej: <b>Brasil</b>, <b>Estados Unidos</b>, <b>Alemania</b>). La app lo resuelve contra la lista de AFIP.",
     "map.expoFechaPago": "Fecha de pago",
     "map.expoFechaPagoHelp":
       "Columna de fecha. AFIP la exige en las Facturas E de servicios. No puede ser anterior a la fecha de emisión.",
@@ -885,7 +885,7 @@ export const translations = {
       "Only if you export services abroad. If you don't, leave this block empty: it does not affect your Factura A, B or C.",
     "map.expoPaisDestino": "Destination country",
     "map.expoPaisDestinoHelp":
-      "Dropdown with the client's country. It must match AFIP's list (e.g. <b>Brasil</b>, <b>Estados Unidos</b>, <b>España</b>).",
+      "Dropdown with the client's country, in English or Spanish (e.g. <b>Brazil</b>, <b>United States</b>, <b>Germany</b>). The app resolves it against AFIP's list.",
     "map.expoFechaPago": "Payment date",
     "map.expoFechaPagoHelp":
       "Date column. AFIP requires it on Factura E for services. It cannot be earlier than the issue date.",

@@ -8248,47 +8248,94 @@ function resolveTipoEntidadReceptor(raw) {
     return afipWsfex.TIPO_ENTIDAD.OTRA;
 }
 
+// Traduce un nombre de país de inglés a español con los datos de ICU que Node ya
+// trae. Hace falta porque la tabla de AFIP está SOLO en español: un board en
+// inglés que diga "Germany" no matchearía nada.
+//
+// No se hardcodea una tabla de 310 países: se arma una vez recorriendo los
+// códigos ISO 3166-1 y se cachea. Devuelve null si no es un nombre de país
+// conocido en inglés (ej. ya venía en español) — el caller igual prueba el
+// texto original.
+let _paisEnToEs = null;
+function paisEnToEs(nombre) {
+    if (!_paisEnToEs) {
+        _paisEnToEs = {};
+        const dnEs = new Intl.DisplayNames(['es'], { type: 'region' });
+        const dnEn = new Intl.DisplayNames(['en'], { type: 'region' });
+        for (let a = 65; a <= 90; a++) {
+            for (let b = 65; b <= 90; b++) {
+                const code = String.fromCharCode(a) + String.fromCharCode(b);
+                try {
+                    const es = dnEs.of(code);
+                    const en = dnEn.of(code);
+                    // of() devuelve el código tal cual cuando no conoce el país.
+                    if (es && en && es !== code && en !== code) {
+                        _paisEnToEs[normalizeExpoText(en)] = es;
+                    }
+                } catch { /* código inexistente */ }
+            }
+        }
+    }
+    return _paisEnToEs[normalizeExpoText(nombre)] || null;
+}
+
 // Resuelve el código de país de destino (Dst_cmp) desde el nombre que el usuario
 // eligió en el dropdown, contra la tabla VIVA de AFIP (FEXGetPARAM_DST_pais).
 //
-// No se hardcodea la lista: son 310 países y AFIP los cambia. El match es exacto
-// primero porque hay descripciones que se contienen entre sí — "URUGUAY" y
-// "ZF Colonia - URUGUAY" (zona franca) son destinos DISTINTOS, y el contains a
-// secas elegiría cualquiera de los dos.
+// No se hardcodea la lista: son 310 países y AFIP los cambia.
+//
+// Busca el texto tal cual Y su traducción al español (para los boards en inglés).
+// Primero TODOS los intentos exactos y recién después los parciales: AFIP abrevia
+// con nombres propios ("ALEMANIA,REP.FED."), así que "Alemania"/"Germany" solo
+// entran por el parcial — pero el parcial se acepta únicamente si es INEQUÍVOCO,
+// porque "URUGUAY" también está adentro de "ZF Colonia - URUGUAY" (zona franca),
+// que es un destino DISTINTO.
 async function resolvePaisDestinoExpo(raw, auth, language) {
     const L = (en, es) => (language === 'en' ? en : es);
-    const wanted = normalizeExpoText(raw);
     const paises = await afipWsfex.fexGetPaises(auth);
 
-    let hit = paises.find((p) => normalizeExpoText(p.descripcion) === wanted);
-    if (!hit) {
-        // Fallback tolerante: solo si es INEQUÍVOCO. Si "URUGUAY" matchea también
-        // la zona franca, preferimos el error a elegir por el usuario.
-        const partial = paises.filter((p) => normalizeExpoText(p.descripcion).includes(wanted));
-        if (partial.length === 1) hit = partial[0];
-        else if (partial.length > 1) {
-            throw new Error(L(
-                `The destination country "${raw}" is ambiguous — it matches several AFIP entries: ` +
-                `${partial.slice(0, 6).map((p) => `"${p.descripcion}"`).join(', ')}. ` +
-                `Write the exact name of the one you need in the column.`,
-                `El país de destino "${raw}" es ambiguo — coincide con varias entradas de AFIP: ` +
-                `${partial.slice(0, 6).map((p) => `"${p.descripcion}"`).join(', ')}. ` +
-                `Escribí en la columna el nombre exacto del que necesitás.`
-            ));
-        }
+    const candidatos = [normalizeExpoText(raw)];
+    const traducido = paisEnToEs(raw);
+    if (traducido && normalizeExpoText(traducido) !== candidatos[0]) {
+        candidatos.push(normalizeExpoText(traducido));
     }
-    if (!hit) {
-        const ejemplos = paises
-            .filter((p) => /^(BRASIL|CHILE|URUGUAY|ESTADOS UNIDOS|ESPANA|ESPAÑA|ALEMANIA)$/.test(normalizeExpoText(p.descripcion)))
-            .map((p) => `"${p.descripcion}"`);
+
+    // 1. Exacto (con el texto original y con la traducción).
+    for (const q of candidatos) {
+        if (!q) continue;
+        const hit = paises.find((p) => normalizeExpoText(p.descripcion) === q);
+        if (hit) return { codigo: hit.codigo, descripcion: hit.descripcion };
+    }
+
+    // 2. Parcial, solo si es inequívoco.
+    let ambiguo = null;
+    for (const q of candidatos) {
+        if (!q) continue;
+        const partial = paises.filter((p) => normalizeExpoText(p.descripcion).includes(q));
+        if (partial.length === 1) return { codigo: partial[0].codigo, descripcion: partial[0].descripcion };
+        if (partial.length > 1 && !ambiguo) ambiguo = partial;
+    }
+    if (ambiguo) {
         throw new Error(L(
-            `The destination country "${raw}" is not in AFIP's country list.\n` +
-            `Write it exactly as AFIP names it — for example: ${ejemplos.join(', ') || '"BRASIL", "ESTADOS UNIDOS", "ESPAÑA"'}.`,
-            `El país de destino "${raw}" no está en la lista de países de AFIP.\n` +
-            `Escribilo exactamente como lo nombra AFIP — por ejemplo: ${ejemplos.join(', ') || '"BRASIL", "ESTADOS UNIDOS", "ESPAÑA"'}.`
+            `The destination country "${raw}" is ambiguous — it matches several AFIP entries: ` +
+            `${ambiguo.slice(0, 6).map((p) => `"${p.descripcion}"`).join(', ')}. ` +
+            `Write the exact name of the one you need in the column.`,
+            `El país de destino "${raw}" es ambiguo — coincide con varias entradas de AFIP: ` +
+            `${ambiguo.slice(0, 6).map((p) => `"${p.descripcion}"`).join(', ')}. ` +
+            `Escribí en la columna el nombre exacto del que necesitás.`
         ));
     }
-    return { codigo: hit.codigo, descripcion: hit.descripcion };
+
+    const ejemplos = paises
+        .filter((p) => /^(BRASIL|CHILE|URUGUAY|ESTADOS UNIDOS|ESPANA|ESPAÑA)$/.test(normalizeExpoText(p.descripcion)))
+        .map((p) => `"${p.descripcion}"`);
+    throw new Error(L(
+        `The destination country "${raw}" is not in AFIP's country list.\n` +
+        `Use the country's name in English (e.g. "Brazil", "United States") or exactly as AFIP names it` +
+        `${ejemplos.length ? ` — for example: ${ejemplos.join(', ')}` : ''}.`,
+        `El país de destino "${raw}" no está en la lista de países de AFIP.\n` +
+        `Escribilo como lo nombra AFIP${ejemplos.length ? ` — por ejemplo: ${ejemplos.join(', ')}` : ''}.`
+    ));
 }
 
 // Resuelve el código de moneda de AFIP (Moneda_Id) desde el texto del item,
