@@ -2297,6 +2297,30 @@ const App = () => {
 
                 {fiscal.emiteFacturaE && (
                   <div className="fa-leyenda-detail">
+                    {/* Instructivo del trámite en AFIP. Sin este permiso la emisión */}
+                    {/* falla con "Computador no autorizado a acceder al servicio",  */}
+                    {/* que no le dice nada al usuario. Mejor avisar acá, antes.     */}
+                    <div style={{
+                      background: "var(--paper-100, #F6F8FA)",
+                      border: "1px solid var(--ink-200, #E3E8EF)",
+                      borderRadius: 8,
+                      padding: "12px 14px",
+                      marginBottom: 16,
+                    }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>
+                        {t("fiscal.expoSetupTitle")}
+                      </div>
+                      <div style={{ fontSize: 12, color: "var(--ink-600)", marginBottom: 8 }}
+                           dangerouslySetInnerHTML={safeHtml(t("fiscal.expoSetupIntro"))} />
+                      <ol style={{ fontSize: 12, color: "var(--ink-600)", margin: "0 0 8px", paddingLeft: 18, lineHeight: 1.7 }}>
+                        {[1, 2, 3, 4, 5, 6].map((n) => (
+                          <li key={n} dangerouslySetInnerHTML={safeHtml(t(`fiscal.expoSetupStep${n}`))} />
+                        ))}
+                      </ol>
+                      <div style={{ fontSize: 11, color: "var(--ink-500)" }}
+                           dangerouslySetInnerHTML={safeHtml(t("fiscal.expoSetupPv"))} />
+                    </div>
+
                     <div style={{ marginBottom: 12 }}>
                       <label className="form-label" htmlFor="expo-forma-pago">
                         {t("fiscal.expoFormaPago")}

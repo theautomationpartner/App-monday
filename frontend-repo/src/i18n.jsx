@@ -70,6 +70,22 @@ export const translations = {
     "fiscal.expoIdiomaPt": "Portugués",
     "fiscal.expoViewLabel": "Factura E (exportación)",
     "fiscal.expoViewValue": "Forma de pago: {formaPago} · Idioma: {idioma}",
+    // Instructivo del trámite en AFIP. Aparece al activar el toggle: sin este
+    // permiso la emisión falla con "Computador no autorizado", que no le dice
+    // nada al usuario. Mejor avisarle ANTES de que lo intente.
+    "fiscal.expoSetupTitle": "Antes de tu primera Factura E",
+    "fiscal.expoSetupIntro":
+      "Tenés que darle permiso a tu certificado en AFIP para emitir exportaciones. Se hace una sola vez y lleva 2 minutos. <b>No necesitás un certificado nuevo</b>: es el mismo que ya usás.",
+    "fiscal.expoSetupStep1": "Entrá a <b>afip.gob.ar</b> con tu Clave Fiscal.",
+    "fiscal.expoSetupStep2": "Abrí el servicio <b>«Administrador de Relaciones de Clave Fiscal»</b>.",
+    "fiscal.expoSetupStep3": "Click en <b>«Nueva Relación»</b>.",
+    "fiscal.expoSetupStep4":
+      "En <b>Servicio</b> → BUSCAR → <b>AFIP → WebServices → «ws - Facturación Electrónica de Exportación»</b>.",
+    "fiscal.expoSetupStep5":
+      "En <b>Representante</b> → BUSCAR → elegí el <b>mismo certificado que ya usás</b> para facturar.",
+    "fiscal.expoSetupStep6": "Confirmá. Listo.",
+    "fiscal.expoSetupPv":
+      "También necesitás un <b>punto de venta habilitado para exportación</b> (es distinto del que usás para facturar acá). Si alguna vez emitiste una Factura E desde la web de AFIP, ya lo tenés.",
     "fiscal.contactTitle": "Datos de contacto y marca",
     "fiscal.contactSub":
       "Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.",
@@ -582,6 +598,22 @@ export const translations = {
     "fiscal.expoIdiomaPt": "Portuguese",
     "fiscal.expoViewLabel": "Factura E (exports)",
     "fiscal.expoViewValue": "Payment method: {formaPago} · Language: {idioma}",
+    // AFIP setup instructions. Shown when the toggle is on: without this
+    // permission the issue fails with "Computador no autorizado", which tells the
+    // user nothing. Better to warn them BEFORE they try.
+    "fiscal.expoSetupTitle": "Before your first Factura E",
+    "fiscal.expoSetupIntro":
+      "You need to authorise your AFIP certificate for exports. It's a one-off and takes 2 minutes. <b>You don't need a new certificate</b>: it's the same one you already use.",
+    "fiscal.expoSetupStep1": "Go to <b>afip.gob.ar</b> and log in with your Clave Fiscal.",
+    "fiscal.expoSetupStep2": "Open the <b>«Administrador de Relaciones de Clave Fiscal»</b> service.",
+    "fiscal.expoSetupStep3": "Click <b>«Nueva Relación»</b>.",
+    "fiscal.expoSetupStep4":
+      "Under <b>Servicio</b> → BUSCAR → <b>AFIP → WebServices → «ws - Facturación Electrónica de Exportación»</b>.",
+    "fiscal.expoSetupStep5":
+      "Under <b>Representante</b> → BUSCAR → pick the <b>same certificate you already use</b> for invoicing.",
+    "fiscal.expoSetupStep6": "Confirm. Done.",
+    "fiscal.expoSetupPv":
+      "You also need a <b>point of sale enabled for exports</b> (different from the one you use for domestic invoicing). If you've ever issued a Factura E from AFIP's website, you already have it.",
     "fiscal.contactTitle": "Contact & branding",
     "fiscal.contactSub":
       "These details are optional. We'll use them later to personalize your invoice PDF with your company information.",
