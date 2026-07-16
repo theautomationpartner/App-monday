@@ -43,6 +43,9 @@ const CompanySchema = z.object({
     // exporta = comportamiento de siempre.
     // Forma_pago es C50 en AFIP; Idioma_cbte es 1=Espanol, 2=Ingles, 3=Portugues.
     emite_factura_e: z.boolean().optional().nullable(),
+    // PV de exportacion: AFIP exige que sea distinto del de mercado interno.
+    // Rango de la validacion 1510: 1 a 99998.
+    punto_venta_exportacion: z.union([z.number(), z.string()]).optional().nullable(),
     forma_pago_exportacion: z.string().max(50).optional().nullable(),
     idioma_comprobante_default: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().nullable(),
 });

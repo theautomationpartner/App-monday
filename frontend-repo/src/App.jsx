@@ -408,9 +408,16 @@ const App = () => {
     // Factura E (exportación de servicios). Apagado por defecto = comportamiento
     // de siempre: el bloque de mapeo de exportación ni se muestra.
     emiteFacturaE: false,
+    expoPuntoVenta: "",
     expoFormaPago: "",
     expoIdioma: 1,             // 1=Español · 2=Inglés · 3=Portugués (Idioma_cbte de AFIP)
   });
+
+  // Puntos de venta de exportación que AFIP tiene habilitados para esta empresa.
+  // Se piden en vivo: es la única forma de saberlo, y el error que devuelve
+  // (sin cert / sin permiso wsfex / sin PV) es justo lo que el usuario necesita
+  // saber ANTES de intentar emitir y comerse un error críptico de AFIP.
+  const [expoPvState, setExpoPvState] = useState({ loading: false, puntos: [], error: null });
   const [hasSavedFiscalData, setHasSavedFiscalData] = useState(false);
 
   // Logo (opcional, multipart): archivo nuevo a subir + preview de lo guardado.
@@ -888,6 +895,7 @@ const App = () => {
             facturaALeyenda: data.fiscalData.factura_a_leyenda || "none",
             facturaACbu: data.fiscalData.factura_a_cbu || "",
             emiteFacturaE: Boolean(data.fiscalData.emite_factura_e),
+            expoPuntoVenta: data.fiscalData.punto_venta_exportacion || "",
             expoFormaPago: data.fiscalData.forma_pago_exportacion || "",
             expoIdioma: data.fiscalData.idioma_comprobante_default || 1,
           };
@@ -1203,6 +1211,35 @@ const App = () => {
     setFiscal((prev) => ({ ...prev, [field]: value }));
   };
 
+  // Le pregunta a AFIP en vivo qué puntos de venta de exportación tiene la
+  // empresa. El backend traduce los casos de falla a códigos (NO_CERT,
+  // WSFEX_NOT_AUTHORIZED, NO_EXPORT_PV) que acá se muestran como el paso que
+  // le falta hacer — no como un error genérico.
+  const fetchExportPuntosVenta = useCallback(async () => {
+    const accountId = context?.account?.id;
+    if (!accountId) return;
+    setExpoPvState({ loading: true, puntos: [], error: null });
+    try {
+      const { data } = await api.get(`/export-points-of-sale/${accountId}`, {
+        params: { workspace_id: workspaceId || undefined },
+      });
+      setExpoPvState({
+        loading: false,
+        puntos: Array.isArray(data?.puntos) ? data.puntos : [],
+        error: data?.error || null,
+      });
+    } catch (err) {
+      console.warn("[expo-pv] no se pudo consultar:", err?.message);
+      setExpoPvState({ loading: false, puntos: [], error: "AFIP_ERROR" });
+    }
+  }, [context?.account?.id, workspaceId]);
+
+  // Consultar solo cuando el usuario activa exportación (no en cada carga: es
+  // un roundtrip a AFIP y la enorme mayoría de los clientes no exporta).
+  useEffect(() => {
+    if (fiscal.emiteFacturaE && isFiscalEditMode) fetchExportPuntosVenta();
+  }, [fiscal.emiteFacturaE, isFiscalEditMode, fetchExportPuntosVenta]);
+
   const handleFileChange = (e, type) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1300,6 +1337,7 @@ const App = () => {
         website: fiscal.sitioWeb,
         factura_a_leyenda: fiscal.facturaALeyenda || "none",
         emite_factura_e: Boolean(fiscal.emiteFacturaE),
+        punto_venta_exportacion: fiscal.emiteFacturaE ? (fiscal.expoPuntoVenta || null) : null,
         forma_pago_exportacion: fiscal.emiteFacturaE ? (fiscal.expoFormaPago || "") : "",
         idioma_comprobante_default: fiscal.emiteFacturaE ? (Number(fiscal.expoIdioma) || 1) : null,
       };
@@ -2116,6 +2154,7 @@ const App = () => {
                         <span className="data-label">{t("fiscal.expoViewLabel")}</span>
                         <span className="data-value">
                           {t("fiscal.expoViewValue")
+                            .replace("{pv}", fiscal.expoPuntoVenta ? String(fiscal.expoPuntoVenta).padStart(5, "0") : "—")
                             .replace("{formaPago}", fiscal.expoFormaPago || "—")
                             .replace("{idioma}", t(
                               fiscal.expoIdioma === 2 ? "fiscal.expoIdiomaEn"
@@ -2319,6 +2358,62 @@ const App = () => {
                       </ol>
                       <div style={{ fontSize: 11, color: "var(--ink-500)" }}
                            dangerouslySetInnerHTML={safeHtml(t("fiscal.expoSetupPv"))} />
+                    </div>
+
+                    {/* Punto de venta de exportación — la lista sale de AFIP en vivo */}
+                    <div style={{ marginBottom: 12 }}>
+                      <label className="form-label" htmlFor="expo-pv">
+                        {t("fiscal.expoPv")}
+                      </label>
+                      {expoPvState.loading ? (
+                        <div style={{ fontSize: 12, color: "var(--ink-500)", padding: "8px 0" }}>
+                          {t("fiscal.expoPvLoading")}
+                        </div>
+                      ) : expoPvState.puntos.length > 0 ? (
+                        <select
+                          id="expo-pv"
+                          value={fiscal.expoPuntoVenta || ""}
+                          onChange={(e) => handleFiscalChange("expoPuntoVenta", e.target.value)}
+                        >
+                          <option value="">{t("fiscal.expoPvChoose")}</option>
+                          {expoPvState.puntos.map((n) => (
+                            <option key={n} value={n}>{String(n).padStart(5, "0")}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div style={{
+                          fontSize: 12,
+                          color: "var(--ink-600)",
+                          background: "var(--warn-50, #FFF8E6)",
+                          border: "1px solid var(--warn-200, #F5E0A3)",
+                          borderRadius: 6,
+                          padding: "8px 10px",
+                        }}>
+                          {t(
+                            expoPvState.error === "NO_CERT" ? "fiscal.expoPvErrNoCert"
+                            : expoPvState.error === "WSFEX_NOT_AUTHORIZED" ? "fiscal.expoPvErrNotAuthorized"
+                            : expoPvState.error === "NO_EXPORT_PV" ? "fiscal.expoPvErrNoPv"
+                            : "fiscal.expoPvErrAfip"
+                          )}
+                        </div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 4 }}>
+                        <div style={{ fontSize: 11, color: "var(--ink-500)" }}>
+                          {t("fiscal.expoPvHint")}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={fetchExportPuntosVenta}
+                          disabled={expoPvState.loading}
+                          style={{
+                            background: "none", border: "none", padding: 0,
+                            fontSize: 11, color: "var(--brand-navy, #071F32)",
+                            textDecoration: "underline", cursor: "pointer", whiteSpace: "nowrap",
+                          }}
+                        >
+                          {t("fiscal.expoPvRefresh")}
+                        </button>
+                      </div>
                     </div>
 
                     <div style={{ marginBottom: 12 }}>

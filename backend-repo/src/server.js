@@ -15,6 +15,7 @@ require('dotenv').config();
 // ─── Módulos de facturación ───────────────────────────────────────────────────
 const afipAuthModule    = require('./modules/afipAuth');
 const afipPadron        = require('./modules/afipPadron');
+const afipWsfex         = require('./modules/afipWsfex');   // comprobantes de exportación (WSFEXv1)
 const invoiceRules      = require('./modules/invoiceRules');
 const { generateFacturaPdfBuffer } = require('./modules/invoicePdf');
 
@@ -603,7 +604,8 @@ async function getCompanyForBoard(mondayAccountId, boardId) {
                 c.logo_mime_type, c.padron_condicion, c.padron_nombre,
                 c.padron_tipo_persona, c.padron_domicilio, c.padron_fetched_at,
                 c.factura_a_leyenda, c.factura_a_cbu,
-                c.emite_factura_e, c.forma_pago_exportacion, c.idioma_comprobante_default
+                c.emite_factura_e, c.punto_venta_exportacion,
+                c.forma_pago_exportacion, c.idioma_comprobante_default
          FROM companies c
          JOIN board_automation_configs bac ON bac.company_id = c.id
          WHERE c.monday_account_id::text = $1
@@ -628,7 +630,7 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
                phone, email, website, logo_base64, logo_mime_type,
                padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio, padron_fetched_at,
                factura_a_leyenda, factura_a_cbu,
-               emite_factura_e, forma_pago_exportacion, idioma_comprobante_default
+               emite_factura_e, punto_venta_exportacion, forma_pago_exportacion, idioma_comprobante_default
         FROM companies`;
     if (workspaceId) {
         // Match exacto al workspace solicitado.
@@ -2700,6 +2702,13 @@ async function ensureCompaniesExtraColumns() {
             -- comportamiento de siempre, y acá eso es NO exportar → el default
             -- correcto es FALSE. Con FALSE la app se comporta exactamente como hoy.
             ADD COLUMN IF NOT EXISTS emite_factura_e BOOLEAN DEFAULT FALSE,
+            -- PV de exportación. AFIP EXIGE que sea distinto del de mercado interno
+            -- y distinto del de "Comprobantes en línea": los puntos de venta de cada
+            -- sistema tienen que ser distintos entre sí. Por eso no se puede reusar
+            -- default_point_of_sale — emitir una Factura E desde el PV local lo
+            -- rechaza AFIP (validación 1510: el PV tiene que estar dado de alta como
+            -- "Comprobantes de Exportación - Web Services", código FEEWS).
+            ADD COLUMN IF NOT EXISTS punto_venta_exportacion INTEGER,
             -- Forma_pago es C50 en AFIP y obligatorio para Cbte_Tipo=19 (val. 1620).
             ADD COLUMN IF NOT EXISTS forma_pago_exportacion VARCHAR(50),
             -- Idioma_cbte: 1=Español, 2=Inglés, 3=Portugués (val. 1630). Es el idioma
@@ -4163,6 +4172,7 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
                 // Factura E: '' / null = la empresa no exporta (todos los clientes
                 // actuales) → el bloque de exportación arranca vacío y sin efecto.
                 emite_factura_e: Boolean(company.emite_factura_e),
+                punto_venta_exportacion: company.punto_venta_exportacion || '',
                 forma_pago_exportacion: company.forma_pago_exportacion || '',
                 idioma_comprobante_default: company.idioma_comprobante_default || null,
             },
@@ -4197,6 +4207,77 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
  * GET /api/preflight/:mondayAccountId?board_id=123
  * Respuesta: { ready: boolean, missing: string[], message: string }
  */
+// Lista los puntos de venta que la empresa tiene habilitados para EXPORTACIÓN,
+// preguntándoselo a AFIP en vivo (FEXGetPARAM_PtoVenta).
+//
+// Por qué existe: AFIP exige que el PV de exportación sea distinto del de mercado
+// interno y del de "Comprobantes en línea" — los PV de cada sistema tienen que ser
+// distintos entre sí. Hacer que el usuario tipee un número a mano termina en el
+// error 1510 de AFIP ("el PV no está dado de alta como Comprobantes de Exportación
+// - Web Services"), que no le dice nada. Mejor mostrarle la lista real: si está
+// vacía o no tiene permisos, le avisamos ACÁ qué trámite le falta.
+//
+// Los códigos de `error` los traduce el frontend — no se arma el texto acá.
+app.get('/api/export-points-of-sale/:mondayAccountId', requireMondaySession, async (req, res) => {
+    const { mondayAccountId } = req.params;
+    const { workspace_id } = req.query;
+    if (!ensureAccountMatch(req, res, mondayAccountId)) return;
+
+    try {
+        const company = await getCompanyByMondayAccountId(mondayAccountId, workspace_id || null);
+        if (!company?.cuit) {
+            return res.json({ ok: false, error: 'NO_COMPANY', puntos: [] });
+        }
+
+        const cred = await db.query(
+            `SELECT crt_file_url, encrypted_private_key FROM afip_credentials
+             WHERE company_id = $1 AND status = 'active'
+               AND crt_file_url IS NOT NULL AND encrypted_private_key IS NOT NULL
+             LIMIT 1`,
+            [company.id]
+        );
+        if (!cred.rows[0]) {
+            return res.json({ ok: false, error: 'NO_CERT', puntos: [] });
+        }
+
+        const certPem = normalizePem(cred.rows[0].crt_file_url, 'CERTIFICATE');
+        const keyPem = normalizePem(
+            CryptoJS.AES.decrypt(cred.rows[0].encrypted_private_key, process.env.ENCRYPTION_KEY)
+                .toString(CryptoJS.enc.Utf8),
+            'PRIVATE KEY'
+        );
+
+        let auth;
+        try {
+            const t = await afipAuthModule.getToken({
+                certPem, keyPem, cuit: company.cuit,
+                service: afipWsfex.WSFEX_SERVICE, companyId: company.id,
+            });
+            auth = { token: t.token, sign: t.sign, cuit: company.cuit };
+        } catch (err) {
+            // El caso más común y el motivo de este endpoint: el cert existe pero
+            // no está delegado al servicio wsfex. AFIP responde "Computador no
+            // autorizado a acceder al servicio".
+            console.warn(`[export-pv] company ${company.id} sin acceso a wsfex: ${err.message}`);
+            return res.json({ ok: false, error: 'WSFEX_NOT_AUTHORIZED', puntos: [] });
+        }
+
+        const todos = await afipWsfex.fexGetPtosVenta(auth);
+        // AFIP marca de baja/bloqueado en la misma lista → filtramos.
+        const puntos = todos
+            .filter((p) => String(p.bloqueado || '').toUpperCase() !== 'S' && !p.baja)
+            .map((p) => p.nro)
+            .filter((n) => Number.isFinite(n))
+            .sort((a, b) => a - b);
+
+        console.log(`[export-pv] company ${company.id} (CUIT ${company.cuit}): ${puntos.length} PV de exportación`);
+        return res.json({ ok: true, error: puntos.length ? null : 'NO_EXPORT_PV', puntos });
+    } catch (err) {
+        console.error('[export-pv] error:', err.message);
+        return res.json({ ok: false, error: 'AFIP_ERROR', detail: err.message, puntos: [] });
+    }
+});
+
 app.get('/api/preflight/:mondayAccountId', requireMondaySession, async (req, res) => {
     const { mondayAccountId } = req.params;
     const { board_id } = req.query;
@@ -4630,7 +4711,7 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
     const {
         monday_account_id, workspace_id, business_name, nombre_fantasia, cuit, default_point_of_sale, domicilio, fecha_inicio,
         phone, email, website, factura_a_leyenda, factura_a_cbu,
-        emite_factura_e, forma_pago_exportacion, idioma_comprobante_default
+        emite_factura_e, punto_venta_exportacion, forma_pago_exportacion, idioma_comprobante_default
     } = req.body;
     const accountId = String(monday_account_id || req.mondayIdentity.accountId || '');
     // workspace_id es opcional. Si no llega, la empresa queda como "legacy"
@@ -4671,6 +4752,10 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
     // configuración colgada si alguien prueba el toggle y lo vuelve a apagar.
     // AFIP corta Forma_pago en 50 (C50).
     const emiteE = Boolean(emite_factura_e);
+    const pvExpoNum = Number(punto_venta_exportacion);
+    const pvExpo = emiteE && Number.isInteger(pvExpoNum) && pvExpoNum >= 1 && pvExpoNum <= 99998
+        ? pvExpoNum
+        : null;
     const formaPagoExpo = emiteE
         ? (String(forma_pago_exportacion || '').trim().slice(0, 50) || null)
         : null;
@@ -4710,8 +4795,8 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
         // companies_account_workspace_unique soporta el ON CONFLICT con la
         // expresión COALESCE para que NULL se trate de forma determinística.
         const query = `
-            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website, factura_a_leyenda, factura_a_cbu, emite_factura_e, forma_pago_exportacion, idioma_comprobante_default)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            INSERT INTO companies (monday_account_id, workspace_id, business_name, trade_name, cuit, default_point_of_sale, address, start_date, phone, email, website, factura_a_leyenda, factura_a_cbu, emite_factura_e, punto_venta_exportacion, forma_pago_exportacion, idioma_comprobante_default)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
             ON CONFLICT (monday_account_id, COALESCE(workspace_id, '__legacy__'))
             DO UPDATE SET
                 business_name = EXCLUDED.business_name,
@@ -4726,6 +4811,7 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
                 factura_a_leyenda = EXCLUDED.factura_a_leyenda,
                 factura_a_cbu = EXCLUDED.factura_a_cbu,
                 emite_factura_e = EXCLUDED.emite_factura_e,
+                punto_venta_exportacion = EXCLUDED.punto_venta_exportacion,
                 forma_pago_exportacion = EXCLUDED.forma_pago_exportacion,
                 idioma_comprobante_default = EXCLUDED.idioma_comprobante_default,
                 updated_at = CURRENT_TIMESTAMP
@@ -4733,7 +4819,7 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
         `;
         const result = await db.query(query, [
             accountId, workspaceId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
-            phoneNorm.value, emailNorm.value, websiteNorm.value, leyendaA, cbuA, emiteE, formaPagoExpo, idiomaExpo
+            phoneNorm.value, emailNorm.value, websiteNorm.value, leyendaA, cbuA, emiteE, pvExpo, formaPagoExpo, idiomaExpo
         ]);
         // Datos fiscales cambiaron → invalidar cache del padrón en DB.
         if (result.rows[0]?.id) await invalidateEmisorPadronDb(result.rows[0].id);
@@ -10194,7 +10280,7 @@ async function reconcileSingleEmission(row) {
                 logo_base64, logo_mime_type,
                 padron_condicion, padron_nombre, padron_tipo_persona, padron_domicilio,
                 factura_a_leyenda, factura_a_cbu,
-                emite_factura_e, forma_pago_exportacion, idioma_comprobante_default
+                emite_factura_e, punto_venta_exportacion, forma_pago_exportacion, idioma_comprobante_default
          FROM companies WHERE id=$1 LIMIT 1`,
         [row.company_id]
     );

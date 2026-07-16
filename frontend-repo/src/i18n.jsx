@@ -69,7 +69,7 @@ export const translations = {
     "fiscal.expoIdiomaEn": "Inglés",
     "fiscal.expoIdiomaPt": "Portugués",
     "fiscal.expoViewLabel": "Factura E (exportación)",
-    "fiscal.expoViewValue": "Forma de pago: {formaPago} · Idioma: {idioma}",
+    "fiscal.expoViewValue": "Punto de venta: {pv} · Forma de pago: {formaPago} · Idioma: {idioma}",
     // Instructivo del trámite en AFIP. Aparece al activar el toggle: sin este
     // permiso la emisión falla con "Computador no autorizado", que no le dice
     // nada al usuario. Mejor avisarle ANTES de que lo intente.
@@ -85,7 +85,22 @@ export const translations = {
       "En <b>Representante</b> → BUSCAR → elegí el <b>mismo certificado que ya usás</b> para facturar.",
     "fiscal.expoSetupStep6": "Confirmá. Listo.",
     "fiscal.expoSetupPv":
-      "También necesitás un <b>punto de venta habilitado para exportación</b> (es distinto del que usás para facturar acá). Si alguna vez emitiste una Factura E desde la web de AFIP, ya lo tenés.",
+      "También necesitás dar de alta un <b>punto de venta nuevo</b>, del tipo <b>«Comprobantes de Exportación - Web Services»</b>. AFIP exige que sea distinto del que usás para facturar acá, y distinto también del que uses en la web de AFIP.",
+    // Punto de venta de exportación
+    "fiscal.expoPv": "Punto de venta de exportación",
+    "fiscal.expoPvHint":
+      "Tiene que ser del tipo «Comprobantes de Exportación - Web Services». AFIP no permite usar el mismo que el de tus facturas A, B o C.",
+    "fiscal.expoPvLoading": "Consultando a AFIP tus puntos de venta…",
+    "fiscal.expoPvChoose": "Elegí un punto de venta",
+    "fiscal.expoPvRefresh": "Volver a consultar",
+    "fiscal.expoPvErrNoCert":
+      "Todavía no cargaste tu certificado de AFIP. Completá el paso de Certificados y volvé.",
+    "fiscal.expoPvErrNotAuthorized":
+      "Tu certificado todavía no tiene permiso para exportación. Hacé los 6 pasos de arriba y después tocá «Volver a consultar».",
+    "fiscal.expoPvErrNoPv":
+      "Tu certificado ya tiene permiso ✓ pero no encontramos ningún punto de venta de exportación. Dalo de alta en AFIP del tipo «Comprobantes de Exportación - Web Services» y tocá «Volver a consultar».",
+    "fiscal.expoPvErrAfip":
+      "No pudimos consultarle a AFIP en este momento. Probá de nuevo en un rato.",
     "fiscal.contactTitle": "Datos de contacto y marca",
     "fiscal.contactSub":
       "Estos datos son opcionales. Más adelante los vamos a usar para personalizar el PDF de tus facturas con la información de tu empresa.",
@@ -597,7 +612,7 @@ export const translations = {
     "fiscal.expoIdiomaEn": "English",
     "fiscal.expoIdiomaPt": "Portuguese",
     "fiscal.expoViewLabel": "Factura E (exports)",
-    "fiscal.expoViewValue": "Payment method: {formaPago} · Language: {idioma}",
+    "fiscal.expoViewValue": "Point of sale: {pv} · Payment method: {formaPago} · Language: {idioma}",
     // AFIP setup instructions. Shown when the toggle is on: without this
     // permission the issue fails with "Computador no autorizado", which tells the
     // user nothing. Better to warn them BEFORE they try.
@@ -613,7 +628,22 @@ export const translations = {
       "Under <b>Representante</b> → BUSCAR → pick the <b>same certificate you already use</b> for invoicing.",
     "fiscal.expoSetupStep6": "Confirm. Done.",
     "fiscal.expoSetupPv":
-      "You also need a <b>point of sale enabled for exports</b> (different from the one you use for domestic invoicing). If you've ever issued a Factura E from AFIP's website, you already have it.",
+      "You also need to register a <b>new point of sale</b>, of type <b>«Comprobantes de Exportación - Web Services»</b>. AFIP requires it to be different from the one you use for domestic invoicing, and also different from the one you use on AFIP's website.",
+    // Export point of sale
+    "fiscal.expoPv": "Export point of sale",
+    "fiscal.expoPvHint":
+      "It must be of type «Comprobantes de Exportación - Web Services». AFIP does not allow reusing the same one as your Factura A, B or C.",
+    "fiscal.expoPvLoading": "Checking your points of sale with AFIP…",
+    "fiscal.expoPvChoose": "Pick a point of sale",
+    "fiscal.expoPvRefresh": "Check again",
+    "fiscal.expoPvErrNoCert":
+      "You haven't uploaded your AFIP certificate yet. Complete the Certificates step and come back.",
+    "fiscal.expoPvErrNotAuthorized":
+      "Your certificate isn't authorised for exports yet. Follow the 6 steps above, then hit «Check again».",
+    "fiscal.expoPvErrNoPv":
+      "Your certificate is authorised ✓ but we found no export point of sale. Register one at AFIP of type «Comprobantes de Exportación - Web Services» and hit «Check again».",
+    "fiscal.expoPvErrAfip":
+      "We couldn't reach AFIP right now. Please try again in a bit.",
     "fiscal.contactTitle": "Contact & branding",
     "fiscal.contactSub":
       "These details are optional. We'll use them later to personalize your invoice PDF with your company information.",
