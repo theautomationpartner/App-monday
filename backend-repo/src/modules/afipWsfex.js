@@ -139,7 +139,14 @@ ${inner}
         if (err.name === 'TimeoutError' || err.name === 'AbortError') {
             throw new Error(`[wsfex:${method}] timeout tras ${timeoutMs}ms`);
         }
-        throw new Error(`[wsfex:${method}] error de red: ${err.message}`);
+        // El fetch de Node tira "fetch failed" a secas y mete el motivo real
+        // (DNS, TLS, ECONNREFUSED…) en err.cause. Sin desenvolverlo, el error
+        // que llega al log es indebuggable — pasó exactamente eso la primera vez
+        // que la auditoría nocturna consultó WSFEX.
+        const causa = err.cause
+            ? ` (${err.cause.code || err.cause.name || ''}${err.cause.message ? ': ' + err.cause.message : ''})`
+            : '';
+        throw new Error(`[wsfex:${method}] error de red: ${err.message}${causa}`);
     }
 
     const xml = await response.text();
