@@ -1463,6 +1463,48 @@ async function afipGetLastVoucher({ token, sign, cuit, pointOfSale, cbteType }) 
 //     porque no recibimos response, podemos consultar AFIP para saber si
 //     se llego a emitir y recuperar el CAE.
 //
+// Los comprobantes de EXPORTACION no viven en WSFEv1 sino en WSFEX — consultarlos
+// con FECompConsultar devuelve "no encontrado" SIEMPRE, aunque existan.
+const CBTE_TIPOS_EXPORTACION = new Set([
+    afipConfig.CBTE_TYPE_EXPO.FACTURA,   // 19
+    afipConfig.CBTE_TYPE_EXPO.ND,        // 20
+    afipConfig.CBTE_TYPE_EXPO.NC,        // 21
+]);
+function esComprobanteExportacion(cbteType) {
+    return CBTE_TIPOS_EXPORTACION.has(Number(cbteType));
+}
+
+/**
+ * Consulta un comprobante en AFIP ruteando al web service que corresponde.
+ *
+ * Existe porque el cron de reconciliación y la auditoría nocturna consultan
+ * TODOS los comprobantes con `afipConsultarComprobante` (WSFEv1). Para una
+ * Factura E eso pregunta en el lugar equivocado: AFIP responde "no encontrado"
+ * y el comprobante — que existe y tiene CAE válido — se reporta como FANTASMA.
+ * Ninguno de los dos crons re-emite, así que no había riesgo fiscal, pero sí
+ * alertas falsas a Slack por cada exportación.
+ *
+ * Devuelve el mismo shape en los dos casos (fexGetCmp lo respeta a propósito),
+ * así que los callers no ramifican.
+ *
+ * El token es POR SERVICIO: el de wsfe no sirve para wsfex. Por eso, en vez del
+ * token ya resuelto, este helper recibe `getTokenFor(service)` y pide el que
+ * necesita — que además viene cacheado de afipAuth.
+ */
+async function afipConsultarComprobanteAuto({ getTokenFor, cuit, pointOfSale, cbteType, cbteNro, companyId }) {
+    if (esComprobanteExportacion(cbteType)) {
+        const t = await getTokenFor(afipWsfex.WSFEX_SERVICE);
+        return afipWsfex.fexGetCmp({
+            token: t.token, sign: t.sign, cuit,
+            cbteTipo: cbteType, ptoVenta: pointOfSale, cbteNro,
+        });
+    }
+    const t = await getTokenFor('wsfe');
+    return afipConsultarComprobante({
+        token: t.token, sign: t.sign, cuit, pointOfSale, cbteType, cbteNro,
+    });
+}
+
 // Retorna null si AFIP responde "comprobante no encontrado" (codigo 602/15).
 async function afipConsultarComprobante({ token, sign, cuit, pointOfSale, cbteType, cbteNro }) {
     const endpoints = getAfipEndpoints();
@@ -11206,7 +11248,7 @@ async function markAuditResult(rowId, status, findings, opts = {}) {
 }
 
 // Audita una row contra AFIP. Retorna { status, findings } sin tocar la DB.
-async function auditSingleEmission({ row, company, token, sign }) {
+async function auditSingleEmission({ row, company, token, sign, getTokenFor }) {
     const afipResult = row.afip_result_json || {};
     if (!afipResult.cae) {
         return { status: 'error', findings: { error: 'sin afip_result_json o sin CAE' } };
@@ -11252,8 +11294,11 @@ async function auditSingleEmission({ row, company, token, sign }) {
 
     let recovered;
     try {
-        recovered = await afipConsultarComprobante({
-            token, sign, cuit: company.cuit,
+        // Rutea a WSFEX si es de exportación: con WSFEv1, AFIP responde
+        // "no encontrado" y la fila se marcaría como comprobante fantasma.
+        recovered = await afipConsultarComprobanteAuto({
+            getTokenFor: getTokenFor || (() => ({ token, sign })),
+            cuit: company.cuit, companyId: company.id,
             pointOfSale, cbteType, cbteNro,
         });
     } catch (err) {
@@ -11510,6 +11555,7 @@ async function runNightlyAfipAudit() {
         let company = null;
         let token = null;
         let sign = null;
+        let getTokenFor = null;   // (service) => {token, sign} — WSFEv1 vs WSFEX
 
         // Setup company + cert + token. Si falla, marcamos todas las rows de
         // esta empresa como 'error' y seguimos con la siguiente empresa.
@@ -11534,10 +11580,15 @@ async function runNightlyAfipAudit() {
             ).toString(CryptoJS.enc.Utf8);
             const keyPem  = normalizePem(decKey, 'PRIVATE KEY');
 
-            const tokenData = await afipAuthModule.getToken({
-                certPem, keyPem, cuit: company.cuit, service: 'wsfe',
+            // Resolver de token POR SERVICIO. La auditoría consulta WSFEv1 para
+            // A/B/C y WSFEX para las de exportación, y cada web service necesita
+            // su propio token WSAA. afipAuth ya cachea por (service, company), así
+            // que pedirlo acá no agrega llamadas.
+            getTokenFor = (service) => afipAuthModule.getToken({
+                certPem, keyPem, cuit: company.cuit, service,
                 companyId: company.id,
             });
+            const tokenData = await getTokenFor('wsfe');
             token = tokenData.token;
             sign  = tokenData.sign;
         } catch (setupErr) {
@@ -11555,7 +11606,7 @@ async function runNightlyAfipAudit() {
         for (const row of companyRows) {
             let outcome;
             try {
-                outcome = await auditSingleEmission({ row, company, token, sign });
+                outcome = await auditSingleEmission({ row, company, token, sign, getTokenFor });
             } catch (err) {
                 outcome = { status: 'error', findings: { error: err.message } };
             }
@@ -11863,17 +11914,21 @@ async function reconcileSingleEmission(row) {
     ).toString(CryptoJS.enc.Utf8);
     const emisorKeyPem = normalizePem(decryptedKey, 'PRIVATE KEY');
 
-    // 3. Token WSAA
-    const tokenData = await afipAuthModule.getToken({
+    // 3. Token WSAA — por servicio: el de wsfe no sirve para consultar WSFEX.
+    const getTokenFor = (service) => afipAuthModule.getToken({
         certPem: emisorCertPem, keyPem: emisorKeyPem,
-        cuit: company.cuit, service: 'wsfe',
+        cuit: company.cuit, service,
         companyId: company.id,
     });
 
-    // 4. Consultar AFIP por el cbteNro reservado
-    const recovered = await afipConsultarComprobante({
-        token: tokenData.token, sign: tokenData.sign,
+    // 4. Consultar AFIP por el cbteNro reservado, en el web service que
+    //    corresponda: una Factura E consultada contra WSFEv1 responde
+    //    "no encontrado" aunque exista, y la row terminaria marcada como
+    //    abandonada + alerta a Slack.
+    const recovered = await afipConsultarComprobanteAuto({
+        getTokenFor,
         cuit: company.cuit,
+        companyId: company.id,
         pointOfSale: row.attempted_pto_vta || company.default_point_of_sale,
         cbteType: row.attempted_cbte_tipo,
         cbteNro: row.attempted_cbte_nro,
