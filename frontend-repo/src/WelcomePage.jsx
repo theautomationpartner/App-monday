@@ -18,6 +18,7 @@ import step1En from "./assets/onboarding/step-1-datos-en.png";
 import step2En from "./assets/onboarding/step-2-certificados-en.png";
 import step3En from "./assets/onboarding/step-3-mapeo-en.png";
 import { useT } from "./i18n.jsx";
+import { safeHtml } from "./sanitizeHtml.js";
 
 // Capturas por idioma del board: EN muestra el app en inglés, ES en español.
 const STEPS_ES = [
@@ -42,6 +43,19 @@ export default function WelcomePage({ onStart }) {
         <div className="welcome-hero">
           <h1 className="welcome-title">{t("welcome.title")}</h1>
           <p className="welcome-subtitle">{t("welcome.subtitle")}</p>
+        </div>
+
+        {/* Recomendación de la Plantilla de Espacio de Trabajo (requisito review
+            monday: "present a suitable message: use the Workspace Template"). */}
+        <div className="welcome-template-note">
+          <span className="welcome-template-note-icon" aria-hidden="true">📋</span>
+          <div>
+            <div className="welcome-template-note-title">{t("welcome.templateTitle")}</div>
+            <div
+              className="welcome-template-note-body"
+              dangerouslySetInnerHTML={safeHtml(t("welcome.templateBody"))}
+            />
+          </div>
         </div>
 
         <div className="welcome-steps">

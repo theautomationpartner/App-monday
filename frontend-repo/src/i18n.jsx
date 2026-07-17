@@ -358,6 +358,13 @@ export const translations = {
     "welcome.title": "¡Bienvenido a Factura ARCA!",
     "welcome.subtitle":
       "Vas a poder facturar electrónicamente desde tus boards de monday en 3 pasos. Configurá una vez y olvidate de la carga manual en la web de AFIP.",
+    // Recomendación de la Plantilla de Espacio de Trabajo (requisito review monday).
+    "welcome.templateTitle": "Usá la Plantilla de Espacio de Trabajo",
+    "welcome.templateBody":
+      "Para aprovechar la app al máximo, instalá la <b>Plantilla de Factura ARCA</b>: viene con el tablero ya listo, con todas las columnas configuradas. Si ya la instalaste, ¡listo! Si preferís usar un tablero propio, podés configurar las columnas a mano en el Mapeo Visual.",
+    "notice.noTemplateTitle": "Este tablero no tiene la plantilla de Factura ARCA",
+    "notice.noTemplateBody":
+      "Para que la app funcione mejor, te recomendamos usar la <b>Plantilla de Espacio de Trabajo de Factura ARCA</b> (trae las columnas listas). Si querés seguir con este tablero, mapeá cada columna a mano abajo.",
     "welcome.step1Desc":
       "Cargá los datos de tu empresa (CUIT, razón social, punto de venta). Es la información que va a aparecer en cada factura que emitas.",
     "welcome.step2Desc":
@@ -904,6 +911,13 @@ export const translations = {
     "welcome.title": "Welcome to Factura ARCA!",
     "welcome.subtitle":
       "You'll be able to issue electronic invoices from your monday boards in 3 steps. Set it up once and forget about manual entry on the AFIP website.",
+    // Workspace Template recommendation (monday review requirement).
+    "welcome.templateTitle": "Use the Workspace Template",
+    "welcome.templateBody":
+      "To get the most out of the app, install the <b>Factura ARCA Workspace Template</b>: it comes with the board fully set up, all columns configured. If you already installed it, you're all set! If you'd rather use your own board, you can map the columns manually in the Visual Mapping.",
+    "notice.noTemplateTitle": "This board doesn't have the Factura ARCA template",
+    "notice.noTemplateBody":
+      "For the app to work best, we recommend using the <b>Factura ARCA Workspace Template</b> (it comes with the columns ready). If you want to keep this board, map each column manually below.",
     "welcome.step1Desc":
       "Enter your company details (CUIT, legal name, point of sale). This is the information that will appear on every invoice you issue.",
     "welcome.step2Desc":

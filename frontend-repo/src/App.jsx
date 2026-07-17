@@ -370,6 +370,9 @@ const App = () => {
   const [isMappingEditMode, setIsMappingEditMode] = useState(false);
   const [hasSavedMapping, setHasSavedMapping] = useState(false);
   const [savedMappingSnapshot, setSavedMappingSnapshot] = useState(null);
+  // true si el board NO tiene la plantilla de Factura ARCA (auto-mapeo no detectó
+  // las columnas). Sirve para recomendar la Plantilla de Espacio de Trabajo.
+  const [noTemplateDetected, setNoTemplateDetected] = useState(false);
 
   // Certificados (flujo manual legacy)
   const [crtFile, setCrtFile] = useState(null);
@@ -1039,8 +1042,10 @@ const App = () => {
 
     if (!detectedMapping) {
       console.log("[auto-mapeo] no se detectó plantilla (ni por IDs ni por nombre) — el cliente debe mapear manualmente");
+      setNoTemplateDetected(true);
       return;
     }
+    setNoTemplateDetected(false);
 
     // Pre-cargar las columnas OPCIONALES de Notas de Crédito (Tipo de
     // Comprobante + CAE) si existen en el board. Vienen en la plantilla con
@@ -3758,6 +3763,21 @@ const App = () => {
                 </div>
               </div>
             </div>
+
+            {/* Aviso: el board no tiene la plantilla → recomendar usarla. Solo si
+                el auto-mapeo no la detectó y todavía no hay un mapeo guardado. */}
+            {noTemplateDetected && !hasSavedMapping && (
+              <div className="welcome-template-note" style={{ margin: "0 0 20px" }}>
+                <span className="welcome-template-note-icon" aria-hidden="true">📋</span>
+                <div>
+                  <div className="welcome-template-note-title">{t("notice.noTemplateTitle")}</div>
+                  <div
+                    className="welcome-template-note-body"
+                    dangerouslySetInnerHTML={safeHtml(t("notice.noTemplateBody"))}
+                  />
+                </div>
+              </div>
+            )}
 
             {/* ─── Columnas obligatorias del comprobante ─── */}
             <div className="rf-mapping-frame">
