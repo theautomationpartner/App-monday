@@ -272,10 +272,26 @@ async function fetchQrImage({ company, draft, afipResult, isExportacion = false 
             importe: Number(draft.importe_total || 0),
             moneda: qrMoneda,
             ctz: qrCotizacion,
-            ...(isExportacion ? {} : {
-                tipoDocRec: Number(draft.docTipo ?? 99),
-                nroDocRec: Number(draft.docNro ?? 0),
-            }),
+            // En exportación el receptor NO tiene documento argentino, así que la
+            // primera lectura fue omitir estos campos (la spec del QR los marca
+            // "DE CORRESPONDER"). ESTABA MAL: se decodificó el QR de 2 Facturas E
+            // REALES emitidas por AFIP y las dos mandan `tipoDocRec: 80` (=CUIT)
+            // con el **CUIT País** como `nroDocRec`:
+            //     00004-00000045 (EEUU)         → 80 / 55000002126
+            //     00004-00000037 (Puerto Rico)  → 80 / 51600002213
+            // Sin esto, la constatación de AFIP no puede matchear al receptor y
+            // rechaza el comprobante aunque el CAE sea válido.
+            // Si no hay CUIT País (zonas francas: se emite con Id_impositivo), no
+            // hay documento que informar → se omiten, que es el caso real de
+            // "DE CORRESPONDER".
+            ...(isExportacion
+                ? (draft.receptor_cuit_pais
+                    ? { tipoDocRec: 80, nroDocRec: Number(draft.receptor_cuit_pais) }
+                    : {})
+                : {
+                    tipoDocRec: Number(draft.docTipo ?? 99),
+                    nroDocRec: Number(draft.docNro ?? 0),
+                }),
             // 'E' = CAE (vs 'A' = CAEA). NO es la letra del comprobante — que en la
             // Factura E también sea "E" es pura coincidencia.
             tipoCodAut: 'E',
