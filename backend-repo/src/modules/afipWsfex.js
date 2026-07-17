@@ -114,7 +114,35 @@ function throwIfFexErr(xml, method) {
  * bug que hace que un <Errors> con HTTP 200 se lea como "último comprobante = 0"
  * y termine emitiendo el N° 1 de la serie.
  */
-async function soapCall(method, inner, { timeoutMs = SOAP_TIMEOUT_MS } = {}) {
+// Errores de conexion que valen un reintento: AFIP corta conexiones ociosas del
+// pool y el fetch de Node las reusa igual -> ECONNRESET en la primera llamada
+// despues de un rato. Verificado: la auditoria nocturna fallaba SIEMPRE con
+// ECONNRESET contra WSFEX mientras el mismo fetch, desde un script suelto (que
+// abre conexion nueva), andaba perfecto. El proceso de la app es largo y comparte
+// pool con WSFEv1, que vive en el MISMO host (servicios1.afip.gov.ar).
+const ERRORES_REINTENTABLES = /ECONNRESET|ECONNREFUSED|EPIPE|ETIMEDOUT|EAI_AGAIN|socket hang up|other side closed/i;
+
+/**
+ * Igual que soapCallOnce pero reintenta una vez ante un corte de conexion.
+ *
+ * Solo para métodos de LECTURA (consultas y tablas de parámetros): son
+ * idempotentes, reintentarlos no tiene efectos. `fexAuthorize` pasa
+ * `retry: false` — su recuperación es por el <Id> + Reproceso de AFIP, no por
+ * reintentar a ciegas.
+ */
+async function soapCall(method, inner, opts = {}) {
+    const { retry = true, ...rest } = opts;
+    try {
+        return await soapCallOnce(method, inner, rest);
+    } catch (err) {
+        if (!retry || !ERRORES_REINTENTABLES.test(err.message)) throw err;
+        console.warn(`[wsfex:${method}] corte de conexión (${err.message}) — reintentando una vez`);
+        await new Promise((r) => setTimeout(r, 400));
+        return soapCallOnce(method, inner, rest);
+    }
+}
+
+async function soapCallOnce(method, inner, { timeoutMs = SOAP_TIMEOUT_MS } = {}) {
     const body = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
@@ -347,7 +375,11 @@ ${items}
 async function fexAuthorize({ token, sign, cuit, cmp }) {
     const inner = `${authXml({ token, sign, cuit })}
 ${buildCmpXml(cmp)}`;
-    const xml = await soapCall('FEXAuthorize', inner);
+    // retry:false — un reintento a ciegas de una EMISION es peligroso. La
+    // recuperación de WSFEX es por el <Id>: si se corta, se reenvía la misma
+    // solicitud con el mismo Id y AFIP devuelve Reproceso='S' con el CAE
+    // original. Eso lo maneja el handler, no el transporte.
+    const xml = await soapCall('FEXAuthorize', inner, { retry: false });
 
     const block = xmlTag(xml, 'FEXResultAuth');
     if (!block) {
