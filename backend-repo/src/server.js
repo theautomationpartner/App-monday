@@ -16,6 +16,8 @@ require('dotenv').config();
 const afipAuthModule    = require('./modules/afipAuth');
 const afipPadron        = require('./modules/afipPadron');
 const afipWsfex         = require('./modules/afipWsfex');   // comprobantes de exportación (WSFEXv1)
+const piiCrypto         = require('./modules/piiCrypto');   // cifrado de la PII del emisor (companies)
+const { encryptPII, decryptPII, decryptCompanyRow } = piiCrypto;
 // config.js expone endpoints + constantes de AFIP. Se importa como `afipConfig` y
 // NO como `config` porque adentro de afipIssueFacturaLocked ya hay un
 // `const config = INVOICE_TYPE_CONFIG[...]` local que lo shadowearía.
@@ -85,7 +87,9 @@ async function getOrRefreshEmisorPadron(company) {
              SET padron_condicion=$1, padron_nombre=$2, padron_tipo_persona=$3,
                  padron_domicilio=$4, padron_fetched_at=NOW()
              WHERE id=$5`,
-            [info.condicion, info.nombre || '', info.tipoPersona || '', info.domicilio || '', company.id]
+            // padron_nombre/padron_domicilio son PII del emisor → cifrados.
+            // padron_condicion/tipo_persona son categorías (no PII) → en claro.
+            [info.condicion, encryptPII(info.nombre || ''), info.tipoPersona || '', encryptPII(info.domicilio || ''), company.id]
         );
         return info;
     } catch (err) {
@@ -618,7 +622,9 @@ async function getCompanyForBoard(mondayAccountId, boardId) {
          LIMIT 1`,
         [String(mondayAccountId), String(boardId)]
     );
-    if (r.rows[0]) return r.rows[0];
+    // Descifrar la PII en el origen: todo lo que consume esta función (PDF, CSR,
+    // /api/setup, validateEmissionReadiness) recibe el objeto ya en texto plano.
+    if (r.rows[0]) return decryptCompanyRow(r.rows[0]);
     // Fallback: sin board_config ya configurado, probamos la lookup legacy.
     return getCompanyByMondayAccountId(mondayAccountId);
 }
@@ -642,7 +648,7 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
             `${baseSelect} WHERE monday_account_id::text = $1 AND workspace_id = $2 LIMIT 1`,
             [String(mondayAccountId), String(workspaceId)]
         );
-        if (r.rows[0]) return r.rows[0];
+        if (r.rows[0]) return decryptCompanyRow(r.rows[0]);
 
         // Fallback legacy single-company: si no hay match estricto pero existe
         // EXACTAMENTE 1 company legacy (workspace_id NULL) y NINGUNA company
@@ -666,7 +672,7 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
               LIMIT 1`,
             [String(mondayAccountId)]
         );
-        return fallback.rows[0] || null;
+        return fallback.rows[0] ? decryptCompanyRow(fallback.rows[0]) : null;
     }
     // Sin workspace en el request: priorizamos la legacy (workspace_id NULL),
     // luego la más vieja por created_at. Esto preserva el comportamiento que
@@ -678,7 +684,7 @@ async function getCompanyByMondayAccountId(mondayAccountId, workspaceId = null) 
          LIMIT 1`,
         [String(mondayAccountId)]
     );
-    return r.rows[0] || null;
+    return r.rows[0] ? decryptCompanyRow(r.rows[0]) : null;
 }
 
 // Orden canónico para elegir UNA sola fila de visual_mappings por
@@ -2762,6 +2768,22 @@ async function ensureCompaniesExtraColumns() {
             -- con el idioma de la app (board_automation_configs.language).
             ADD COLUMN IF NOT EXISTS idioma_comprobante_default SMALLINT
     `);
+    // PII cifrada (requisito review monday): el ciphertext de CryptoJS es más
+    // largo que el texto plano, así que estas columnas tienen que ser TEXT y no
+    // VARCHAR(n). VARCHAR(n)→TEXT es cambio de metadata (sin reescritura de tabla)
+    // e idempotente (TEXT→TEXT es no-op). Los campos son los de piiCrypto:
+    // nombre, nombre de fantasía, domicilio, teléfono, email + nombre/domicilio
+    // del padrón (misma PII del emisor).
+    await db.query(`
+        ALTER TABLE companies
+            ALTER COLUMN business_name    TYPE TEXT,
+            ALTER COLUMN trade_name       TYPE TEXT,
+            ALTER COLUMN address          TYPE TEXT,
+            ALTER COLUMN phone            TYPE TEXT,
+            ALTER COLUMN email            TYPE TEXT,
+            ALTER COLUMN padron_nombre    TYPE TEXT,
+            ALTER COLUMN padron_domicilio TYPE TEXT
+    `);
     // Índice de búsqueda y UNIQUE compuesto para soportar varias empresas
     // por cuenta de monday (una por workspace). El COALESCE permite que la
     // company "legacy" (workspace_id NULL) sea única dentro de la cuenta.
@@ -2773,6 +2795,31 @@ async function ensureCompaniesExtraColumns() {
         CREATE INDEX IF NOT EXISTS companies_lookup_idx
         ON companies(monday_account_id, workspace_id)
     `);
+}
+
+// Cifra la PII del emisor de las filas que todavía están en texto plano.
+// Idempotente: encryptPII no re-cifra lo ya cifrado (chequea el prefijo), así que
+// es seguro correrlo en cada arranque. Corre por DB (defaultdb y stagingdb se
+// migran solas). Con un puñado de filas es instantáneo.
+async function backfillCompaniesPiiEncryption() {
+    const campos = piiCrypto.PII_COMPANY_FIELDS;
+    const cols = campos.join(', ');
+    const res = await db.query(`SELECT id, ${cols} FROM companies`);
+    let cifradas = 0;
+
+    for (const row of res.rows) {
+        // Solo tocar los valores que hoy están en texto plano.
+        const aCifrar = campos.filter((f) => row[f] != null && !piiCrypto.looksEncrypted(row[f]));
+        if (aCifrar.length === 0) continue;
+
+        const sets = aCifrar.map((f, i) => `${f} = $${i + 2}`).join(', ');
+        const params = [row.id, ...aCifrar.map((f) => encryptPII(row[f]))];
+        await db.query(`UPDATE companies SET ${sets} WHERE id = $1`, params);
+        cifradas++;
+    }
+
+    console.log(`[migrations] backfill cifrado PII: ${cifradas}/${res.rows.length} filas cifradas` +
+        (cifradas === 0 ? ' (ya estaban cifradas)' : ''));
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -3314,7 +3361,7 @@ async function postFeedbackToBoard({ accountId, feedback }) {
                   ORDER BY updated_at DESC NULLS LAST LIMIT 1`,
                 [String(accountId)]
             )).rows[0];
-            if (comp?.business_name) label = comp.business_name;
+            if (comp?.business_name) label = decryptPII(comp.business_name);
         } catch (_) {}
         const fecha = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Argentina/Buenos_Aires' });
         const cv = {
@@ -4864,12 +4911,16 @@ app.post('/api/companies', requireMondaySession, validateBody(CompanySchema), as
             RETURNING *;
         `;
         const result = await db.query(query, [
-            accountId, workspaceId, business_name, tradeName, cuit, default_point_of_sale, domicilio, fecha_inicio,
-            phoneNorm.value, emailNorm.value, websiteNorm.value, leyendaA, cbuA, emiteE, pvExpo, formaPagoExpo, idiomaExpo
+            // PII cifrada antes de escribir (requisito review monday). website NO
+            // se cifra (es público); cuit tampoco (se usa como clave de búsqueda).
+            accountId, workspaceId, encryptPII(business_name), encryptPII(tradeName), cuit, default_point_of_sale,
+            encryptPII(domicilio), fecha_inicio,
+            encryptPII(phoneNorm.value), encryptPII(emailNorm.value), websiteNorm.value, leyendaA, cbuA, emiteE, pvExpo, formaPagoExpo, idiomaExpo
         ]);
         // Datos fiscales cambiaron → invalidar cache del padrón en DB.
         if (result.rows[0]?.id) await invalidateEmisorPadronDb(result.rows[0].id);
-        res.json(result.rows[0]);
+        // RETURNING * vuelve con la PII cifrada; el frontend espera texto plano.
+        res.json(decryptCompanyRow(result.rows[0]));
     } catch (err) {
         console.error("❌ Error en DB:", err);
         res.status(500).json({
@@ -10933,6 +10984,11 @@ async function runStartupMigrations() {
         console.error('[migrations] companies extra error:', err.message);
     }
     try {
+        await backfillCompaniesPiiEncryption();
+    } catch (err) {
+        console.error('[migrations] backfill cifrado PII error:', err.message);
+    }
+    try {
         await ensureInstallationLeadsTable();
         console.log('[migrations] installation_leads table asegurada');
     } catch (err) {
@@ -11565,7 +11621,7 @@ async function runNightlyAfipAudit() {
                  FROM companies WHERE id=$1 LIMIT 1`,
                 [companyId]
             );
-            company = compRes.rows[0];
+            company = compRes.rows[0] ? decryptCompanyRow(compRes.rows[0]) : null;
             if (!company) throw new Error('company no encontrada');
 
             const certRes = await db.query(
@@ -11736,7 +11792,7 @@ async function detectAfipOrphans() {
         try {
             const compRes = await db.query(
                 'SELECT id, business_name, cuit FROM companies WHERE id=$1 LIMIT 1', [companyId]);
-            company = compRes.rows[0];
+            company = compRes.rows[0] ? decryptCompanyRow(compRes.rows[0]) : null;
             if (!company) throw new Error('company no encontrada');
             const certRes = await db.query(
                 'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1', [companyId]);
@@ -11892,7 +11948,7 @@ async function reconcileSingleEmission(row) {
          FROM companies WHERE id=$1 LIMIT 1`,
         [row.company_id]
     );
-    const company = companyResult.rows[0];
+    const company = companyResult.rows[0] ? decryptCompanyRow(companyResult.rows[0]) : null;
     if (!company) {
         console.warn(`${tag} company no encontrada (id=${row.company_id}), skip`);
         return;
@@ -12400,7 +12456,7 @@ async function backfillAuditBoard() {
                 receptorRazonSocial: draft.receptor_nombre || null,
                 company: {
                     id: row.company_id,
-                    business_name: row.business_name,
+                    business_name: decryptPII(row.business_name),
                     cuit: row.cuit,
                     workspace_id: row.workspace_id,
                 },
