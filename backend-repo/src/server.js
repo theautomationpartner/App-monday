@@ -9188,32 +9188,34 @@ async function emitFacturaEHandler(req, res) {
                     console.log(`[fe] cotización override del cliente: ${moneda.id}=${monedaCtz}`);
                 } else {
                     try {
-                        const tokenForCot = await afipAuthModule.getToken({
-                            certPem: emisorCertPem, keyPem: emisorKeyPem,
-                            cuit: company.cuit, service: 'wsfe',
-                            companyId: company.id,
-                        });
-                        const cotResult = await afipGetCotizacion({
-                            token: tokenForCot.token, sign: tokenForCot.sign,
-                            cuit: company.cuit, monId: moneda.id,
-                        });
-                        monedaCtz = cotResult.monCotiz;
-                        console.log(`[fe] cotización AFIP oficial: ${moneda.id}=${monedaCtz} (fecha ${cotResult.fchCotiz})`);
+                        // Cotización ADUANA vía WSFEX, NO la financiera de WSFEv1:
+                        // son números distintos y exportación solo acepta la de
+                        // aduana. Mandar la financiera rebota con [2053].
+                        // Como bonus, usa el token de wsfex que ya tenemos en la
+                        // mano: antes se pedía uno de 'wsfe' aparte, y un
+                        // exportador puede tener el cert delegado solo a wsfex.
+                        const cotResult = await withWsfexTokenRetry((a) =>
+                            afipWsfex.fexGetCotizacion(moneda.id, a)
+                        );
+                        monedaCtz = cotResult.monCtz;
+                        console.log(`[fe] cotización ADUANA de AFIP: ${moneda.id}=${monedaCtz} (fecha ${cotResult.monFecha})`);
                     } catch (cotErr) {
-                        // Un exportador podría tener el cert delegado a wsfex pero no
-                        // a wsfe. En vez de romper con el error crudo, le decimos que
-                        // cargue la cotización a mano.
+                        // Si AFIP no la devuelve, le decimos que la cargue a mano
+                        // en vez de romper con el error crudo.
                         console.warn(`[fe] no se pudo consultar la cotización de ${moneda.id}: ${cotErr.message}`);
                         throw new Error(L(
-                            `Couldn't fetch AFIP's official exchange rate for ${moneda.descripcion} ` +
+                            `Couldn't fetch AFIP's exchange rate for ${moneda.descripcion} ` +
                             `(${moneda.id}).\n` +
-                            `Enter it manually in the item's exchange-rate column and retry. AFIP requires ` +
-                            `the rate of the business day BEFORE the issue date.\n` +
+                            `Enter it manually in the item's exchange-rate column and retry. ` +
+                            `Important: export invoices require AFIP's CUSTOMS rate ` +
+                            `("cotización aduana"), not the bank/financial one — the financial ` +
+                            `rate is rejected with error 2053.\n` +
                             `(Detail: ${cotErr.message})`,
-                            `No se pudo consultar la cotización oficial de AFIP para ${moneda.descripcion} ` +
+                            `No se pudo consultar la cotización de AFIP para ${moneda.descripcion} ` +
                             `(${moneda.id}).\n` +
-                            `Cargala a mano en la columna de tipo de cambio del item y reintentá. AFIP exige ` +
-                            `la cotización del día hábil ANTERIOR a la fecha de emisión.\n` +
+                            `Cargala a mano en la columna de tipo de cambio del item y reintentá. ` +
+                            `Importante: la exportación exige la cotización ADUANA de AFIP, ` +
+                            `no la financiera/bancaria — la financiera la rechaza con el error 2053.\n` +
                             `(Detalle: ${cotErr.message})`
                         ));
                     }

@@ -476,6 +476,51 @@ async function fexGetPtosVenta(auth) {
     return rows.map((r) => ({ nro: Number(r.Pve_Nro), bloqueado: r.Pve_Bloqueado, baja: r.Pve_FchBaja }));
 }
 
+/**
+ * Cotización ADUANA de una moneda — la única que WSFEX acepta en una Factura E.
+ *
+ * OJO, esto es lo que hace tropezar: AFIP maneja DOS cotizaciones distintas y no
+ * son intercambiables. La FINANCIERA (FEParamGetCotizacion, WSFEv1) es la de las
+ * facturas A/B/C; la de ADUANA (esta) es la que exige exportación. Mandar la
+ * financiera en una Factura E la rechaza con:
+ *   [2053] Cotizacion informada no valida. (FechaCot utilizada: ... - CotAduana: ...)
+ * Verificado contra AFIP producción (2026-07-20): la financiera y la aduana daban
+ * números distintos y solo la aduana (1478) fue aceptada.
+ *
+ * A diferencia del resto de las tablas de parámetros, acá Mon_id y FchCotiz van
+ * FUERA del <Auth> (en FEXGetLast_CMP van adentro — el WSDL no es consistente).
+ *
+ * Sin FchCotiz, AFIP resuelve solo la fecha aplicable: consultado un lunes
+ * devolvió la del viernes anterior. Por eso NO calculamos el día hábil nosotros
+ * — el feriadero argentino lo tiene AFIP, no nosotros.
+ *
+ * No se cachea: la cotización cambia todos los días y un valor viejo es
+ * exactamente lo que dispara el 2053.
+ *
+ * @param {string} monId      código AFIP de la moneda ('DOL', 'EUR'…)
+ * @param {{token:string,sign:string,cuit:string}} auth
+ * @param {string} [fchCotiz] 'YYYYMMDD'. Omitir salvo que se quiera forzar la fecha.
+ * @returns {Promise<{monCtz:number, monFecha:string|null}>}
+ */
+async function fexGetCotizacion(monId, { token, sign, cuit }, fchCotiz) {
+    const inner = authXml({ token, sign, cuit })
+        + `\n      <Mon_id>${xmlEscape(monId)}</Mon_id>`
+        + (fchCotiz ? `\n      <FchCotiz>${xmlEscape(fchCotiz)}</FchCotiz>` : '');
+
+    const xml = await soapCall('FEXGetPARAM_Ctz', inner);
+    const block = xmlTag(xml, 'FEXResultGet') || '';
+    const raw = xmlTag(block, 'Mon_ctz');
+    const monCtz = Number(raw);
+    // Sin el check de string vacío, Number('') = 0 pasaría a AFIP como cotización
+    // cero y volvería a rebotar por 2053 — pero con un mensaje mucho más confuso.
+    if (raw === null || raw === '' || !Number.isFinite(monCtz) || monCtz <= 0) {
+        throw new Error(
+            `[wsfex:FEXGetPARAM_Ctz] cotización ilegible para ${monId}: ${xml.slice(0, 300)}`
+        );
+    }
+    return { monCtz, monFecha: xmlTag(block, 'Mon_fecha') };
+}
+
 /** Tipos de entidad del receptor del exterior — el sufijo de las filas de DST_CUIT. */
 const TIPO_ENTIDAD = {
     JURIDICA: 'Persona Jurídica',
@@ -550,6 +595,7 @@ module.exports = {
     fexGetPaises,
     fexGetCuitPaises,
     fexGetMonedas,
+    fexGetCotizacion,
     fexGetIdiomas,
     fexGetUnidadesMedida,
     fexGetTiposExpo,
