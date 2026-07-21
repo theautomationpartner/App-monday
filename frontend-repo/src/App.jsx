@@ -168,6 +168,49 @@ const TEMPLATE_NC_MAPPING = {
   razon_social_receptor:  "text_mm48w6tm",
   condicion_iva_receptor: "dropdown_mm48dfba",
 };
+// IDs de las columnas de EXPORTACIÓN (Factura E) de la plantilla. Se pre-cargan
+// con la misma lógica condicional que TEMPLATE_NC_MAPPING: solo si el board
+// realmente tiene la columna.
+//
+// Por qué hay DOS juegos de IDs por campo: las 28 columnas originales comparten
+// ID entre la plantilla ES y la EN (la EN se creó clonando la ES, y monday
+// preserva los IDs al clonar). Pero estas 5 se agregaron por separado en cada
+// board, así que monday les asignó IDs distintos. Sin los dos juegos, quien
+// instale una de las dos plantillas queda sin Factura E pre-mapeada.
+//
+// Cada campo lista sus candidatos y gana el primero que exista en el board;
+// como los IDs son únicos por board, nunca hay ambigüedad.
+const TEMPLATE_EXPO_MAPPING = {
+  pais_destino:           ["dropdown_mm5a2320", "dropdown_mm5a6b5m"],
+  receptor_domicilio:     ["text_mm5azpr6",     "text_mm5aj0be"],
+  fecha_pago_exportacion: ["date_mm5a3dbt",     "date_mm5a8g7b"],
+  id_impositivo_receptor: ["text_mm5a1brr",     "text_mm5ar6pj"],
+  tipo_entidad_receptor:  ["dropdown_mm5ahckt", "dropdown_mm5a2zts"],
+};
+
+// IDs de las columnas OPCIONALES de moneda extranjera y notas ("Optional
+// Settings" en el Mapeo Visual). Sin esto, quien instala la plantilla tiene las
+// columnas creadas pero la app arranca en modo default: asume pesos y no lee el
+// precio en dólares, así que no puede facturar en moneda extranjera hasta
+// mapearlas a mano.
+//
+// A diferencia de TEMPLATE_EXPO_MAPPING acá alcanza UN solo ID por campo: estas
+// columnas existían antes de clonar la plantilla EN, así que ambas comparten ID
+// (verificado 2026-07-21 contra los 4 boards).
+//
+// moneda + cotizacion + precio_unitario_usd son un COMBO: mapear moneda sin las
+// otras dos deja el flujo a medias (hay un aviso en el Mapeo Visual por eso).
+// Por eso se pre-cargan juntas o no se pre-carga ninguna.
+const TEMPLATE_OPTIONAL_MAPPING = {
+  moneda:        "dropdown_mm34pzg0",
+  cotizacion:    "numeric_mm34pwcj",
+  observaciones: "text_mm345tzb",
+};
+// Este va aparte porque vive en el board de SUBITEMS, no en el del item.
+const TEMPLATE_OPTIONAL_SUBITEM_MAPPING = {
+  precio_unitario_usd: "numeric_mm344c83",
+};
+
 // Column IDs de la plantilla que no son de mapeo visual pero sí de config
 const TEMPLATE_STATUS_COLUMN_ID = "status";
 // ID de la columna File donde se sube el PDF emitido. Cuando un cliente clona
@@ -1059,6 +1102,38 @@ const App = () => {
     if (Object.keys(ncExtra).length > 0) {
       detectedMapping = { ...detectedMapping, ...ncExtra };
       console.log(`[auto-mapeo] columnas de NC pre-cargadas: ${Object.keys(ncExtra).join(", ")}`);
+    }
+
+    // Pre-cargar las columnas de EXPORTACIÓN (Factura E), misma lógica condicional
+    // que NC. Sin esto, quien instala la plantilla tiene las columnas creadas pero
+    // sin mapear, y la Factura E aborta en el pre-flight pidiendo País de Destino,
+    // Fecha de Pago y Domicilio del Cliente.
+    // Se prueba cada ID candidato porque la plantilla ES y la EN usan IDs distintos
+    // para estas 5 columnas.
+    const expoExtra = {};
+    for (const [field, candidateIds] of Object.entries(TEMPLATE_EXPO_MAPPING)) {
+      const found = candidateIds.find((colId) => columnIds.includes(colId));
+      if (found) expoExtra[field] = found;
+    }
+    if (Object.keys(expoExtra).length > 0) {
+      detectedMapping = { ...detectedMapping, ...expoExtra };
+      console.log(`[auto-mapeo] columnas de exportación pre-cargadas: ${Object.keys(expoExtra).join(", ")}`);
+    }
+
+    // Pre-cargar las columnas OPCIONALES (moneda extranjera + observaciones).
+    // Sin esto la app arranca en modo default (pesos) aunque el board tenga las
+    // columnas, y el cliente no puede facturar en dólares hasta mapearlas a mano.
+    // El precio en USD vive en el board de SUBITEMS, por eso se busca aparte.
+    const optExtra = {};
+    for (const [field, colId] of Object.entries(TEMPLATE_OPTIONAL_MAPPING)) {
+      if (columnIds.includes(colId)) optExtra[field] = colId;
+    }
+    for (const [field, colId] of Object.entries(TEMPLATE_OPTIONAL_SUBITEM_MAPPING)) {
+      if (subitemIds.includes(colId)) optExtra[field] = colId;
+    }
+    if (Object.keys(optExtra).length > 0) {
+      detectedMapping = { ...detectedMapping, ...optExtra };
+      console.log(`[auto-mapeo] columnas opcionales pre-cargadas: ${Object.keys(optExtra).join(", ")}`);
     }
 
     // Detectar la columna File donde se va a subir el PDF de la factura emitida.
