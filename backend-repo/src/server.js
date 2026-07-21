@@ -10947,6 +10947,21 @@ async function logEmissionToAuditBoard({ accountId, success, clientItemId, sourc
 }
 
 // Servir frontend React desde public/
+// Assets publicos propios (imagenes de la ficha del Marketplace, etc). Vive
+// aparte de public/ A PROPOSITO: el deploy REEMPLAZA public/ entera con el build
+// del frontend (mv public_old / mv $TMP public), asi que cualquier archivo que
+// dejemos ahi desaparece en el siguiente deploy — y una imagen rota en la ficha
+// del Marketplace es un rechazo del review. static/ esta versionada en git.
+app.use('/static', express.static(path.join(__dirname, '../static'), {
+    maxAge: '7d',
+    setHeaders(res) {
+        // monday muestra estas imagenes desde SU dominio, asi que no pueden
+        // heredar el frame-ancestors que restringe al resto de la app.
+        res.removeHeader('Content-Security-Policy');
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    },
+}));
+
 const publicPath = path.join(__dirname, '../public');
 // Assets hasheados (Vite) pueden cachearse forever. index.html NO debe cachearse
 // para que el browser siempre lea el bundle más reciente referenciado adentro.
@@ -10961,6 +10976,10 @@ app.use(express.static(publicPath, {
 }));
 app.get('/*splat', (req, res, next) => {
     if (req.path.startsWith('/api')) return next();
+    // /static que llego hasta aca = archivo inexistente. Sin este corte caeria
+    // en el index.html de abajo y monday recibiria un HTML con Content-Type
+    // text/html donde espera un PNG: imagen rota sin ninguna pista del motivo.
+    if (req.path.startsWith('/static/')) return res.status(404).send('Not found');
     res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     res.sendFile(path.join(publicPath, 'index.html'));
 });
