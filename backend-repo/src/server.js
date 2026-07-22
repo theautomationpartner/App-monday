@@ -11765,15 +11765,34 @@ async function detectAfipOrphans() {
         PRIMARY KEY (company_id, pto_vta, cbte_tipo, cbte_nro)
     )`).catch(e => console.warn('[orphan-detector] ensure afip_gap_acks:', e.message));
 
-    let seriesRows;
+    // La serie de numeración es por CUIT+PV+CbteTipo (así numera AFIP), NO por
+    // nuestro company_id interno. Un mismo emisor puede tener más de una fila en
+    // `companies` con el mismo CUIT (reinstalación, board nuevo, etc.) — si se
+    // agrupa por company_id, cada fila ve solo SU MITAD del historial y la otra
+    // mitad le aparece como "hueco" cada vez que la mitad activa emite algo
+    // nuevo. Pasó 3 veces con el mismo CUIT de TAP SA (02/07, 06/07, 22/07) y ya
+    // había pasado antes con el CUIT de dev de Martin — por eso se agrupa acá
+    // por CUIT: la unión de ambas mitades sale sola en el JOIN, sin parchear
+    // caso por caso.
+    let seriesRows, cuitCompanyIds;
     const acked = new Set();
     try {
         const ackRes = await db.query('SELECT company_id, pto_vta, cbte_tipo, cbte_nro FROM afip_gap_acks');
         for (const a of ackRes.rows) acked.add(`${a.company_id}:${a.pto_vta}:${a.cbte_tipo}:${a.cbte_nro}`);
 
+        // company_ids que comparten CUIT — para poder resolver credenciales con
+        // cualquiera de ellos y para que un ack viejo (hecho bajo cualquiera de
+        // las filas duplicadas) siga silenciando el gap.
+        cuitCompanyIds = new Map(); // cuit -> [company_id, ...]
+        const compRows = await db.query(`SELECT id, cuit FROM companies WHERE cuit IS NOT NULL AND cuit <> ''`);
+        for (const r of compRows.rows) {
+            if (!cuitCompanyIds.has(r.cuit)) cuitCompanyIds.set(r.cuit, []);
+            cuitCompanyIds.get(r.cuit).push(r.id);
+        }
+
         const result = await db.query(`
-            SELECT company_id, pv, cbte_tipo,
-                   array_agg(nro) AS nros, MIN(nro) AS min_nro, MAX(nro) AS max_nro
+            SELECT c.cuit, s.pv, s.cbte_tipo,
+                   array_agg(DISTINCT s.nro) AS nros, MIN(s.nro) AS min_nro
             FROM (
                 SELECT company_id,
                        COALESCE(attempted_pto_vta,
@@ -11787,8 +11806,9 @@ async function detectAfipOrphans() {
                 FROM invoice_emissions
                 WHERE status='success'
             ) s
-            WHERE pv IS NOT NULL AND cbte_tipo IS NOT NULL AND nro IS NOT NULL
-            GROUP BY company_id, pv, cbte_tipo
+            JOIN companies c ON c.id = s.company_id
+            WHERE s.pv IS NOT NULL AND s.cbte_tipo IS NOT NULL AND s.nro IS NOT NULL
+            GROUP BY c.cuit, s.pv, s.cbte_tipo
         `);
         seriesRows = result.rows;
     } catch (err) {
@@ -11801,32 +11821,42 @@ async function detectAfipOrphans() {
         return { series: 0, gaps: [] };
     }
 
-    const byCompany = new Map();
+    const byCuit = new Map();
     for (const r of seriesRows) {
-        if (!byCompany.has(r.company_id)) byCompany.set(r.company_id, []);
-        byCompany.get(r.company_id).push(r);
+        if (!byCuit.has(r.cuit)) byCuit.set(r.cuit, []);
+        byCuit.get(r.cuit).push(r);
     }
 
     const gaps = [];
-    for (const [companyId, series] of byCompany) {
-        let company, token, sign;
-        try {
-            const compRes = await db.query(
-                'SELECT id, business_name, cuit FROM companies WHERE id=$1 LIMIT 1', [companyId]);
-            company = compRes.rows[0] ? decryptCompanyRow(compRes.rows[0]) : null;
-            if (!company) throw new Error('company no encontrada');
-            const certRes = await db.query(
-                'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1', [companyId]);
-            if (!certRes.rows[0]) throw new Error('certs AFIP faltantes');
-            const certPem = normalizePem(certRes.rows[0].crt_file_url, 'CERTIFICATE');
-            const decKey = CryptoJS.AES.decrypt(
-                certRes.rows[0].encrypted_private_key, process.env.ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8);
-            const keyPem = normalizePem(decKey, 'PRIVATE KEY');
-            const tokenData = await afipAuthModule.getToken({
-                certPem, keyPem, cuit: company.cuit, service: 'wsfe', companyId: company.id });
-            token = tokenData.token; sign = tokenData.sign;
-        } catch (setupErr) {
-            console.warn(`[orphan-detector] setup company ${companyId} falló: ${setupErr.message} — skip empresa`);
+    for (const [cuit, series] of byCuit) {
+        const companyIds = cuitCompanyIds.get(cuit) || [];
+        // Probar cada company_id que comparte este CUIT hasta encontrar uno con
+        // credenciales AFIP válidas (el cert es el mismo emisor legal, así que
+        // cualquiera de las filas duplicadas sirve).
+        let company, token, sign, usedCompanyId;
+        for (const cid of companyIds) {
+            try {
+                const compRes = await db.query(
+                    'SELECT id, business_name, cuit FROM companies WHERE id=$1 LIMIT 1', [cid]);
+                const comp = compRes.rows[0] ? decryptCompanyRow(compRes.rows[0]) : null;
+                if (!comp) continue;
+                const certRes = await db.query(
+                    'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1', [cid]);
+                if (!certRes.rows[0]) continue;
+                const certPem = normalizePem(certRes.rows[0].crt_file_url, 'CERTIFICATE');
+                const decKey = CryptoJS.AES.decrypt(
+                    certRes.rows[0].encrypted_private_key, process.env.ENCRYPTION_KEY).toString(CryptoJS.enc.Utf8);
+                const keyPem = normalizePem(decKey, 'PRIVATE KEY');
+                const tokenData = await afipAuthModule.getToken({
+                    certPem, keyPem, cuit: comp.cuit, service: 'wsfe', companyId: comp.id });
+                company = comp; token = tokenData.token; sign = tokenData.sign; usedCompanyId = cid;
+                break;
+            } catch (setupErr) {
+                console.warn(`[orphan-detector] setup company ${cid} (cuit ${cuit}) falló: ${setupErr.message}`);
+            }
+        }
+        if (!token) {
+            console.warn(`[orphan-detector] ningún company_id del cuit ${cuit} tiene credenciales válidas — skip`);
             continue;
         }
 
@@ -11837,15 +11867,20 @@ async function detectAfipOrphans() {
                 const have = new Set((s.nros || []).map(Number));
                 const missing = [];
                 for (let n = Number(s.min_nro); n <= afipLast && missing.length < 500; n++) {
-                    if (!have.has(n) && !acked.has(`${companyId}:${s.pv}:${s.cbte_tipo}:${n}`)) missing.push(n);
+                    if (have.has(n)) continue;
+                    // Reconocido si CUALQUIERA de las filas duplicadas de este
+                    // CUIT ya lo tiene silenciado (acks viejos hechos bajo la
+                    // otra mitad siguen siendo válidos).
+                    const alreadyAcked = companyIds.some(cid => acked.has(`${cid}:${s.pv}:${s.cbte_tipo}:${n}`));
+                    if (!alreadyAcked) missing.push(n);
                 }
                 if (missing.length > 0) {
-                    gaps.push({ companyId, company: company.business_name, cuit: company.cuit,
+                    gaps.push({ companyId: usedCompanyId, company: company.business_name, cuit,
                                 pv: s.pv, cbteType: s.cbte_tipo, afipLast, missing });
-                    console.warn(`[orphan-detector] GAP ${company.business_name} PV=${s.pv} tipo=${s.cbte_tipo}: AFIP_last=${afipLast}, faltan [${missing.slice(0, 30).join(',')}${missing.length > 30 ? '…' : ''}]`);
+                    console.warn(`[orphan-detector] GAP ${company.business_name} (CUIT ${cuit}) PV=${s.pv} tipo=${s.cbte_tipo}: AFIP_last=${afipLast}, faltan [${missing.slice(0, 30).join(',')}${missing.length > 30 ? '…' : ''}]`);
                 }
             } catch (e) {
-                console.warn(`[orphan-detector] error serie PV=${s.pv} tipo=${s.cbte_tipo} de ${companyId}: ${e.message}`);
+                console.warn(`[orphan-detector] error serie PV=${s.pv} tipo=${s.cbte_tipo} CUIT=${cuit}: ${e.message}`);
             }
             await new Promise(r => setTimeout(r, 120));
         }
