@@ -3180,42 +3180,9 @@ async function getTotalSuccessCount(accountId) {
     return r.rows[0]?.n || 0;
 }
 
-// Slug de la cuenta del CLIENTE (con su token, NO el del dev) para armar el link.
-async function fetchAccountSlug(apiToken) {
-    if (!apiToken) return null;
-    try {
-        const res = await fetch('https://api.monday.com/v2', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
-            body: JSON.stringify({ query: 'query { me { account { slug } } }' }),
-        });
-        const json = await res.json().catch(() => null);
-        return json?.data?.me?.account?.slug || null;
-    } catch { return null; }
-}
-
-// View id de la vista del tablero de la app ("Facturacion Electronica", de tipo
-// FeatureBoardView) en un board dado, para linkear directo a esa vista (donde
-// aparece el gate). El id es distinto en cada board.
-async function fetchAppViewId(apiToken, boardId) {
-    if (!apiToken || !boardId) return null;
-    try {
-        const res = await fetch('https://api.monday.com/v2', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
-            body: JSON.stringify({ query: `query { boards(ids: ${Number(boardId)}) { views { id name type } } }` }),
-        });
-        const json = await res.json().catch(() => null);
-        const views = json?.data?.boards?.[0]?.views || [];
-        const appView = views.find(v => v.type === 'FeatureBoardView' && /factura/i.test(v.name || ''))
-            || views.find(v => v.type === 'FeatureBoardView');
-        return appView?.id || null;
-    } catch { return null; }
-}
-
 // Deja (una sola vez) el comentario-invitación en el item al cruzar el umbral.
 // Idempotente por cuenta: nudge_comment_sent_at marca que ya se hizo.
-async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId, language = 'es' }) {
+async function maybePostReviewNudge({ accountId, apiToken, itemId, language = 'es' }) {
     try {
         if (!accountId || !apiToken || !itemId) return;
         await ensureAccountReviewPromptsTable();
@@ -3233,20 +3200,15 @@ async function maybePostReviewNudge({ accountId, apiToken, itemId, boardId, lang
         const count = await getTotalSuccessCount(accountId);
         if (count < REVIEW_NUDGE_THRESHOLD) return;           // todavía no llegó a 3
 
-        const slug = await fetchAccountSlug(apiToken);
-        const viewId = await fetchAppViewId(apiToken, boardId);
+        // Sin link clickeable a propósito: armarlo requería el scope de perfil
+        // (`me { account { slug } }`, solo para el subdominio de la cuenta) por
+        // un enlace que era un nice-to-have. El review de monday pidió sacar ese
+        // scope si no se usaba para nada esencial — no lo era, así que se sacó
+        // el scope y el mensaje queda con la instrucción en texto plano.
         const isEnN = language === 'en';
-        let cta = isEnN
+        const cta = isEnN
             ? ' Open it from the app icon on your board.'
             : ' Abrila desde el ícono de la app en tu tablero.';
-        if (slug && boardId) {
-            const url = viewId
-                ? `https://${slug}.monday.com/boards/${boardId}/views/${viewId}`
-                : `https://${slug}.monday.com/boards/${boardId}`;
-            cta = isEnN
-                ? `<br><br><a href="${url}">👉 Open Factura ARCA</a>`
-                : `<br><br><a href="${url}">👉 Abrir Factura ARCA</a>`;
-        }
         const body = isEnN
             ? `🎉 You've already issued ${count} vouchers with <b>Factura ARCA</b>! ` +
               `How's your experience going? Open the <b>Electronic Invoicing</b> view ` +
@@ -6959,7 +6921,7 @@ async function comprobanteHandler(req, res) {
             // Pedido de calificación (FIRE-AND-FORGET) — al llegar a 3 éxitos deja
             // UN comentario en el item invitando a calificar. Nunca rompe la emisión.
             if (afipResult?.cae) {
-                maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: readiness?.boardConfig?.language })
+                maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, language: readiness?.boardConfig?.language })
                     .catch((err) => console.warn('[review-nudge] fire-and-forget falló:', err.message));
             }
 
@@ -8189,7 +8151,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             }
 
             // Pedido de calificación (FIRE-AND-FORGET) — mismo nudge que en factura.
-            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: ncLanguage })
+            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, language: ncLanguage })
                 .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
 
             console.log(`[nc] ── OK item ${itemId} ── ${docAbbr} ${letra} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
@@ -9737,7 +9699,7 @@ async function emitFacturaEHandler(req, res) {
                 }).catch((e) => console.warn('[fe] callback fire-and-forget falló:', e.message));
             }
 
-            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, boardId, language: feLanguage })
+            maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, language: feLanguage })
                 .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
 
             console.log(`[fe] ── OK item ${itemId} ── Factura E ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
