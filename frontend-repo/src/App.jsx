@@ -1009,6 +1009,23 @@ const App = () => {
           });
         }
 
+        // Requisito de monday review: reinstalar la app debe verse igual que
+        // instalarla por primera vez. El uninstall borra TODO en nuestra DB
+        // (companies, mapeos, certs — ver deleteAccountData), pero el flag
+        // "ya vio la bienvenida" vive en el localStorage del NAVEGADOR del
+        // usuario, que no se limpia al desinstalar la app. Si el usuario ya
+        // había arrancado la config antes (aunque no la haya terminado) y
+        // ahora reinstala, el navegador todavía recuerda el dismiss y le
+        // saltea la bienvenida aunque la cuenta esté 100% vacía del lado
+        // servidor. Server-side es la fuente de verdad: si acá no hay NI
+        // datos fiscales NI certificados, es una cuenta nueva de verdad →
+        // se limpia el flag viejo para que la bienvenida vuelva a aparecer.
+        if (!data?.hasFiscalData && !data?.hasCertificates) {
+          try {
+            localStorage.removeItem(`arca-welcome-dismissed-${context.account.id}`);
+          } catch {}
+        }
+
       } catch (err) {
         console.error("No se pudieron recuperar datos guardados:", err);
         setApiStatus("error");
