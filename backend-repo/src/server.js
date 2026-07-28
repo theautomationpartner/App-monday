@@ -6401,6 +6401,15 @@ async function comprobanteHandler(req, res) {
             } catch (padronErr) {
                 markEnd('padron_emisor');
                 console.error(`[emit] Padrón emisor falló: ${padronErr.message}`);
+                // Mismo criterio que el padrón del receptor: si AFIP clasificó el
+                // motivo (errorType), mostrarlo tal cual — es el propio emisor el
+                // que tiene que resolverlo en AFIP, reintentar no alcanza.
+                if (padronErr.errorType) {
+                    const hint = padronErr.errorType === 'CUIT_INACTIVO'
+                        ? 'Verificá que tu CUIT esté activo e inscripto en AFIP antes de reintentar.'
+                        : 'Revisá tu situación en AFIP — el problema está en tu propio registro, no se resuelve reintentando la emisión.';
+                    throw new Error(`${padronErr.message} (CUIT ${company.cuit}). ${hint}`);
+                }
                 throw new Error(
                     `No se pudo consultar el padrón de AFIP para el emisor (CUIT ${company.cuit}). ` +
                     `AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.`
@@ -6423,6 +6432,19 @@ async function comprobanteHandler(req, res) {
                     } catch (padronErr) {
                         markEnd('padron_receptor');
                         console.error(`[emit] Padrón receptor falló: ${padronErr.message}`);
+                        // Si el error viene con clasificación de afipPadron (errorType), es
+                        // AFIP devolviendo un motivo explícito (ej. "CUIT con requerimientos
+                        // pendientes de verificación") — mostrarlo tal cual es mucho más útil
+                        // que el genérico "AFIP caído, reintentá": el problema real está en el
+                        // registro del RECEPTOR, no en nuestra conexión, y reintentar no lo
+                        // arregla. Sin clasificación (timeout, red, WSAA) sí vale la pena
+                        // reintentar, ahí el genérico es correcto.
+                        if (padronErr.errorType) {
+                            const hint = padronErr.errorType === 'CUIT_INACTIVO'
+                                ? 'Verificá que el CUIT del receptor esté activo e inscripto en AFIP antes de reintentar.'
+                                : 'Consultá con el titular de ese CUIT — el problema está en su propio registro de AFIP, no se resuelve reintentando la emisión.';
+                            throw new Error(`${padronErr.message} (doc ${receptorDocClean}). ${hint}`);
+                        }
                         throw new Error(
                             `No se pudo consultar el padrón de AFIP para el receptor (doc ${receptorDocClean}). ` +
                             `AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.`
@@ -9829,7 +9851,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // matcheaban cualquier mensaje con "corresponde" + una a/b/c suelta.
             match: /tipo de factura incorrecto/i,
             title: 'Tipo de factura incorrecto',
-            detail: 'Los datos fiscales del emisor o del receptor no coinciden con el tipo de factura que se intentó emitir.',
+            detail: mainMsg,
             solucion: 'Revisá dos cosas:<br/>&nbsp;&nbsp;1) En la app, abrí <b>Datos Fiscales</b> y confirmá que la <b>Condición IVA</b> de tu empresa esté bien cargada (Responsable Inscripto, Monotributo, etc.).<br/>&nbsp;&nbsp;2) En el item, confirmá que el <b>CUIT del receptor</b> sea correcto. La app consulta automáticamente a AFIP la condición del receptor para decidir si corresponde A, B o C.',
         },
         {
@@ -9849,10 +9871,16 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Completá la columna <b>CUIT / DNI Receptor</b> del item con exactamente 11 dígitos numéricos (ej: 20327446348). Sin guiones ni espacios.',
         },
         {
+            // Antes esta regla tapaba el mensaje real con un generico fijo — el
+            // mismo problema que se arreglo en el catch de padron_emisor/receptor
+            // (server.js), pero en esta capa: aunque el error ya trajera el motivo
+            // puntual de AFIP (ej. "CUIT con requerimientos pendientes"), acá se
+            // perdia y se mostraba siempre "puede ser caida temporal, reintenta".
+            // Ahora se muestra el mensaje real (mainMsg) tal cual llego.
             match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
             title: 'Error consultando el Padrón AFIP',
-            detail: 'No se pudo verificar la condición IVA del CUIT en los servidores de AFIP.',
-            solucion: 'Verificá que el CUIT del receptor sea correcto. Si es correcto, reintentá en unos minutos (puede ser caída temporal de AFIP).',
+            detail: mainMsg,
+            solucion: 'Si el mensaje de arriba señala un problema puntual del CUIT (inactivo, con requerimientos pendientes, etc.), lo tiene que resolver el titular de ese CUIT directamente con AFIP — reintentar no alcanza. Si no da mayor detalle, puede ser una caída temporal de AFIP: esperá unos minutos y reintentá.',
         },
         {
             match: /empresa no encontrada|no encontrada.*cuenta/i,
@@ -10009,7 +10037,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         {
             match: /tipo de factura incorrecto/i,
             title: 'Incorrect invoice type',
-            detail: "The issuer's or recipient's tax data doesn't match the invoice type that was attempted.",
+            detail: mainMsg,
             solucion: "Check two things:<br/>&nbsp;&nbsp;1) In the app, open <b>Tax Details</b> and confirm your company's <b>VAT Condition</b> is set correctly (Registered, Monotributo, etc.).<br/>&nbsp;&nbsp;2) In the item, confirm the <b>recipient CUIT</b> is correct. The app automatically asks AFIP for the recipient's condition to decide whether A, B or C applies.",
         },
         {
@@ -10027,8 +10055,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         {
             match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
             title: 'Error querying the AFIP registry',
-            detail: "The recipient CUIT's VAT condition couldn't be verified on AFIP's servers.",
-            solucion: 'Check that the recipient CUIT is correct. If it is, retry in a few minutes (it may be a temporary AFIP outage).',
+            detail: mainMsg,
+            solucion: "If the message above points to a specific problem with the CUIT (inactive, pending requirements, etc.), the owner of that CUIT has to resolve it directly with AFIP — retrying won't help. If it doesn't give more detail, it may be a temporary AFIP outage: wait a few minutes and retry.",
         },
         {
             match: /empresa no encontrada|no encontrada.*cuenta/i,
