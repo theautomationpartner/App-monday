@@ -2861,15 +2861,13 @@ const LEADS_COLS = {
     seatsPlan:          'numeric_mm2qzhb7',   // subscription.max_units
 };
 
-// Mapeo del plan_id que manda monday a nuestro nombre friendly de plan.
-// Cuando configures los precios reales en monday Developer Center, los
-// plan_ids ahi pueden ser distintos — actualizar este map para que matchee.
+// Mapeo del plan_id que manda monday (definido en Developer Center → Pricing
+// & Plans, version enviada a revision) a nuestro nombre friendly de plan.
 const ARCA_PLAN_LABEL = {
-    free:       'Free',
-    small:      'Small',
-    medium:     'Medium',
-    large:      'Large',
-    enterprise: 'Enterprise',
+    free:     'Free',
+    pyme:     'Pyme',
+    business: 'Business',
+    xl:       'XL',
 };
 function resolveArcaPlanLabel(rawPlanId) {
     if (!rawPlanId) return null;
@@ -2919,13 +2917,13 @@ async function ensureInstallationLeadsTable() {
 // monday.com does not automatically restrict access when a subscription expires
 // or changes."
 //
-// Limites preliminares por plan (ajustar cuando direccion confirme finales):
+// Limites finales (confirmados por direccion, version enviada a Developer
+// Center → Pricing & Plans): Free/Pyme/Business/XL.
 const PLAN_LIMITS = {
-    free:       10,    // Free
-    small:      50,    // Small
-    medium:     200,   // Medium (Recomendado)
-    large:      500,   // Large
-    enterprise: null,  // Enterprise = ilimitado
+    free:     30,    // Free
+    pyme:     500,   // Pyme
+    business: 1000,  // Business (mas popular)
+    xl:       4000,  // XL
 };
 const DEFAULT_PLAN_ID = 'free';
 
