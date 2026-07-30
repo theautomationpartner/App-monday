@@ -9121,11 +9121,14 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             // log y los mensajes de error legibles ("Estados Unidos", no "212").
             const paisRaw       = heredar(getColumnTextById(feItemColumns, feMapping.pais_destino), 'pais_destino_descripcion')
                                   || heredar('', 'pais_destino_codigo');
-            // La fecha de pago NO se hereda: la de la factura ya paso, y AFIP exige
-            // que sea igual o posterior a la fecha del comprobante (que es hoy). Sin
-            // dato, para una NC/ND se usa la de emision — es un credito, no un pago.
-            const fechaPagoRaw  = (getColumnTextById(feItemColumns, feMapping.fecha_pago_exportacion) || '').trim()
-                || (esNotaExpo ? fechaHoyArgentinaYYYYMMDD() : '');
+            // Fecha de pago: en NC/ND NO SE INFORMA. El manual de WSFEX es
+            // explicito ("Para comprobantes que no son tipo 19 la fecha de pago no
+            // debe informarse") y AFIP la rechaza con el error 1673. Solo la
+            // Factura E de servicios la exige. Se fuerza a vacio para las notas
+            // aunque el usuario haya cargado algo en la columna.
+            const fechaPagoRaw  = esNotaExpo
+                ? ''
+                : (getColumnTextById(feItemColumns, feMapping.fecha_pago_exportacion) || '').trim();
             const domicilioCli  = heredar(getColumnTextById(feItemColumns, feMapping.receptor_domicilio), 'receptor_domicilio');
             const idImpositivo  = feMapping.id_impositivo_receptor
                 ? heredar(getColumnTextById(feItemColumns, feMapping.id_impositivo_receptor), 'receptor_id_impositivo')
@@ -9141,7 +9144,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
 
             const itemFaltantes = [];
             if (!paisRaw)      itemFaltantes.push(L('Destination Country', 'País de Destino'));
-            if (!fechaPagoRaw) itemFaltantes.push(L('Payment Date', 'Fecha de Pago'));
+            if (!fechaPagoRaw && !esNotaExpo) itemFaltantes.push(L('Payment Date', 'Fecha de Pago'));
             if (!domicilioCli) itemFaltantes.push(L("Client's Address", 'Domicilio del Cliente'));
             if (!clienteRaw)   itemFaltantes.push(L("Recipient Legal Name", 'Razón Social del Receptor'));
             if (itemFaltantes.length > 0) {
@@ -9155,8 +9158,11 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             // Fechas en formato AFIP (YYYYMMDD). La de emisión va en hora ARGENTINA
             // (ver fechaHoyArgentinaYYYYMMDD): AFIP opera en ART y el droplet en UTC.
             const fechaCbte = fechaHoyArgentinaYYYYMMDD();
-            const fechaPago = String(fechaPagoRaw).replace(/\D/g, '').slice(0, 8);
-            if (fechaPago.length !== 8) {
+            // En NC/ND queda vacia a proposito (error 1673): optTag no emite el
+            // tag y AFIP la acepta. Por eso el resto de los controles de fecha de
+            // pago solo corren para la Factura E.
+            const fechaPago = esNotaExpo ? '' : String(fechaPagoRaw).replace(/\D/g, '').slice(0, 8);
+            if (!esNotaExpo && fechaPago.length !== 8) {
                 throw new Error(L(
                     `Couldn't read the Payment Date ("${fechaPagoRaw}"). It must be a date column ` +
                     `with a valid date — AFIP requires it on every Factura E for services.`,
@@ -9164,8 +9170,9 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                     `de fecha con una fecha válida — AFIP la exige en toda Factura E de servicios.`
                 ));
             }
-            // Validación 1674: Fecha_pago >= Fecha_cbte.
-            if (fechaPago < fechaCbte) {
+            // Validación 1674: Fecha_pago >= Fecha_cbte. Solo aplica a la Factura E:
+            // la NC/ND va sin fecha de pago.
+            if (!esNotaExpo && fechaPago < fechaCbte) {
                 const fmt = (d) => `${d.slice(6, 8)}/${d.slice(4, 6)}/${d.slice(0, 4)}`;
                 throw new Error(L(
                     `The Payment Date (${fmt(fechaPago)}) is earlier than the issue date ` +
@@ -9405,11 +9412,13 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             // misma moneda que el asociado o PESOS (validación 2052) — cualquier
             // otra cosa se corta más abajo con un mensaje claro.
             //
-            // ⚠️ La COTIZACIÓN NO se hereda: la validación 2053 exige la del día
-            // hábil anterior a la fecha DEL COMPROBANTE, y la nota se emite hoy,
-            // no el día de la factura. Heredar la cotización vieja la haría
-            // rebotar. Por eso solo se hereda la moneda y la cotización la
-            // resuelve el bloque de abajo como en cualquier emisión.
+            // ⚠️ La COTIZACIÓN SÍ se hereda en NC/ND — error 1671: "Para el caso de
+            // Nota de Débito o Nota de Crédito de Servicio (Tipo_expo=2), la
+            // cotización informada debe ser la misma que la del comprobante
+            // asociado". La regla del "día hábil anterior" que uno esperaría aplica
+            // SOLO a la Factura ("Para el caso de Factura, si está autorizando un
+            // comprobante de Servicio..."). Se confirmó emitiendo: AFIP rechaza la
+            // nota si la cotización no coincide con la de la factura.
             const monedaFacturaAsoc = esNotaExpo && facturaAsociada
                 ? String(facturaAsociada.draft_json?.moneda || '').toUpperCase().trim()
                 : null;
@@ -9449,7 +9458,18 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 ? getColumnTextById(feItemColumns, feMapping.cotizacion) : '';
             const cotizacionItem = toNumberOrNull(cotizacionRaw);
             let monedaCtz = 1.0;
-            if (moneda.id !== 'PES') {
+            // NC/ND: la cotización se HEREDA de la factura asociada. AFIP lo exige
+            // (error 1671) y no acepta la del día: la nota tiene que valuarse igual
+            // que el comprobante que ajusta. Solo aplica si la nota va en la misma
+            // moneda que la factura — si va en PESOS (la salida que AFIP permite),
+            // la cotización es 1 y no hay nada que heredar.
+            const ctzFacturaAsoc = esNotaExpo && facturaAsociada
+                ? Number(facturaAsociada.draft_json?.cotizacion) : null;
+            if (moneda.id !== 'PES' && ctzFacturaAsoc && ctzFacturaAsoc > 0
+                && moneda.id === monedaFacturaAsoc) {
+                monedaCtz = ctzFacturaAsoc;
+                console.log(`[fe] ${docLabel}: cotización heredada de la factura asociada → ${moneda.id}=${monedaCtz}`);
+            } else if (moneda.id !== 'PES') {
                 if (cotizacionItem && cotizacionItem > 0) {
                     monedaCtz = cotizacionItem;
                     console.log(`[fe] cotización override del cliente: ${moneda.id}=${monedaCtz}`);
