@@ -328,6 +328,42 @@ async function fexGetCmp({ token, sign, cuit, cbteTipo, ptoVenta, cbteNro }) {
  * emisión). El manual dice "Posibles Valores: S, N, NULL (vacío)" y se presta
  * justo a la confusión.
  */
+/**
+ * Bloque <Cmps_asoc> — comprobantes asociados.
+ *
+ * Solo va en NC/ND de exportación (Cbte_Tipo 20/21). AFIP RECHAZA el bloque en
+ * una Factura E (error 1822: "No se pueden informar comprobantes asociados
+ * cuando el tipo de comprobante a autorizar es 19"), salvo remitos de tabaco —
+ * que no aplican a servicios. Por eso devuelve '' si no se pasa nada: la
+ * Factura E sigue emitiéndose exactamente igual que antes.
+ *
+ * ⚠️ CASING: acá adentro es `Cbte_tipo` con **t minúscula**, mientras que en el
+ * nivel de arriba del MISMO request es `Cbte_Tipo` con T mayúscula. Verificado
+ * contra el WSDL real (`ArrayOfCmp_asoc` → `Cmp_asoc`), que es la fuente de
+ * verdad — el manual del desarrollador ya demostró tener el casing mal en otros
+ * campos.
+ *
+ * `Cbte_cuit` existe en el schema pero se OMITE a propósito: es opcional, y al
+ * informarlo AFIP activa las validaciones de comprobante asociado de TERCEROS
+ * (errores 2042-2044, "si el emisor es distinto al del comprobante que se
+ * solicita"). Acá siempre se referencia un comprobante propio, así que callarlo
+ * evita pisar reglas que no aplican.
+ *
+ * Error 1670: si se informa uno de tipo/punto de venta/número, deben ir los
+ * tres. Por eso se emiten siempre juntos, nunca con optTag.
+ */
+function buildCmpsAsocXml(cmpsAsoc) {
+    if (!Array.isArray(cmpsAsoc) || cmpsAsoc.length === 0) return '';
+    const asocs = cmpsAsoc.map((c) => `          <Cmp_asoc>
+            <Cbte_tipo>${xmlEscape(c.cbteTipo)}</Cbte_tipo>
+            <Cbte_punto_vta>${xmlEscape(c.ptoVenta)}</Cbte_punto_vta>
+            <Cbte_nro>${xmlEscape(c.cbteNro)}</Cbte_nro>
+          </Cmp_asoc>`).join('\n');
+    return `<Cmps_asoc>
+${asocs}
+        </Cmps_asoc>`;
+}
+
 function buildCmpXml(cmp) {
     const items = (cmp.items || []).map((it) => `          <Item>
             ${optTag('Pro_codigo', it.codigo)}
@@ -357,6 +393,7 @@ function buildCmpXml(cmp) {
         ${optTag('Obs_comerciales', cmp.obsComerciales)}
         <Imp_total>${xmlEscape(cmp.impTotal)}</Imp_total>
         ${optTag('Obs', cmp.obs)}
+        ${buildCmpsAsocXml(cmp.cmpsAsoc)}
         ${optTag('Forma_pago', cmp.formaPago)}
         ${optTag('Incoterms', cmp.incoterms)}
         ${optTag('Incoterms_Ds', cmp.incotermsDs)}
