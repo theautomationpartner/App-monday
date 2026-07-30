@@ -377,8 +377,32 @@ function dniToPossibleCuits(dni) {
  * Dado un DNI o CUIT, intenta obtener la condición fiscal.
  * Si es DNI, prueba cada CUIT posible contra el padrón hasta encontrar uno válido.
  */
+/**
+ * Un fallo de probe es "el CUIT no existe / no esta inscripto" (esperable: se
+ * prueban 4 prefijos y 3 fallan) o un fallo de INFRAESTRUCTURA (red, WSAA,
+ * HTTP 5xx). Solo el primero habilita el fallback a Consumidor Final.
+ * parseCondicionFiscal ya etiqueta los errores propios del padrón con errorType.
+ */
+function esPadronNotFound(err) {
+    return err?.errorType === 'CONSTANCIA_ERROR' || err?.errorType === 'CUIT_INACTIVO';
+}
+
 async function getCondicionFiscalByDoc({ documento, certPem, keyPem }) {
     const doc = String(documento).replace(/\D/g, '');
+
+    // Validación de forma ANTES de consultar. Sin esto un número malformado
+    // (typo, columna truncada: 9, 10 o 12+ dígitos) se colaba hasta el fallback
+    // del final y la factura salía como CONSUMIDOR_FINAL sin avisar nada — con
+    // el CAE ya quemado y la letra posiblemente equivocada. Preferimos trabar la
+    // emisión y que el usuario corrija el dato.
+    if (doc.length !== 11 && (doc.length < 7 || doc.length > 8)) {
+        const err = new Error(
+            `CUIT/DNI del receptor inválido: "${documento}" (${doc.length} dígitos). ` +
+            `Tiene que ser un CUIT de 11 dígitos o un DNI de 7 u 8.`
+        );
+        err.errorType = 'DOC_INVALIDO';
+        throw err;
+    }
 
     // Si es CUIT directo (11 dígitos), consultar directamente
     if (doc.length === 11) {
@@ -388,17 +412,24 @@ async function getCondicionFiscalByDoc({ documento, certPem, keyPem }) {
 
     // Es DNI: probar posibles CUITs
     const posibles = dniToPossibleCuits(doc);
+    let infraError = null;
     for (const cuit of posibles) {
         try {
             const result = await getCondicionFiscal({ cuitAConsultar: cuit, certPem, keyPem });
             console.log(`[padron] DNI ${doc} → CUIT ${cuit} encontrado: ${result.nombre}`);
             return { ...result, docTipo: 80, docNro: cuit, cuitUsado: cuit };
-        } catch {
-            // Este CUIT no existe, probar el siguiente
+        } catch (err) {
+            // Este CUIT no existe → probar el siguiente. Pero si el padrón está
+            // caído no sabemos la condición real: asumir CF podría emitir con la
+            // letra equivocada, así que se propaga.
+            if (!esPadronNotFound(err)) infraError = err;
         }
     }
+    if (infraError) {
+        throw new Error(`No se pudo consultar el padrón para el DNI ${doc}: ${infraError.message}`);
+    }
 
-    // Ningún CUIT funcionó: devolver como consumidor final con DNI
+    // Ningún CUIT existe → es realmente un consumidor final identificado por DNI.
     console.warn(`[padron] DNI ${doc}: ningún CUIT válido encontrado, usando como CF`);
     return {
         condicion: config.IVA_CONDITION.CF,

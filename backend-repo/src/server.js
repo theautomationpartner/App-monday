@@ -6456,7 +6456,20 @@ async function comprobanteHandler(req, res) {
                             `AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.`
                         );
                     }
+                } else if (receptorDocClean.length > 0) {
+                    // Cargó dígitos pero incompletos (typo, columna truncada).
+                    // Antes esto no llegaba al padrón y se emitía con el default
+                    // CONSUMIDOR_FINAL de arriba, sin avisar nada. Se traba acá:
+                    // vale más un error corregible que un CAE quemado con el
+                    // receptor mal identificado.
+                    throw new Error(
+                        `CUIT/DNI del receptor inválido: "${receptorCuitRaw}" (${receptorDocClean.length} dígitos). ` +
+                        `Completá la columna con un CUIT de 11 dígitos o un DNI de 7 u 8. ` +
+                        `Si la operación es a consumidor final sin identificar, dejá la columna vacía.`
+                    );
                 }
+                // receptorDocClean vacío (ej. "-", "N/A", texto sin números) mantiene
+                // el comportamiento histórico: Consumidor Final sin identificar.
             }
 
             // ── 8. Determinar tipo de factura fiscal correcto ─────────────────
@@ -9873,8 +9886,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         {
             match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
             title: 'CUIT / DNI del receptor inválido',
-            detail: 'El campo CUIT / DNI del receptor está vacío o no tiene el formato correcto.',
-            solucion: 'Completá la columna <b>CUIT / DNI Receptor</b> del item con exactamente 11 dígitos numéricos (ej: 20327446348). Sin guiones ni espacios.',
+            detail: mainMsg,
+            solucion: 'Completá la columna <b>CUIT / DNI Receptor</b> del item con un <b>CUIT de 11 dígitos</b> (ej: 20327446348) o un <b>DNI de 7 u 8</b>. Sin guiones ni espacios. Si la operación es a consumidor final sin identificar, dejá la columna <b>vacía</b>.',
         },
         {
             // Antes esta regla tapaba el mensaje real con un generico fijo — el
@@ -10055,8 +10068,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         {
             match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
             title: 'Invalid recipient CUIT / DNI',
-            detail: 'The recipient CUIT / DNI field is empty or has the wrong format.',
-            solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with exactly 11 numeric digits (e.g. 20327446348). No dashes or spaces.',
+            detail: mainMsg,
+            solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with an <b>11-digit CUIT</b> (e.g. 20327446348) or a <b>7 or 8-digit DNI</b>. No dashes or spaces. If the sale is to an unidentified final consumer, leave the column <b>empty</b>.',
         },
         {
             match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
