@@ -21,6 +21,12 @@ const config = require('../config');
 
 const PADRON_SERVICE = 'ws_sr_constancia_inscripcion';
 
+// IDs de impuesto del padrón que sabemos traducir a una condición frente al IVA.
+// 20=Monotributo, 30=Responsable Inscripto, 32=Exento, 34=No Alcanzado.
+// Si aparece un impuesto de IVA fuera de esta lista, parseCondicionFiscal lo
+// reporta en `ivaSinMapear` para que se avise (ver el final de esa función).
+const KNOWN_IVA_IMPUESTOS = new Set(['20', '30', '32', '34']);
+
 // ─── Helpers de PEM ──────────────────────────────────────────────────────────
 
 function normalizePem(raw, type) {
@@ -182,10 +188,21 @@ function parseCondicionFiscal(xml) {
     // ── Chequeo impuestos activos ─────────────────────────────────────────
     const impuestoBlocks = xml.match(/<impuesto>([\s\S]*?)<\/impuesto>/gi) || [];
     const activos = new Set();
+    const detalleImpuestos = [];
     for (const block of impuestoBlocks) {
         const id     = xmlTag(block, 'idImpuesto');
         const estado = (xmlTag(block, 'estado') || 'ACTIVO').toUpperCase();
         if (id && estado === 'ACTIVO') activos.add(id);
+        // El estado real viene en <estadoImpuesto> (AC / EX / NA). Se guarda solo
+        // para poder informarlo en la alerta de abajo: la clasificación sigue
+        // usando `activos` tal como venía, para no cambiar comportamiento.
+        if (id) {
+            detalleImpuestos.push({
+                id,
+                desc:   xmlTag(block, 'descripcionImpuesto') || '',
+                estado: xmlTag(block, 'estadoImpuesto') || '?',
+            });
+        }
     }
 
     const domicilio = parseDomicilio(xml);
@@ -234,7 +251,28 @@ function parseCondicionFiscal(xml) {
         console.log(`[padron] CUIT observado sin impuestos activos → CONSUMIDOR_FINAL`);
     }
 
-    return { condicion: IVA_CONDITION.CF, nombre, tipoPersona, domicilio, raw: xml };
+    // Llegar acá significa que NINGUNO de los impuestos que sabemos mapear
+    // (20/30/32/34) está activo, así que la condición se resuelve por descarte
+    // como CONSUMIDOR_FINAL. Eso es correcto para un consumidor final de verdad
+    // (solo Ganancias, Bienes Personales, etc.), pero fue exactamente lo que
+    // hizo que a un municipio se le facturara como "Consumidor Final": tenía el
+    // impuesto 34 (IVA No Alcanzado), que entonces no estaba mapeado.
+    //
+    // Se reporta el dato para que el caller pueda avisar. NO se lanza error ni
+    // se cambia la condición: la emisión sigue funcionando igual que siempre.
+    // Solo se marca cuando hay algo con pinta de IVA/Monotributo sin mapear —
+    // un CF legítimo no trae nada de eso, así que no genera ruido. Los regímenes
+    // de retención (SIRE-IVA, faena bovino) solo aparecen acá si el receptor
+    // además no tiene ningún impuesto conocido.
+    const ivaSinMapear = detalleImpuestos.filter(
+        i => /\bIVA\b|MONOTRIBUT/i.test(i.desc) && !KNOWN_IVA_IMPUESTOS.has(i.id)
+    );
+
+    return {
+        condicion: IVA_CONDITION.CF,
+        nombre, tipoPersona, domicilio, raw: xml,
+        ivaSinMapear: ivaSinMapear.length ? ivaSinMapear : undefined,
+    };
 }
 
 /** Extrae domicilio fiscal del XML de getPersona_v2 */

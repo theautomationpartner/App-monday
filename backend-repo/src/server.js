@@ -198,6 +198,15 @@ async function getOrRefreshReceptorPadron(documento) {
     try {
         console.log(`[padron-rec] MISS/stale — consultando AFIP para doc ${doc}`);
         const info = await afipPadron.getCondicionFiscalByDoc({ documento: doc });
+        // Si el padrón trajo un impuesto de IVA que no sabemos mapear, avisar.
+        // Fire-and-forget a propósito: es solo un aviso, no puede frenar ni
+        // demorar la emisión bajo ninguna circunstancia.
+        if (info.ivaSinMapear?.length) {
+            notifySlackCondicionIvaSinMapear({
+                documento: doc, nombre: info.nombre,
+                ivaSinMapear: info.ivaSinMapear, condicionUsada: info.condicion,
+            }).catch(err => console.warn(`[padron-sinmapear] alerta falló: ${err.message}`));
+        }
         // Guardar en DB (fire-and-forget — no bloquea el flujo de emisión)
         db.query(
             `INSERT INTO padron_receptores_cache
@@ -10684,6 +10693,79 @@ function toMondayDate(s) {
 // Notifica a Slack solo cuando hay un Error sistema (los que requieren acción
 // del equipo de TAP — bugs, infra, casos no clasificables).
 // FIRE-AND-FORGET: nunca tira excepción. Tiene reintentos.
+/**
+ * Avisa que un receptor tiene un impuesto de IVA que no sabemos mapear, y que
+ * por eso su condición se resolvió como CONSUMIDOR_FINAL por descarte.
+ *
+ * NO bloquea nada: la factura se emite igual. El objetivo es enterarnos el mismo
+ * día en vez de cuando el cliente reclama (fue el caso del municipio con el
+ * impuesto 34 "IVA No Alcanzado", que estuvo 5 semanas sin detectarse).
+ *
+ * Se alerta UNA sola vez por receptor: el registro en `padron_iva_sin_mapear`
+ * hace el dedupe, porque el cron de padrón refresca a estos receptores todos los
+ * días y si no repetiría la alerta indefinidamente. La tabla además queda como
+ * lista de lo que falta mapear.
+ */
+async function notifySlackCondicionIvaSinMapear({ documento, nombre, ivaSinMapear, condicionUsada }) {
+    const impuestosTxt = (ivaSinMapear || [])
+        .map(i => `${i.id} ${i.desc} (${i.estado})`).join(' | ');
+    console.warn(`[padron-sinmapear] doc=${documento} → usó ${condicionUsada} por descarte. Impuestos de IVA sin mapear: ${impuestosTxt}`);
+
+    // Dedupe. Ante un fallo de DB se alerta igual: mejor una alerta repetida que
+    // perder el aviso.
+    let yaAlertado = false;
+    try {
+        await db.query(`CREATE TABLE IF NOT EXISTS padron_iva_sin_mapear (
+            documento TEXT PRIMARY KEY,
+            nombre TEXT,
+            impuestos TEXT,
+            condicion_usada TEXT,
+            detectado_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )`);
+        const r = await db.query(
+            `INSERT INTO padron_iva_sin_mapear (documento, nombre, impuestos, condicion_usada)
+             VALUES ($1, $2, $3, $4) ON CONFLICT (documento) DO NOTHING`,
+            [documento, nombre || null, impuestosTxt, condicionUsada]
+        );
+        yaAlertado = r.rowCount === 0;
+    } catch (err) {
+        console.warn(`[padron-sinmapear] no se pudo registrar el caso: ${err.message}`);
+    }
+    if (yaAlertado) return;
+
+    if (process.env.APP_ENV === 'staging') {
+        console.log('[slack] APP_ENV=staging — skip alerta a Slack (canal solo para prod)');
+        return;
+    }
+    const webhookUrl = process.env.SLACK_WEBHOOK_URL;
+    if (!webhookUrl) {
+        console.warn('[slack] SLACK_WEBHOOK_URL no configurado — skip');
+        return;
+    }
+    try {
+        const lines = [
+            `:warning: *Condición de IVA no reconocida* — se usó \`${condicionUsada}\` por descarte`,
+            `*Receptor:* ${nombre || '(sin nombre)'} (${documento})`,
+            `El padrón de AFIP devuelve impuestos de IVA que la app no sabe mapear:`,
+            ...(ivaSinMapear || []).map(i => `   • \`${i.id}\` ${i.desc} _(estado ${i.estado})_`),
+            `_La factura se emitió normalmente. Revisar si corresponde agregar el mapeo en_ \`afipPadron.js\` _(KNOWN_IVA_IMPUESTOS) y en_ \`condicionIvaMap\` _de server.js._`,
+        ].filter(Boolean);
+        const res = await fetchWithRetry(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: lines.join('\n') }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'slack-iva-sinmapear' });
+        if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            console.error(`[slack] webhook devolvió ${res.status}: ${body.slice(0, 200)}`);
+        } else {
+            console.log(`[slack] alerta de condición IVA sin mapear enviada (doc=${documento})`);
+        }
+    } catch (err) {
+        console.error(`[slack] excepción al notificar condición sin mapear: ${err.message}`);
+    }
+}
+
 async function notifySlackSystemError({ accountId, clientItemName, errorMessage, auditItemId }) {
     // Las alertas de Slack son SOLO para prod: los errores en staging son ruido
     // para el equipo de TAP. (A diferencia del audit board, que SÍ registra
