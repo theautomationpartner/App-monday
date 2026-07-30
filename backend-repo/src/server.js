@@ -6239,9 +6239,14 @@ async function comprobanteHandler(req, res) {
             // fila y el cron recuperaria la primera retroactivamente → 2 facturas.
             let typeForIdempotency = resolvedType || 'AUTO';
             const preempt = await db.query(
+                // Se excluyen también los tipos de EXPORTACIÓN ('E','NCE','NDE'):
+                // viven en otra serie y otro web service (WSFEX), así que una fila
+                // suya nunca puede servir de idempotencia para una factura A/B/C.
+                // Sin esto, un intento de Factura E que quedó con número reservado
+                // haría que la factura doméstica adoptara invoice_type='E'.
                 `SELECT invoice_type FROM invoice_emissions
                   WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                    AND invoice_type NOT IN ('NC','ND')
+                    AND invoice_type NOT IN ('NC','ND','E','NCE','NDE')
                     AND status <> 'success'
                     AND attempted_cbte_nro IS NOT NULL
                   ORDER BY updated_at DESC LIMIT 1`,
@@ -7625,11 +7630,38 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                  FROM invoice_emissions
                  WHERE company_id=$1 AND board_id=$2
                    AND afip_result_json->>'cae'=$3
-                   AND invoice_type NOT IN ('NC','ND') AND status='success'
+                   AND invoice_type NOT IN ('NC','ND','E','NCE','NDE') AND status='success'
                  ORDER BY updated_at DESC LIMIT 1`,
                 [company.id, boardId, caeRef]
             );
-            const factura = byCae.rows[0] || null;
+            let factura = byCae.rows[0] || null;
+            // Si no aparece como factura doméstica, puede ser que el CAE sea de un
+            // comprobante de EXPORTACIÓN: son otra serie y otro web service, así que
+            // una NC doméstica no puede anularlos. Se detecta para poder decírselo
+            // en vez de un genérico "no se encontró ninguna factura".
+            if (!factura) {
+                const expoRes = await db.query(
+                    `SELECT afip_result_json->>'numero_comprobante' AS nro,
+                            draft_json->>'punto_venta' AS pv
+                       FROM invoice_emissions
+                      WHERE company_id=$1 AND board_id=$2
+                        AND afip_result_json->>'cae'=$3
+                        AND invoice_type IN ('E','NCE','NDE') AND status='success'
+                      LIMIT 1`,
+                    [company.id, boardId, caeRef]
+                );
+                if (expoRes.rows[0]) {
+                    const e = expoRes.rows[0];
+                    throw new Error(ncLanguage === 'en'
+                        ? `CAE ${caeRef} belongs to an EXPORT voucher (No. ${e.pv || '?'}-${e.nro || '?'}), ` +
+                          `which can't be adjusted with a domestic ${docLabel}. ` +
+                          `Set the Voucher Type column to "Export Credit Note" (or "Export Debit Note") instead.`
+                        : `El CAE ${caeRef} es de un comprobante de EXPORTACIÓN (Nº ${e.pv || '?'}-${e.nro || '?'}), ` +
+                          `que no se puede ajustar con una ${docLabel} común. ` +
+                          `Poné "Nota De Credito E" (o "Nota De Debito E") en la columna Tipo de Comprobante.`
+                    );
+                }
+            }
             if (!factura) {
                 throw new Error(ncLanguage === 'en'
                     ? `No invoice issued by the app was found with CAE ${caeRef}. ` +
@@ -8963,20 +8995,127 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             }
 
             // ── 5. Leer los datos del item ─────────────────────────────────────
-            const paisRaw       = (getColumnTextById(feItemColumns, feMapping.pais_destino) || '').trim();
-            const fechaPagoRaw  = (getColumnTextById(feItemColumns, feMapping.fecha_pago_exportacion) || '').trim();
-            const domicilioCli  = (getColumnTextById(feItemColumns, feMapping.receptor_domicilio) || '').trim();
+            // El comprobante asociado se resuelve ACA, antes de leer los
+            // campos del item: en una NC/ND esos campos van vacios porque se
+            // heredan de la factura, y la validacion de mas abajo los exigiria.
+
+            // ── 7-bis. Comprobante asociado (solo NC/ND de exportación) ────────
+            // AFIP exige referenciar la factura que se anula/ajusta, y le aplica
+            // un set de validaciones propio (errores 1820, 2050-2055). Se validan
+            // ACÁ, antes de reservar número y de pegarle a AFIP: fallar temprano
+            // deja la serie intacta.
+            //
+            // Todas las reglas de abajo salen del manual del desarrollador de
+            // WSFEX, sección "Validaciones a realizar en los comprobantes
+            // asociados", verificadas contra el texto oficial.
+            let cmpsAsocExpo;      // undefined en FACTURA → el helper no emite el bloque
+            let facturaAsociada;   // fila de invoice_emissions de la factura referenciada
+            if (esNotaExpo) {
+                if (!feMapping.factura_referencia) {
+                    throw new Error(L(
+                        `To issue an ${docLabel} you must map the column that holds the CAE of the ` +
+                        `export invoice being adjusted (Visual Mapping → "Invoice reference").`,
+                        `Para emitir una ${docLabel} hay que mapear la columna que tiene el CAE de la ` +
+                        `factura de exportación que se ajusta (Mapeo Visual → "Factura de referencia").`
+                    ));
+                }
+                const caeRefExpo = extractCaeFromColumn(feItemColumns, feMapping.factura_referencia);
+                if (!caeRefExpo) {
+                    const rawShown = (getColumnTextById(feItemColumns, feMapping.factura_referencia) || '').trim();
+                    throw new Error(L(
+                        `The reference CAE is missing or invalid${rawShown ? ` ("${rawShown}")` : ''}. ` +
+                        `An AFIP CAE has 14 digits — copy it exactly from the export invoice PDF.`,
+                        `Falta el CAE de referencia o no es válido${rawShown ? ` ("${rawShown}")` : ''}. ` +
+                        `El CAE de AFIP tiene 14 dígitos — copialo exacto del PDF de la factura de exportación.`
+                    ));
+                }
+                // Solo comprobantes de EXPORTACIÓN emitidos por la app en este board.
+                const refRes = await db.query(
+                    `SELECT id, invoice_type, draft_json, afip_result_json,
+                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
+                       FROM invoice_emissions
+                      WHERE company_id=$1 AND board_id=$2
+                        AND afip_result_json->>'cae'=$3
+                        AND invoice_type IN ('E','NDE') AND status='success'
+                      ORDER BY updated_at DESC LIMIT 1`,
+                    [company.id, boardId, caeRefExpo]
+                );
+                facturaAsociada = refRes.rows[0] || null;
+                if (!facturaAsociada) {
+                    throw new Error(L(
+                        `No export voucher issued by the app was found with CAE ${caeRefExpo}. ` +
+                        `Check the CAE and that the invoice was issued from this same board.`,
+                        `No se encontró ningún comprobante de exportación emitido por la app con el CAE ` +
+                        `${caeRefExpo}. Verificá el CAE y que la factura se haya emitido desde este mismo tablero.`
+                    ));
+                }
+                const refDraft = facturaAsociada.draft_json || {};
+                const refAfip  = facturaAsociada.afip_result_json || {};
+                const refCbteTipo = Number(facturaAsociada.attempted_cbte_tipo || refDraft.cbte_tipo_afip);
+                const refPtoVta   = Number(refDraft.punto_venta ?? facturaAsociada.attempted_pto_vta);
+                const refNro      = Number(refAfip.numero_comprobante ?? facturaAsociada.attempted_cbte_nro);
+
+                // Una ND solo puede asociar una FACTURA (no NC ni ND).
+                if (esNDExpo && refCbteTipo !== afipConfig.CBTE_TYPE_EXPO.FACTURA) {
+                    throw new Error(L(
+                        `An Export Debit Note can only reference an Export Invoice, not another note.`,
+                        `Una Nota de Débito E solo puede referenciar una Factura E, no otra nota.`
+                    ));
+                }
+                // El asociado también tiene que ser de SERVICIOS (Tipo_expo=2).
+                if (Number(refDraft.tipo_expo) !== afipConfig.TIPO_EXPO.SERVICIOS) {
+                    throw new Error(L(
+                        `The referenced voucher is not a services export — AFIP requires the associated ` +
+                        `voucher to be of the same export type.`,
+                        `El comprobante referenciado no es una exportación de servicios — AFIP exige que el ` +
+                        `comprobante asociado sea del mismo tipo de exportación.`
+                    ));
+                }
+                if (!Number.isFinite(refCbteTipo) || !Number.isFinite(refPtoVta) || !Number.isFinite(refNro)) {
+                    throw new Error(L(
+                        `The referenced voucher is missing its type / point of sale / number, so it can't be ` +
+                        `linked. Contact the app's support.`,
+                        `Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se ` +
+                        `puede vincular. Contactá al soporte de la app.`
+                    ));
+                }
+                // AFIP acepta UN solo comprobante asociado (error 1820).
+                cmpsAsocExpo = [{ cbteTipo: refCbteTipo, ptoVenta: refPtoVta, cbteNro: refNro }];
+                console.log(`[fe] ${docLabel}: asociada emisión id=${facturaAsociada.id} ` +
+                            `(tipo ${refCbteTipo} PV ${refPtoVta} nro ${refNro}, CAE ${caeRefExpo})`);
+            }
+
+            // NC/ND: lo que el item no traiga se HEREDA de la factura asociada.
+            // El usuario solo carga los subitems de lo que acredita — mismo criterio
+            // que la NC domestica. Ademas AFIP EXIGE que pais coincida con el del
+            // comprobante asociado (validacion 2050), asi que heredarlo es lo unico
+            // que siempre valida. Si el usuario igual carga un valor, se respeta y
+            // se valida mas abajo contra la factura.
+            const heredadoDeFactura = (esNotaExpo && facturaAsociada && facturaAsociada.draft_json) || {};
+            const heredar = (valorItem, campo) => {
+                const v = String(valorItem || '').trim();
+                if (v) return v;
+                return esNotaExpo ? String(heredadoDeFactura[campo] || '').trim() : '';
+            };
+
+            const paisRaw       = heredar(getColumnTextById(feItemColumns, feMapping.pais_destino), 'pais_destino_codigo');
+            // La fecha de pago NO se hereda: la de la factura ya paso, y AFIP exige
+            // que sea igual o posterior a la fecha del comprobante (que es hoy). Sin
+            // dato, para una NC/ND se usa la de emision — es un credito, no un pago.
+            const fechaPagoRaw  = (getColumnTextById(feItemColumns, feMapping.fecha_pago_exportacion) || '').trim()
+                || (esNotaExpo ? fechaHoyArgentinaYYYYMMDD() : '');
+            const domicilioCli  = heredar(getColumnTextById(feItemColumns, feMapping.receptor_domicilio), 'receptor_domicilio');
             const idImpositivo  = feMapping.id_impositivo_receptor
-                ? (getColumnTextById(feItemColumns, feMapping.id_impositivo_receptor) || '').trim()
-                : '';
+                ? heredar(getColumnTextById(feItemColumns, feMapping.id_impositivo_receptor), 'receptor_id_impositivo')
+                : (esNotaExpo ? String(heredadoDeFactura.receptor_id_impositivo || '').trim() : '');
             const tipoEntidadRaw = feMapping.tipo_entidad_receptor
-                ? (getColumnTextById(feItemColumns, feMapping.tipo_entidad_receptor) || '').trim()
-                : '';
+                ? heredar(getColumnTextById(feItemColumns, feMapping.tipo_entidad_receptor), 'receptor_tipo_entidad')
+                : (esNotaExpo ? String(heredadoDeFactura.receptor_tipo_entidad || '').trim() : '');
             // El receptor del exterior NO está en el padrón de AFIP: la razón social
             // la carga el usuario. Reusamos la columna de write-back de razón social,
             // que en Factura E funciona como INPUT (en A/B/C la escribe la app desde
             // el padrón).
-            const clienteRaw = (getColumnTextById(feItemColumns, feMapping.razon_social_receptor) || '').trim();
+            const clienteRaw = heredar(getColumnTextById(feItemColumns, feMapping.razon_social_receptor), 'receptor_nombre');
 
             const itemFaltantes = [];
             if (!paisRaw)      itemFaltantes.push(L('Destination Country', 'País de Destino'));
@@ -9110,91 +9249,6 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 );
             }
 
-            // ── 7-bis. Comprobante asociado (solo NC/ND de exportación) ────────
-            // AFIP exige referenciar la factura que se anula/ajusta, y le aplica
-            // un set de validaciones propio (errores 1820, 2050-2055). Se validan
-            // ACÁ, antes de reservar número y de pegarle a AFIP: fallar temprano
-            // deja la serie intacta.
-            //
-            // Todas las reglas de abajo salen del manual del desarrollador de
-            // WSFEX, sección "Validaciones a realizar en los comprobantes
-            // asociados", verificadas contra el texto oficial.
-            let cmpsAsocExpo;      // undefined en FACTURA → el helper no emite el bloque
-            let facturaAsociada;   // fila de invoice_emissions de la factura referenciada
-            if (esNotaExpo) {
-                if (!feMapping.factura_referencia) {
-                    throw new Error(L(
-                        `To issue an ${docLabel} you must map the column that holds the CAE of the ` +
-                        `export invoice being adjusted (Visual Mapping → "Invoice reference").`,
-                        `Para emitir una ${docLabel} hay que mapear la columna que tiene el CAE de la ` +
-                        `factura de exportación que se ajusta (Mapeo Visual → "Factura de referencia").`
-                    ));
-                }
-                const caeRefExpo = extractCaeFromColumn(feItemColumns, feMapping.factura_referencia);
-                if (!caeRefExpo) {
-                    const rawShown = (getColumnTextById(feItemColumns, feMapping.factura_referencia) || '').trim();
-                    throw new Error(L(
-                        `The reference CAE is missing or invalid${rawShown ? ` ("${rawShown}")` : ''}. ` +
-                        `An AFIP CAE has 14 digits — copy it exactly from the export invoice PDF.`,
-                        `Falta el CAE de referencia o no es válido${rawShown ? ` ("${rawShown}")` : ''}. ` +
-                        `El CAE de AFIP tiene 14 dígitos — copialo exacto del PDF de la factura de exportación.`
-                    ));
-                }
-                // Solo comprobantes de EXPORTACIÓN emitidos por la app en este board.
-                const refRes = await db.query(
-                    `SELECT id, invoice_type, draft_json, afip_result_json,
-                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
-                       FROM invoice_emissions
-                      WHERE company_id=$1 AND board_id=$2
-                        AND afip_result_json->>'cae'=$3
-                        AND invoice_type IN ('E','NDE') AND status='success'
-                      ORDER BY updated_at DESC LIMIT 1`,
-                    [company.id, boardId, caeRefExpo]
-                );
-                facturaAsociada = refRes.rows[0] || null;
-                if (!facturaAsociada) {
-                    throw new Error(L(
-                        `No export voucher issued by the app was found with CAE ${caeRefExpo}. ` +
-                        `Check the CAE and that the invoice was issued from this same board.`,
-                        `No se encontró ningún comprobante de exportación emitido por la app con el CAE ` +
-                        `${caeRefExpo}. Verificá el CAE y que la factura se haya emitido desde este mismo tablero.`
-                    ));
-                }
-                const refDraft = facturaAsociada.draft_json || {};
-                const refAfip  = facturaAsociada.afip_result_json || {};
-                const refCbteTipo = Number(facturaAsociada.attempted_cbte_tipo || refDraft.cbte_tipo_afip);
-                const refPtoVta   = Number(refDraft.punto_venta ?? facturaAsociada.attempted_pto_vta);
-                const refNro      = Number(refAfip.numero_comprobante ?? facturaAsociada.attempted_cbte_nro);
-
-                // Una ND solo puede asociar una FACTURA (no NC ni ND).
-                if (esNDExpo && refCbteTipo !== afipConfig.CBTE_TYPE_EXPO.FACTURA) {
-                    throw new Error(L(
-                        `An Export Debit Note can only reference an Export Invoice, not another note.`,
-                        `Una Nota de Débito E solo puede referenciar una Factura E, no otra nota.`
-                    ));
-                }
-                // El asociado también tiene que ser de SERVICIOS (Tipo_expo=2).
-                if (Number(refDraft.tipo_expo) !== afipConfig.TIPO_EXPO.SERVICIOS) {
-                    throw new Error(L(
-                        `The referenced voucher is not a services export — AFIP requires the associated ` +
-                        `voucher to be of the same export type.`,
-                        `El comprobante referenciado no es una exportación de servicios — AFIP exige que el ` +
-                        `comprobante asociado sea del mismo tipo de exportación.`
-                    ));
-                }
-                if (!Number.isFinite(refCbteTipo) || !Number.isFinite(refPtoVta) || !Number.isFinite(refNro)) {
-                    throw new Error(L(
-                        `The referenced voucher is missing its type / point of sale / number, so it can't be ` +
-                        `linked. Contact the app's support.`,
-                        `Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se ` +
-                        `puede vincular. Contactá al soporte de la app.`
-                    ));
-                }
-                // AFIP acepta UN solo comprobante asociado (error 1820).
-                cmpsAsocExpo = [{ cbteTipo: refCbteTipo, ptoVenta: refPtoVta, cbteNro: refNro }];
-                console.log(`[fe] ${docLabel}: asociada emisión id=${facturaAsociada.id} ` +
-                            `(tipo ${refCbteTipo} PV ${refPtoVta} nro ${refNro}, CAE ${caeRefExpo})`);
-            }
             // Recovery: número + <Id> de requerimiento de un intento previo que no
             // llegó a confirmarse. El <Id> es la clave de idempotencia de WSFEX:
             // reenviar el MISMO Id hace que AFIP devuelva Reproceso='S' con el CAE
@@ -9277,15 +9331,10 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             // AFIP exige que sea EL MISMO que el del comprobante asociado
             // (validación 2050), así que heredarlo es además lo único que siempre
             // valida — y le ahorra al usuario recargar un dato que ya está.
-            let paisRawEfectivo = paisRaw;
             const paisFacturaAsoc = esNotaExpo && facturaAsociada
                 ? String(facturaAsociada.draft_json?.pais_destino_codigo || '').trim()
                 : null;
-            if (paisFacturaAsoc && !paisRawEfectivo.trim()) {
-                paisRawEfectivo = paisFacturaAsoc;
-                console.log(`[fe] ${docLabel}: país heredado de la factura asociada → ${paisRawEfectivo}`);
-            }
-            const pais = await withWsfexTokenRetry((a) => resolvePaisDestinoExpo(paisRawEfectivo, a, feLanguage));
+            const pais = await withWsfexTokenRetry((a) => resolvePaisDestinoExpo(paisRaw, a, feLanguage));
             if (paisFacturaAsoc && String(pais.codigo) !== paisFacturaAsoc) {
                 throw new Error(L(
                     `The destination country of the ${docLabel} (${pais.codigo} - ${pais.descripcion}) ` +
@@ -10010,9 +10059,10 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 }).catch((e) => console.warn('[fe] rename fire-and-forget falló:', e.message));
             }
 
-            // Audit board de TAP (fire-and-forget). tipo='E' es la letra del
-            // comprobante; la clase sigue siendo "Factura" (una Factura E es una
-            // factura), así que no se pasan los flags de NC/ND.
+            // Audit board de TAP (fire-and-forget). tipo='E' es la LETRA del
+            // comprobante (los tres de exportación son clase E); los flags de
+            // NC/ND marcan la CLASE, para que el board no etiquete una nota de
+            // exportación como "Factura".
             logEmissionToAuditBoard({
                 accountId,
                 success: true,
@@ -10024,6 +10074,8 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 durationMs: Date.now() - tStart,
                 receptorRazonSocial: feDraft.receptor_nombre || null,
                 company,
+                esNotaCredito: esNCExpo,
+                esNotaDebito:  esNDExpo,
             }).catch((e) => console.warn('[fe] audit-log fire-and-forget falló:', e.message));
 
             if (callbackUrl) {
@@ -11810,8 +11862,11 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
     if (total === 0) return; // nada nuevo que reportar tonight
 
     // Desglose facturas vs notas de crédito vs notas de débito de lo auditado esta noche.
-    const ncCount  = results.filter(r => r.row?.invoice_type === 'NC').length;
-    const ndCount  = results.filter(r => r.row?.invoice_type === 'ND').length;
+    // Se cuentan tambien las de EXPORTACION ('NCE'/'NDE'): son la misma clase de
+    // comprobante, solo que por otra serie. Sin esto el resumen las sumaria como
+    // facturas y el desglose de la noche quedaria mal.
+    const ncCount  = results.filter(r => ['NC', 'NCE'].includes(r.row?.invoice_type)).length;
+    const ndCount  = results.filter(r => ['ND', 'NDE'].includes(r.row?.invoice_type)).length;
     const facCount = total - ncCount - ndCount;
     const desgloseLine = `   · Facturas: ${facCount}  ·  Notas de crédito: ${ncCount}  ·  Notas de Débito: ${ndCount}`;
 
@@ -11901,8 +11956,8 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
             const afipR = r.row.afip_result_json || {};
             const ptoStr = String(r.row.attempted_pto_vta || r.row.draft_json?.punto_venta || '').padStart(2, '0');
             const nroStr = String(afipR.numero_comprobante || r.row.attempted_cbte_nro || '').padStart(8, '0');
-            const esNc = r.row.invoice_type === 'NC';
-            const esND = r.row.invoice_type === 'ND';
+            const esNc = ['NC', 'NCE'].includes(r.row.invoice_type);
+            const esND = ['ND', 'NDE'].includes(r.row.invoice_type);
             const tipoStr = `${esND ? 'Nota de Débito' : esNc ? 'Nota de Crédito' : 'Factura'} ${afipR.tipo_comprobante || '?'} N° ${ptoStr}-${nroStr}`;
             const itemRef = `account=${r.company?.monday_account_id || '?'} board=${r.row.board_id} item=${r.row.item_id}`;
 
@@ -12867,8 +12922,9 @@ async function backfillAuditBoard() {
         try {
             const draft       = row.draft_json || {};
             const afipResult  = row.afip_result_json || {};
-            const esNotaCredito = row.invoice_type === 'NC';
-            const esNotaDebito  = row.invoice_type === 'ND';
+            // 'NCE'/'NDE' son las notas de EXPORTACION: misma clase, otra serie.
+            const esNotaCredito = row.invoice_type === 'NC' || row.invoice_type === 'NCE';
+            const esNotaDebito  = row.invoice_type === 'ND' || row.invoice_type === 'NDE';
             const tipo = afipResult.tipo_comprobante || draft.tipo_comprobante || null;
 
             // logEmissionToAuditBoard es idempotente (findAuditItemId): si por
