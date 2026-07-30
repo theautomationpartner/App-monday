@@ -96,6 +96,7 @@ function xmlTag(xml, tag) {
  *   - <persona><impuesto><idImpuesto>20</idImpuesto>  (20 = Monotributo)
  *   - <persona><impuesto><idImpuesto>30</idImpuesto>  (30 = IVA Responsable Inscripto)
  *   - <persona><impuesto><idImpuesto>32</idImpuesto>  (32 = IVA Exento)
+ *   - <persona><impuesto><idImpuesto>34</idImpuesto>  (34 = IVA No Alcanzado)
  *
  * Lógica de prioridad:
  *   1. errorConstancia != 0  → throw
@@ -103,8 +104,9 @@ function xmlTag(xml, tag) {
  *   3. impuesto id=20 activo → MONOTRIBUTO
  *   4. impuesto id=30 activo → RESPONSABLE_INSCRIPTO
  *   5. impuesto id=32 activo → EXENTO
- *   6. categoriasMonotributo presente → MONOTRIBUTO (fallback)
- *   7. default                         → CONSUMIDOR_FINAL
+ *   6. impuesto id=34 activo → NO_ALCANZADO
+ *   7. categoriasMonotributo presente → MONOTRIBUTO (fallback)
+ *   8. default                         → CONSUMIDOR_FINAL
  */
 function parseCondicionFiscal(xml) {
     const { IVA_CONDITION } = config;
@@ -199,6 +201,15 @@ function parseCondicionFiscal(xml) {
     // 32 = IVA Exento
     if (activos.has('32')) {
         return { condicion: IVA_CONDITION.EXENTO, nombre, tipoPersona, domicilio, raw: xml };
+    }
+    // 34 = IVA NO ALCANZADO. Va DESPUES de 20/30/32: si el CUIT tuviera ademas
+    // una inscripcion real de IVA, esa manda. Sin este caso el receptor caia al
+    // default CONSUMIDOR_FINAL del final de la funcion — que es lo que pasaba
+    // con los organismos publicos (municipios, etc.): se les emitia la factura
+    // como "Consumidor Final" y AFIP la registraba con CondicionIVAReceptorId=5,
+    // por lo que el organismo la rechazaba y no podia procesar el pago.
+    if (activos.has('34')) {
+        return { condicion: IVA_CONDITION.NO_ALCANZADO, nombre, tipoPersona, domicilio, raw: xml };
     }
 
     // Fallback: si trae bloques de monotributo pero ningún impuesto id=20 activo

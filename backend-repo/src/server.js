@@ -1932,12 +1932,18 @@ async function afipIssueFacturaLocked({
     const docNumber = draft.docNro ?? (docNumberDigits ? Number(docNumberDigits) : 0);
 
     // Condición IVA del receptor (RG 5616 lo hizo obligatorio)
-    // Códigos AFIP: 1=RI, 4=Exento, 5=CF, 6=Monotributista
+    // Códigos AFIP: 1=RI, 4=Exento, 5=CF, 6=Monotributista, 15=No Alcanzado
+    // Los valores salen de la tabla oficial FEParamGetCondicionIvaReceptor.
+    // El 15 (IVA No Alcanzado) es Cmp_Clase B/C — valido para la Factura B que
+    // se le emite a un organismo publico. Sin esta entrada el receptor No
+    // Alcanzado caia al `|| 5` de abajo y AFIP lo registraba como Consumidor
+    // Final, por lo que el organismo rechazaba el comprobante.
     const condicionIvaMap = {
         RESPONSABLE_INSCRIPTO: 1,
         MONOTRIBUTO: 6,
         EXENTO: 4,
         CONSUMIDOR_FINAL: 5,
+        NO_ALCANZADO: 15,
     };
     const condicionIvaReceptor = condicionIvaMap[draft.receptorCondicion] || 5;
     console.log(`[emit] WSFE params: docType=${docType}, docNumber=${docNumber}, condIvaRec=${condicionIvaReceptor} (${draft.receptorCondicion})`);
