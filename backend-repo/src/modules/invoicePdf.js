@@ -24,6 +24,11 @@ const config = require('../config');
 const TIPO_COD = { A: '01', B: '06', C: '11', E: '19' };
 const TIPO_CBTE_NUM = { A: 1, B: 6, C: 11, E: 19 };
 
+// Comprobantes de exportación. Los tres son clase "E" (el recuadro del cabezal
+// dice "E" en los tres); lo que los distingue es el código: 19 factura,
+// 20 nota de débito, 21 nota de crédito.
+const TIPO_CBTE_NUM_EXPO = { FACTURA: 19, ND: 20, NC: 21 };
+
 // Alícuotas de IVA habilitadas por AFIP (RG 4291 / WSFEv1).
 const ALICUOTAS_IVA = ['27', '21', '10.5', '5', '2.5', '0'];
 
@@ -1107,6 +1112,8 @@ const PDF_LABELS_E = {
         idImpositivo: 'ID Impositivo: ',
         divisa: 'Divisa: ', destinoCbte: 'Destino del Comprobante: ',
         formaPago: 'Forma de Pago: ', fechaPago: 'Fecha de Pago: ',
+        compAsociado: 'Comprobante Asociado: ', facturaExpoWord: 'Factura de Exportación',
+        fechaCorta: 'Fecha: ',
         thItem: 'Ítem', thDescripcion: 'Descripción', thCantidad: 'Cantidad',
         thPrecioUnit: 'Precio Unit.', thTotalItem: 'Total por ítem',
         uMedida: 'U. Medida:', observaciones: 'Observaciones:',
@@ -1123,6 +1130,8 @@ const PDF_LABELS_E = {
         idImpositivo: 'Tax ID: ',
         divisa: 'Currency: ', destinoCbte: 'Voucher Destination: ',
         formaPago: 'Payment Method: ', fechaPago: 'Payment Date: ',
+        compAsociado: 'Associated Voucher: ', facturaExpoWord: 'Export Invoice',
+        fechaCorta: 'Date: ',
         thItem: 'Item', thDescripcion: 'Description', thCantidad: 'Quantity',
         thPrecioUnit: 'Unit Price', thTotalItem: 'Item Total',
         uMedida: 'Unit:', observaciones: 'Remarks:',
@@ -1266,12 +1275,22 @@ async function generateFacturaEPdfBuffer({ company, draft, afipResult, language 
             doc.fontSize(6).font('Helvetica-Bold')
                .text(`COD. ${tipoCod}`, boxX, hy + 34, { width: BOX_SIZE, align: 'center' });
 
-            // "FACTURA DE EXPORTACIÓN" — leyenda de AFIP, NO se traduce ni se
-            // abrevia a "Factura E": así la titula el comprobante oficial.
+            // Título del comprobante — leyenda de AFIP: NO se traduce ni se abrevia
+            // a "Factura E", así lo titula el comprobante oficial. Sale del tipo
+            // (19/20/21), no de la letra: los tres son clase "E" y el recuadro de
+            // arriba dice "E" en los tres casos; lo que los distingue es el código.
+            const tituloExpo = Number(cbteTipoNum) === TIPO_CBTE_NUM_EXPO.NC
+                ? 'NOTA DE CRÉDITO DE EXPORTACIÓN'
+                : Number(cbteTipoNum) === TIPO_CBTE_NUM_EXPO.ND
+                ? 'NOTA DE DÉBITO DE EXPORTACIÓN'
+                : 'FACTURA DE EXPORTACIÓN';
             const rx = centerX + centerW;
             const rightColW = colRight - rx - 8;
-            doc.fontSize(16).font('Helvetica-Bold')
-               .text('FACTURA DE EXPORTACIÓN', rx, bannerCenterY - 8,
+            // Los títulos de las notas son más largos que "FACTURA DE EXPORTACIÓN";
+            // se achica la tipografía para que entren en una línea sin recortarse
+            // (lineBreak:false los truncaría en silencio).
+            doc.fontSize(tituloExpo.length > 24 ? 12 : 16).font('Helvetica-Bold')
+               .text(tituloExpo, rx, bannerCenterY - 8,
                      { width: rightColW, align: 'center', lineBreak: false });
 
             doc.moveTo(centerX + centerW / 2, hy + BOX_SIZE)
@@ -1372,6 +1391,24 @@ async function generateFacturaEPdfBuffer({ company, draft, afipResult, language 
             doc.font('Helvetica').text(draft.pais_destino_descripcion || '',
                 colLeft + 8 + destinoLabelW, y + 18, { lineBreak: false });
             y += divisaH;
+
+            // ── COMPROBANTE ASOCIADO (solo NC/ND de exportación) ──
+            // Qué factura ajusta esta nota. Es el dato que AFIP recibe en
+            // <Cmps_asoc>, impreso para que el cliente del exterior lo vea.
+            // En una Factura E draft.comprobante_asociado no existe → no se dibuja
+            // y el layout queda idéntico al histórico.
+            if (draft.comprobante_asociado) {
+                const ca = draft.comprobante_asociado;
+                const caH = 18;
+                doc.rect(colLeft, y, W, caH).stroke('#000');
+                const caTxt = `${L.facturaExpoWord} ${padNum(ca.punto_venta, 5)}-${padNum(ca.numero, 8)}` +
+                    (ca.fecha ? `    ${L.fechaCorta}${fmtDate(ca.fecha)}` : '') +
+                    (ca.cae ? `    CAE: ${ca.cae}` : '');
+                doc.fontSize(7.5).font('Helvetica-Bold')
+                   .text(L.compAsociado, colLeft + 8, y + 5, { continued: true, lineBreak: false });
+                doc.font('Helvetica').text(caTxt, { lineBreak: false });
+                y += caH;
+            }
 
             // Corte visual: en el comprobante oficial el bloque de la operación
             // arranca separado del encabezado, sin bordes que los unan.

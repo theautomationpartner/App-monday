@@ -6054,27 +6054,18 @@ async function comprobanteHandler(req, res) {
                     return;
                 } else if (/^\s*nota\s+de\s+(cr[eé]dito|d[eé]bito)\s+e\b/i.test(tipoComp)
                         || /^\s*(export\s+(credit|debit)\s+note|(credit|debit)\s+note\s+e)\b/i.test(tipoComp)) {
-                    // NC/ND de EXPORTACIÓN (CbteTipo 21/20) — todavía no implementadas.
+                    // NC/ND de EXPORTACIÓN (CbteTipo 21/20) → circuito WSFEXv1.
                     //
                     // Esta rama va ANTES que las de crédito/débito a propósito: sin
                     // ella "Nota de Crédito E" matchea /cr[eé]dito/i y cae en el
-                    // handler DOMÉSTICO, que recién muere adentro de
-                    // afipIssueFacturaLocked con "Tipo de Nota de Crédito no
-                    // soportado: E" — un mensaje que no le dice nada al usuario.
-                    // Es el mismo pozo que ya se esquivó con "Factura E" y con FCE.
-                    //
-                    // Cortar acá además evita tocar la DB y pedir token a AFIP para
-                    // algo que no se puede emitir. Cuando se implementen, este es el
-                    // punto donde se delega en el handler de exportación.
-                    const esNCExpo = /cr[eé]dito|credit/i.test(tipoComp);
-                    throw new Error(readiness.boardConfig?.language === 'en'
-                        ? `Export ${esNCExpo ? 'Credit' : 'Debit'} Notes (voucher type ${esNCExpo ? 21 : 20}) are not supported yet — ` +
-                          `only export Invoices ("Factura E") can be issued. ` +
-                          `To cancel or adjust an export invoice, contact the app's support.`
-                        : `Las Notas de ${esNCExpo ? 'Crédito' : 'Débito'} de exportación (comprobante tipo ${esNCExpo ? 21 : 20}) ` +
-                          `todavía no están implementadas — por ahora solo se puede emitir la Factura E. ` +
-                          `Para anular o ajustar una factura de exportación, contactá al soporte de la app.`
-                    );
+                    // handler DOMÉSTICO, que emitiría (o moriría) por WSFEv1 — el
+                    // web service equivocado. Es el mismo pozo que ya se esquivó con
+                    // "Factura E" y con FCE MiPyME.
+                    const claseExpo = /cr[eé]dito|credit/i.test(tipoComp) ? 'NC' : 'ND';
+                    displayKind = claseExpo === 'NC' ? 'Nota de Crédito E' : 'Nota de Débito E';
+                    console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en ${displayKind} (exportación)`);
+                    await emitFacturaEHandler(req, res, claseExpo);
+                    return;
                 } else if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
                     // tipoComp empieza con "Factura"/"Invoice" (incluye FCE) → emitir factura.
                 } else if (/cr[eé]dito/i.test(tipoComp) || /credit/i.test(tipoComp)) {
@@ -9498,6 +9489,16 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 // del SOAP. Es lo único que permite recuperar el comprobante si la
                 // respuesta se pierde.
                 wsfex_id: previousWsfexId,
+                // Qué factura ajusta esta nota. Es el mismo dato que va a AFIP en
+                // <Cmps_asoc>, guardado para poder imprimirlo en el PDF. En una
+                // Factura E queda undefined y el PDF no dibuja el bloque.
+                comprobante_asociado: (esNotaExpo && facturaAsociada) ? {
+                    punto_venta: cmpsAsocExpo[0].ptoVenta,
+                    numero:      cmpsAsocExpo[0].cbteNro,
+                    cbte_tipo:   cmpsAsocExpo[0].cbteTipo,
+                    fecha:       facturaAsociada.draft_json?.fecha_emision || null,
+                    cae:         facturaAsociada.afip_result_json?.cae || null,
+                } : undefined,
             };
 
             // ── 12-bis. Validación de fecha y control de saldo (NC/ND) ─────────
