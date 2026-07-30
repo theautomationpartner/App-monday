@@ -8963,17 +8963,24 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             }
 
             // Control secundario del Tipo de Comprobante: el disparador real es la
-            // receta, pero si la columna dice otra cosa el item no es una Factura E.
+            // receta, pero si la columna dice otra cosa el item no es de exportación.
+            //
+            // El patrón depende de la CLASE que se está emitiendo — este handler
+            // sirve a las tres. Con un patrón fijo de "Factura E", una NC/ND
+            // rebotaba acá aunque el ruteo la hubiera mandado bien.
             if (feMapping.tipo_comprobante) {
                 const tipoCompRaw = (getColumnTextById(feItemColumns, feMapping.tipo_comprobante) || '').trim();
-                if (tipoCompRaw
-                    && !/^\s*factura\s+e\b/i.test(tipoCompRaw)
-                    && !/^\s*export\s+invoice\b/i.test(tipoCompRaw)) {
+                const patronClase = esNCExpo
+                    ? /^\s*(nota\s+de\s+cr[eé]dito\s+e\b|export\s+credit\s+note\b|credit\s+note\s+e\b)/i
+                    : esNDExpo
+                    ? /^\s*(nota\s+de\s+d[eé]bito\s+e\b|export\s+debit\s+note\b|debit\s+note\s+e\b)/i
+                    : /^\s*(factura\s+e\b|export\s+invoice\b)/i;
+                if (tipoCompRaw && !patronClase.test(tipoCompRaw)) {
                     throw new Error(L(
-                        `The item is marked as "${tipoCompRaw}" in the Voucher Type column, not as an ` +
-                        `Export Invoice. Make sure you're triggering the recipe on the right item.`,
+                        `The item is marked as "${tipoCompRaw}" in the Voucher Type column, not as ` +
+                        `${docLabel}. Make sure you're triggering the recipe on the right item.`,
                         `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                        `no como Factura E. Verificá que estés disparando la receta sobre el item correcto.`
+                        `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
                     ));
                 }
             }
@@ -9654,12 +9661,12 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                  invoiceTypeDb, facturaAsociada ? facturaAsociada.id : null]
             );
             if (feClaim.rows.length === 0) {
-                console.warn(`[fe] claim falló item ${itemId} — ya hay una Factura E en curso, abortando sin tocar la fila`);
+                console.warn(`[fe] claim falló item ${itemId} — ya hay una ${docLabel} en curso, abortando sin tocar la fila`);
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
                     body: L(
-                        '⏳ An Export Invoice is already being issued for this item. Wait for it to finish — don\'t trigger the recipe again.',
-                        '⏳ Ya hay una Factura E en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.'
+                        `⏳ A ${docLabel} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`,
+                        `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`
                     ),
                 }).catch(() => {});
                 return;
@@ -9927,7 +9934,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             afipResult = await withWsfexTokenRetry((a) => emitirFacturaE(a));
 
             console.log(`[fe] AFIP respuesta — CAE: ${afipResult?.cae}, resultado: ${afipResult?.resultado}`);
-            if (!afipResult?.cae) throw new Error('AFIP no devolvió CAE para la Factura E');
+            if (!afipResult?.cae) throw new Error(`AFIP no devolvió CAE para la ${docLabel}`);
 
             // Sincronizar el <Id> de requerimiento REALMENTE usado antes de persistir.
             // NO es cosmético: feDraft se armó ANTES del lock (con el Id previo, o
