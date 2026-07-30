@@ -8878,7 +8878,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             // GUARD: la instancia de staging NO emite para clientes reales de prod.
             assertStagingNotBlocked(company);
 
-            console.log(`[fe] Emitiendo Factura E para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+            console.log(`[fe] Emitiendo ${docLabel} para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
 
             // Config del board: misma columna de status y mismos labels que factura.
             try {
@@ -10002,7 +10002,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                  JSON.stringify(feDraft), JSON.stringify(afipResult),
                  feDraft.moneda, feDraft.cotizacion, invoiceTypeDb]
             );
-            console.log('[fe] CAE de la Factura E persistido en DB');
+            console.log(`[fe] CAE de la ${docLabel} persistido en DB`);
 
             // Status del item → "Comprobante Creado" (fire-and-forget).
             if (autoUpdateStatus && statusColumnId) {
@@ -10056,13 +10056,22 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                     if (fePdfColumnId) {
                         const pvPad  = String(ptoVentaExpo).padStart(2, '0');
                         const nroPad = String(afipResult?.numero_comprobante || '').padStart(4, '0');
+                        // Nombre del archivo según la clase. El cliente lo descarga y
+                        // lo archiva: una Nota de Crédito llamada "Factura_E" es un
+                        // problema de papeles, no un detalle cosmético.
+                        const docSlugArchivo = esNCExpo ? (feLanguage === 'en' ? 'Export_Credit_Note' : 'Nota_Credito_E')
+                                             : esNDExpo ? (feLanguage === 'en' ? 'Export_Debit_Note'  : 'Nota_Debito_E')
+                                             : (feLanguage === 'en' ? 'Export_Invoice' : 'Factura_E');
                         await uploadPdfToMondayFileColumn({
                             apiToken: mondayToken, itemId,
                             fileColumnId: fePdfColumnId,
                             pdfBuffer: fePdfBuffer,
-                            filename: `${feLanguage === 'en' ? 'Export_Invoice' : 'Factura'}_E_Nro_${pvPad}-${nroPad}.pdf`,
+                            // El nombre del archivo tiene que decir QUE comprobante es:
+                            // el cliente lo descarga y lo archiva. Una NC llamada
+                            // "Factura_E" es un problema de papeles, no cosmetico.
+                            filename: `${docSlugArchivo}_${pvPad}-${nroPad}.pdf`,
                         });
-                        console.log('[fe] PDF de la Factura E subido a Monday');
+                        console.log(`[fe] PDF de la ${docLabel} subido a Monday`);
                     } else {
                         console.warn('[fe] No hay columna de PDF configurada en el mapeo');
                     }
@@ -10075,16 +10084,22 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             const pvLargo  = String(ptoVentaExpo).padStart(4, '0');
             const nroLargo = String(afipResult.numero_comprobante || '').padStart(8, '0');
             const isEnFe = feLanguage === 'en';
+            // Nombre del comprobante segun la clase. Antes decia "Factura E" fijo,
+            // asi que una NC quedaba con el comentario, el nombre del item y el PDF
+            // diciendo "Factura" — confuso para el cliente y para quien audita.
+            const docNombre = esNCExpo ? (isEnFe ? 'Export Credit Note' : 'Nota de Crédito E')
+                            : esNDExpo ? (isEnFe ? 'Export Debit Note'  : 'Nota de Débito E')
+                            : (isEnFe ? 'Export Invoice' : 'Factura E');
             const okBody = (isEnFe
-                ? `✅ <b>Export Invoice issued</b><br/><br/>` +
-                  `Voucher: <b>Factura E N° ${pvLargo}-${nroLargo}</b><br/>` +
+                ? `✅ <b>${docNombre} issued</b><br/><br/>` +
+                  `Voucher: <b>${docNombre} N° ${pvLargo}-${nroLargo}</b><br/>` +
                   `CAE: ${afipResult.cae} (exp. ${afipResult.cae_vencimiento || '—'})<br/>` +
                   `Destination: ${pais.descripcion}<br/>` +
                   `Amount: ${feLines.importeTotal.toFixed(2)} ${moneda.id}` +
                   (feDraft.cotizacion !== 1 ? ` (exchange rate ${feDraft.cotizacion})` : '') + `<br/><br/>` +
                   `<i>Export operation — VAT exempt.</i>`
-                : `✅ <b>Factura E emitida</b><br/><br/>` +
-                  `Comprobante: <b>Factura E N° ${pvLargo}-${nroLargo}</b><br/>` +
+                : `✅ <b>${docNombre} emitida</b><br/><br/>` +
+                  `Comprobante: <b>${docNombre} N° ${pvLargo}-${nroLargo}</b><br/>` +
                   `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>` +
                   `Destino: ${pais.descripcion}<br/>` +
                   `Importe: ${feLines.importeTotal.toFixed(2)} ${moneda.id}` +
@@ -10097,7 +10112,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             if (autoRenameItem && afipResult?.numero_comprobante) {
                 renameMondayItem({
                     apiToken: mondayToken, boardId, itemId,
-                    newName: `${isEnFe ? 'Export Invoice' : 'Factura E'} N° ${pvLargo}-${nroLargo}`,
+                    newName: `${docNombre} N° ${pvLargo}-${nroLargo}`,
                 }).catch((e) => console.warn('[fe] rename fire-and-forget falló:', e.message));
             }
 
@@ -10131,7 +10146,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             maybePostReviewNudge({ accountId, apiToken: mondayToken, itemId, language: feLanguage })
                 .catch((e) => console.warn('[review-nudge] fire-and-forget falló:', e.message));
 
-            console.log(`[fe] ── OK item ${itemId} ── Factura E ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
+            console.log(`[fe] ── OK item ${itemId} ── ${docLabel} ${pvLargo}-${nroLargo} en ${Date.now() - tStart}ms`);
 
         } catch (err) {
             console.error('❌ [fe] Error emitiendo Factura E:', err.message);
