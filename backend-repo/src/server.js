@@ -8878,7 +8878,11 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             // GUARD: la instancia de staging NO emite para clientes reales de prod.
             assertStagingNotBlocked(company);
 
-            console.log(`[fe] Emitiendo ${docLabel} para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
+            // OJO: `docLabel` se define más abajo (necesita `L`, que depende del
+            // idioma del board). Acá se arma inline a partir de las banderas de
+            // clase, que sí existen desde el arranque de la función — usar docLabel
+            // en este punto es un ReferenceError que mata el handler en silencio.
+            console.log(`[fe] Emitiendo ${esNCExpo ? 'Nota de Crédito E' : esNDExpo ? 'Nota de Débito E' : 'Factura E'} para item ${itemId} | Entorno: ${(process.env.AFIP_ENV || 'homologation').toUpperCase()}`);
 
             // Config del board: misma columna de status y mismos labels que factura.
             try {
