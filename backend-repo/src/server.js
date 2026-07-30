@@ -6052,6 +6052,29 @@ async function comprobanteHandler(req, res) {
                     console.log(`[emit] item ${itemId} marcado "${tipoComp}" → delega en Factura E (exportación)`);
                     await emitFacturaEHandler(req, res);
                     return;
+                } else if (/^\s*nota\s+de\s+(cr[eé]dito|d[eé]bito)\s+e\b/i.test(tipoComp)
+                        || /^\s*(export\s+(credit|debit)\s+note|(credit|debit)\s+note\s+e)\b/i.test(tipoComp)) {
+                    // NC/ND de EXPORTACIÓN (CbteTipo 21/20) — todavía no implementadas.
+                    //
+                    // Esta rama va ANTES que las de crédito/débito a propósito: sin
+                    // ella "Nota de Crédito E" matchea /cr[eé]dito/i y cae en el
+                    // handler DOMÉSTICO, que recién muere adentro de
+                    // afipIssueFacturaLocked con "Tipo de Nota de Crédito no
+                    // soportado: E" — un mensaje que no le dice nada al usuario.
+                    // Es el mismo pozo que ya se esquivó con "Factura E" y con FCE.
+                    //
+                    // Cortar acá además evita tocar la DB y pedir token a AFIP para
+                    // algo que no se puede emitir. Cuando se implementen, este es el
+                    // punto donde se delega en el handler de exportación.
+                    const esNCExpo = /cr[eé]dito|credit/i.test(tipoComp);
+                    throw new Error(readiness.boardConfig?.language === 'en'
+                        ? `Export ${esNCExpo ? 'Credit' : 'Debit'} Notes (voucher type ${esNCExpo ? 21 : 20}) are not supported yet — ` +
+                          `only export Invoices ("Factura E") can be issued. ` +
+                          `To cancel or adjust an export invoice, contact the app's support.`
+                        : `Las Notas de ${esNCExpo ? 'Crédito' : 'Débito'} de exportación (comprobante tipo ${esNCExpo ? 21 : 20}) ` +
+                          `todavía no están implementadas — por ahora solo se puede emitir la Factura E. ` +
+                          `Para anular o ajustar una factura de exportación, contactá al soporte de la app.`
+                    );
                 } else if (/^\s*factura/i.test(tipoComp) || /^\s*invoice/i.test(tipoComp)) {
                     // tipoComp empieza con "Factura"/"Invoice" (incluye FCE) → emitir factura.
                 } else if (/cr[eé]dito/i.test(tipoComp) || /credit/i.test(tipoComp)) {
@@ -6067,9 +6090,11 @@ async function comprobanteHandler(req, res) {
                 } else {
                     throw new Error(readiness.boardConfig?.language === 'en'
                         ? `Voucher Type not recognized: "${tipoComp}". ` +
-                          `It must be "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" or "Nota de Débito"/"Debit Note".`
+                          `It must be "Factura"/"Invoice", "Nota de Crédito"/"Credit Note", ` +
+                          `"Nota de Débito"/"Debit Note" or "Factura E"/"Export Invoice".`
                         : `Tipo de Comprobante no reconocido: "${tipoComp}". ` +
-                          `Tiene que ser "Factura"/"Invoice", "Nota de Crédito"/"Credit Note" o "Nota de Débito"/"Debit Note".`
+                          `Tiene que ser "Factura"/"Invoice", "Nota de Crédito"/"Credit Note", ` +
+                          `"Nota de Débito"/"Debit Note" o "Factura E"/"Export Invoice".`
                     );
                 }
             }
