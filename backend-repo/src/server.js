@@ -8445,6 +8445,16 @@ async function resolvePaisDestinoExpo(raw, auth, language) {
     const L = (en, es) => (language === 'en' ? en : es);
     const paises = await afipWsfex.fexGetPaises(auth);
 
+    // 0. Código numérico directo (ej. "212"). La tabla de AFIP se busca por
+    //    descripción, que es lo que el usuario elige en el dropdown — pero el
+    //    código también tiene que resolver: es lo que queda guardado en el draft
+    //    de una Factura E, y una NC/ND lo hereda de ahí.
+    const rawDigits = String(raw ?? '').trim();
+    if (/^\d+$/.test(rawDigits)) {
+        const porCodigo = paises.find((p) => String(p.codigo) === rawDigits);
+        if (porCodigo) return { codigo: porCodigo.codigo, descripcion: porCodigo.descripcion };
+    }
+
     const candidatos = [normalizeExpoText(raw)];
     const traducido = paisEnToEs(raw);
     if (traducido && normalizeExpoText(traducido) !== candidatos[0]) {
@@ -9105,7 +9115,12 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 return esNotaExpo ? String(heredadoDeFactura[campo] || '').trim() : '';
             };
 
-            const paisRaw       = heredar(getColumnTextById(feItemColumns, feMapping.pais_destino), 'pais_destino_codigo');
+            // Se hereda la DESCRIPCIÓN, no el código: resolvePaisDestinoExpo busca
+            // por nombre (es lo que el usuario elige en el dropdown). El código
+            // igual resuelve — se agregó soporte — pero heredar el nombre deja el
+            // log y los mensajes de error legibles ("Estados Unidos", no "212").
+            const paisRaw       = heredar(getColumnTextById(feItemColumns, feMapping.pais_destino), 'pais_destino_descripcion')
+                                  || heredar('', 'pais_destino_codigo');
             // La fecha de pago NO se hereda: la de la factura ya paso, y AFIP exige
             // que sea igual o posterior a la fecha del comprobante (que es hoy). Sin
             // dato, para una NC/ND se usa la de emision — es un credito, no un pago.
