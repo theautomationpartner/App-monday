@@ -8708,7 +8708,38 @@ async function withExportSerieLock(lockKey, fn) {
     }
 }
 
-async function emitFacturaEHandler(req, res) {
+/**
+ * Emite comprobantes de EXPORTACIÓN por WSFEXv1.
+ *
+ * `clase` decide qué comprobante sale, sin duplicar el flujo:
+ *   'FACTURA' → Factura E        (CbteTipo 19, invoice_type 'E')
+ *   'NC'      → Nota de Crédito E (CbteTipo 21, invoice_type 'NCE')
+ *   'ND'      → Nota de Débito E  (CbteTipo 20, invoice_type 'NDE')
+ *
+ * El default es 'FACTURA' a propósito: el camino de la Factura E queda idéntico
+ * al que venía andando, y los callers viejos no cambian. Se parametrizó en vez
+ * de duplicar el handler porque las 4 capas de defensa AFIP (idempotencia por
+ * <Id>, verificación post-emisión, reconciliación y auditoría) viven acá adentro
+ * — dos copias se desincronizan, y en facturación eso se paga caro.
+ *
+ * Lo ÚNICO que cambia para NC/ND: se busca la factura referenciada por CAE, se
+ * validan las reglas de comprobante asociado de AFIP y se manda el bloque
+ * Cmps_asoc. El resto del flujo es compartido.
+ */
+async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
+    // Normalizar: cualquier valor raro cae en FACTURA (comportamiento histórico).
+    if (clase !== 'NC' && clase !== 'ND') clase = 'FACTURA';
+    const esNCExpo   = clase === 'NC';
+    const esNDExpo   = clase === 'ND';
+    const esNotaExpo = esNCExpo || esNDExpo;
+    // Discriminador de idempotencia. Es parte de la unique key
+    // (company_id, board_id, item_id, invoice_type), así que sumar 'NCE'/'NDE'
+    // es aditivo: no colisiona con las 'E' ya emitidas ni necesita migración.
+    const invoiceTypeDb = esNCExpo ? 'NCE' : esNDExpo ? 'NDE' : 'E';
+    const cbteTipoExpo  = esNCExpo ? afipConfig.CBTE_TYPE_EXPO.NC
+                        : esNDExpo ? afipConfig.CBTE_TYPE_EXPO.ND
+                        : afipConfig.CBTE_TYPE_EXPO.FACTURA;
+
     const { payload, runtimeMetadata } = req.body || {};
     const inbound       = payload?.inboundFieldValues || {};
     const inputFields   = payload?.inputFields || {};
@@ -8841,7 +8872,9 @@ async function emitFacturaEHandler(req, res) {
                 console.warn('[fe] no se pudo leer board config para status:', cfgErr.message);
             }
             const L = (en, es) => (feLanguage === 'en' ? en : es);
-            const docLabel = L('Export Invoice', 'Factura E');
+            const docLabel = esNCExpo ? L('Export Credit Note', 'Nota de Crédito E')
+                           : esNDExpo ? L('Export Debit Note',  'Nota de Débito E')
+                           : L('Export Invoice', 'Factura E');
 
             // ── 3. Datos Fiscales de exportación (gate de configuración) ───────
             // El PV de exportación NO es el default_point_of_sale: AFIP exige que
@@ -9027,7 +9060,7 @@ async function emitFacturaEHandler(req, res) {
                 `SELECT afip_result_json, invoice_type, status, attempted_cbte_nro
                    FROM invoice_emissions
                   WHERE company_id=$1 AND board_id=$2 AND item_id=$3
-                    AND invoice_type <> 'E'
+                    AND invoice_type <> $4
                     AND (
                       status='success'
                       OR (status='processing' AND updated_at > NOW() - INTERVAL '5 minutes')
@@ -9035,7 +9068,7 @@ async function emitFacturaEHandler(req, res) {
                     )
                   ORDER BY (status='success') DESC, updated_at DESC
                   LIMIT 1`,
-                [company.id, boardId, itemId]
+                [company.id, boardId, itemId, invoiceTypeDb]
             );
             if (otroEnEsteItem.rows[0]) {
                 const r = otroEnEsteItem.rows[0];
@@ -9075,15 +9108,101 @@ async function emitFacturaEHandler(req, res) {
             const existingFe = await db.query(
                 `SELECT id, status, afip_result_json, draft_json, attempted_cbte_nro
                  FROM invoice_emissions
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E' LIMIT 1`,
-                [company.id, boardId, itemId]
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4 LIMIT 1`,
+                [company.id, boardId, itemId, invoiceTypeDb]
             );
             if (existingFe.rows[0]?.status === 'success') {
                 const prev = existingFe.rows[0].afip_result_json || {};
                 throw new Error(
-                    `Ya se emitió una Factura E para este item ` +
+                    `Ya se emitió una ${docLabel} para este item ` +
                     `(Comp. Nº ${prev.numero_comprobante || '—'}, CAE ${prev.cae || '—'}).`
                 );
+            }
+
+            // ── 7-bis. Comprobante asociado (solo NC/ND de exportación) ────────
+            // AFIP exige referenciar la factura que se anula/ajusta, y le aplica
+            // un set de validaciones propio (errores 1820, 2050-2055). Se validan
+            // ACÁ, antes de reservar número y de pegarle a AFIP: fallar temprano
+            // deja la serie intacta.
+            //
+            // Todas las reglas de abajo salen del manual del desarrollador de
+            // WSFEX, sección "Validaciones a realizar en los comprobantes
+            // asociados", verificadas contra el texto oficial.
+            let cmpsAsocExpo;      // undefined en FACTURA → el helper no emite el bloque
+            let facturaAsociada;   // fila de invoice_emissions de la factura referenciada
+            if (esNotaExpo) {
+                if (!feMapping.factura_referencia) {
+                    throw new Error(L(
+                        `To issue an ${docLabel} you must map the column that holds the CAE of the ` +
+                        `export invoice being adjusted (Visual Mapping → "Invoice reference").`,
+                        `Para emitir una ${docLabel} hay que mapear la columna que tiene el CAE de la ` +
+                        `factura de exportación que se ajusta (Mapeo Visual → "Factura de referencia").`
+                    ));
+                }
+                const caeRefExpo = extractCaeFromColumn(feItemColumns, feMapping.factura_referencia);
+                if (!caeRefExpo) {
+                    const rawShown = (getColumnTextById(feItemColumns, feMapping.factura_referencia) || '').trim();
+                    throw new Error(L(
+                        `The reference CAE is missing or invalid${rawShown ? ` ("${rawShown}")` : ''}. ` +
+                        `An AFIP CAE has 14 digits — copy it exactly from the export invoice PDF.`,
+                        `Falta el CAE de referencia o no es válido${rawShown ? ` ("${rawShown}")` : ''}. ` +
+                        `El CAE de AFIP tiene 14 dígitos — copialo exacto del PDF de la factura de exportación.`
+                    ));
+                }
+                // Solo comprobantes de EXPORTACIÓN emitidos por la app en este board.
+                const refRes = await db.query(
+                    `SELECT id, invoice_type, draft_json, afip_result_json,
+                            attempted_cbte_tipo, attempted_pto_vta, attempted_cbte_nro
+                       FROM invoice_emissions
+                      WHERE company_id=$1 AND board_id=$2
+                        AND afip_result_json->>'cae'=$3
+                        AND invoice_type IN ('E','NDE') AND status='success'
+                      ORDER BY updated_at DESC LIMIT 1`,
+                    [company.id, boardId, caeRefExpo]
+                );
+                facturaAsociada = refRes.rows[0] || null;
+                if (!facturaAsociada) {
+                    throw new Error(L(
+                        `No export voucher issued by the app was found with CAE ${caeRefExpo}. ` +
+                        `Check the CAE and that the invoice was issued from this same board.`,
+                        `No se encontró ningún comprobante de exportación emitido por la app con el CAE ` +
+                        `${caeRefExpo}. Verificá el CAE y que la factura se haya emitido desde este mismo tablero.`
+                    ));
+                }
+                const refDraft = facturaAsociada.draft_json || {};
+                const refAfip  = facturaAsociada.afip_result_json || {};
+                const refCbteTipo = Number(facturaAsociada.attempted_cbte_tipo || refDraft.cbte_tipo_afip);
+                const refPtoVta   = Number(refDraft.punto_venta ?? facturaAsociada.attempted_pto_vta);
+                const refNro      = Number(refAfip.numero_comprobante ?? facturaAsociada.attempted_cbte_nro);
+
+                // Una ND solo puede asociar una FACTURA (no NC ni ND).
+                if (esNDExpo && refCbteTipo !== afipConfig.CBTE_TYPE_EXPO.FACTURA) {
+                    throw new Error(L(
+                        `An Export Debit Note can only reference an Export Invoice, not another note.`,
+                        `Una Nota de Débito E solo puede referenciar una Factura E, no otra nota.`
+                    ));
+                }
+                // El asociado también tiene que ser de SERVICIOS (Tipo_expo=2).
+                if (Number(refDraft.tipo_expo) !== afipConfig.TIPO_EXPO.SERVICIOS) {
+                    throw new Error(L(
+                        `The referenced voucher is not a services export — AFIP requires the associated ` +
+                        `voucher to be of the same export type.`,
+                        `El comprobante referenciado no es una exportación de servicios — AFIP exige que el ` +
+                        `comprobante asociado sea del mismo tipo de exportación.`
+                    ));
+                }
+                if (!Number.isFinite(refCbteTipo) || !Number.isFinite(refPtoVta) || !Number.isFinite(refNro)) {
+                    throw new Error(L(
+                        `The referenced voucher is missing its type / point of sale / number, so it can't be ` +
+                        `linked. Contact the app's support.`,
+                        `Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se ` +
+                        `puede vincular. Contactá al soporte de la app.`
+                    ));
+                }
+                // AFIP acepta UN solo comprobante asociado (error 1820).
+                cmpsAsocExpo = [{ cbteTipo: refCbteTipo, ptoVenta: refPtoVta, cbteNro: refNro }];
+                console.log(`[fe] ${docLabel}: asociada emisión id=${facturaAsociada.id} ` +
+                            `(tipo ${refCbteTipo} PV ${refPtoVta} nro ${refNro}, CAE ${caeRefExpo})`);
             }
             // Recovery: número + <Id> de requerimiento de un intento previo que no
             // llegó a confirmarse. El <Id> es la clave de idempotencia de WSFEX:
@@ -9299,7 +9418,7 @@ async function emitFacturaEHandler(req, res) {
             // PDF ya saltean los null.
             const feDraft = {
                 tipo_comprobante: 'E',
-                cbte_tipo_afip:   afipConfig.CBTE_TYPE_EXPO.FACTURA,
+                cbte_tipo_afip:   cbteTipoExpo,
                 punto_venta:      ptoVentaExpo,
                 fecha_emision:    `${fechaCbte.slice(0, 4)}-${fechaCbte.slice(4, 6)}-${fechaCbte.slice(6, 8)}`,
                 tipo_expo:        afipConfig.TIPO_EXPO.SERVICIOS,
@@ -9337,7 +9456,7 @@ async function emitFacturaEHandler(req, res) {
             const feClaim = await db.query(
                 `INSERT INTO invoice_emissions
                     (company_id, board_id, item_id, invoice_type, status, request_json, draft_json)
-                 VALUES ($1,$2,$3,'E','processing',$4,$5)
+                 VALUES ($1,$2,$3,$6,'processing',$4,$5)
                  ON CONFLICT (company_id, board_id, item_id, invoice_type)
                  DO UPDATE SET status='processing', error_message=NULL,
                                request_json=$4, draft_json=$5,
@@ -9345,7 +9464,7 @@ async function emitFacturaEHandler(req, res) {
                  WHERE invoice_emissions.status NOT IN ('processing','success')
                     OR invoice_emissions.updated_at < NOW() - INTERVAL '5 minutes'
                  RETURNING id`,
-                [company.id, boardId, itemId, JSON.stringify(inbound), JSON.stringify(feDraft)]
+                [company.id, boardId, itemId, JSON.stringify(inbound), JSON.stringify(feDraft), invoiceTypeDb]
             );
             if (feClaim.rows.length === 0) {
                 console.warn(`[fe] claim falló item ${itemId} — ya hay una Factura E en curso, abortando sin tocar la fila`);
@@ -9368,7 +9487,7 @@ async function emitFacturaEHandler(req, res) {
             }
 
             // ── 14. Emitir en AFIP (WSFEXv1), serializado por serie ────────────
-            const cbteTipo = afipConfig.CBTE_TYPE_EXPO.FACTURA;
+            const cbteTipo = cbteTipoExpo;
             const lockKey  = `${company.cuit}:${ptoVentaExpo}:${cbteTipo}`;
 
             // Persiste el <Id> de requerimiento en el draft ANTES del SOAP. Es tan
@@ -9379,8 +9498,8 @@ async function emitFacturaEHandler(req, res) {
                     `UPDATE invoice_emissions
                      SET draft_json = jsonb_set(draft_json, '{wsfex_id}', to_jsonb($4::bigint)),
                          updated_at=CURRENT_TIMESTAMP
-                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'`,
-                    [company.id, boardId, itemId, wsfexId]
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$5`,
+                    [company.id, boardId, itemId, wsfexId, invoiceTypeDb]
                 );
                 if (r.rowCount !== 1) throw new Error(`reserva del Id WSFEX no impactó la fila esperada (rowCount=${r.rowCount})`);
             }
@@ -9392,10 +9511,10 @@ async function emitFacturaEHandler(req, res) {
                     `UPDATE invoice_emissions
                      SET attempted_cbte_tipo=$4, attempted_pto_vta=$5,
                          attempted_cbte_nro=$6, updated_at=CURRENT_TIMESTAMP
-                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'`,
-                    [company.id, boardId, itemId, cbteType, pointOfSale, cbteNro]
+                     WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$7`,
+                    [company.id, boardId, itemId, cbteType, pointOfSale, cbteNro, invoiceTypeDb]
                 );
-                if (r.rowCount !== 1) throw new Error(`reserva de cbteNro (Factura E) no impactó la fila esperada (rowCount=${r.rowCount})`);
+                if (r.rowCount !== 1) throw new Error(`reserva de cbteNro (${docLabel}) no impactó la fila esperada (rowCount=${r.rowCount})`);
             }
 
             // Reintento con backoff corto para las dos reservas pre-SOAP: si no
@@ -9512,6 +9631,11 @@ async function emitFacturaEHandler(req, res) {
                             monedaCtz,
                             impTotal:  feLines.importeTotal,
                             obs:       feObservaciones || '',
+                            // Comprobante asociado. Solo va en NC/ND (21/20): AFIP
+                            // RECHAZA el bloque en una Factura E (error 1822), por
+                            // eso en el caso FACTURA queda undefined y el helper no
+                            // emite nada.
+                            cmpsAsoc:  cmpsAsocExpo,
                             formaPago,
                             idiomaCbte,
                             fechaPago,
@@ -9644,10 +9768,10 @@ async function emitFacturaEHandler(req, res) {
                 `UPDATE invoice_emissions
                  SET status='success', draft_json=$4, afip_result_json=$5,
                      moneda=$6, cotizacion=$7, updated_at=CURRENT_TIMESTAMP
-                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'`,
+                 WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$8`,
                 [company.id, boardId, itemId,
                  JSON.stringify(feDraft), JSON.stringify(afipResult),
-                 feDraft.moneda, feDraft.cotizacion]
+                 feDraft.moneda, feDraft.cotizacion, invoiceTypeDb]
             );
             console.log('[fe] CAE de la Factura E persistido en DB');
 
@@ -9813,9 +9937,9 @@ async function emitFacturaEHandler(req, res) {
                     if (company && boardId) {
                         await db.query(
                             `UPDATE invoice_emissions SET status='error', error_message=$4, updated_at=CURRENT_TIMESTAMP
-                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type='E'
+                             WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$5
                                AND status <> 'success'`,
-                            [company.id, boardId, itemId, err.message]
+                            [company.id, boardId, itemId, err.message, invoiceTypeDb]
                         );
                     }
                     logEmissionToAuditBoard({
