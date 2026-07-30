@@ -9282,7 +9282,29 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             }
 
             // ── 9. Resolver país, tipo de entidad y CUIT país ──────────────────
-            const pais = await withWsfexTokenRetry((a) => resolvePaisDestinoExpo(paisRaw, a, feLanguage));
+            // NC/ND: el país se hereda de la factura asociada si el item no lo trae.
+            // AFIP exige que sea EL MISMO que el del comprobante asociado
+            // (validación 2050), así que heredarlo es además lo único que siempre
+            // valida — y le ahorra al usuario recargar un dato que ya está.
+            let paisRawEfectivo = paisRaw;
+            const paisFacturaAsoc = esNotaExpo && facturaAsociada
+                ? String(facturaAsociada.draft_json?.pais_destino_codigo || '').trim()
+                : null;
+            if (paisFacturaAsoc && !paisRawEfectivo.trim()) {
+                paisRawEfectivo = paisFacturaAsoc;
+                console.log(`[fe] ${docLabel}: país heredado de la factura asociada → ${paisRawEfectivo}`);
+            }
+            const pais = await withWsfexTokenRetry((a) => resolvePaisDestinoExpo(paisRawEfectivo, a, feLanguage));
+            if (paisFacturaAsoc && String(pais.codigo) !== paisFacturaAsoc) {
+                throw new Error(L(
+                    `The destination country of the ${docLabel} (${pais.codigo} - ${pais.descripcion}) ` +
+                    `doesn't match the referenced invoice (${paisFacturaAsoc}). AFIP requires both to be ` +
+                    `the same. Fix the country column on the item, or leave it empty to inherit it.`,
+                    `El país de destino de la ${docLabel} (${pais.codigo} - ${pais.descripcion}) no coincide ` +
+                    `con el de la factura referenciada (${paisFacturaAsoc}). AFIP exige que sean el mismo. ` +
+                    `Corregí la columna de país del item, o dejala vacía para heredarlo.`
+                ));
+            }
             const tipoEntidad = resolveTipoEntidadReceptor(tipoEntidadRaw);
             console.log(`[fe] destino=${pais.codigo} (${pais.descripcion}) tipoEntidad=${tipoEntidad}`);
 
@@ -9315,8 +9337,37 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             }
 
             // ── 10. Moneda y cotización ────────────────────────────────────────
-            const monedaRaw = feMapping.moneda ? (getColumnTextById(feItemColumns, feMapping.moneda) || '') : '';
+            let monedaRaw = feMapping.moneda ? (getColumnTextById(feItemColumns, feMapping.moneda) || '') : '';
+            // NC/ND: la MONEDA se hereda de la factura asociada cuando el item no
+            // dice otra cosa, igual que hace la NC doméstica. AFIP solo acepta la
+            // misma moneda que el asociado o PESOS (validación 2052) — cualquier
+            // otra cosa se corta más abajo con un mensaje claro.
+            //
+            // ⚠️ La COTIZACIÓN NO se hereda: la validación 2053 exige la del día
+            // hábil anterior a la fecha DEL COMPROBANTE, y la nota se emite hoy,
+            // no el día de la factura. Heredar la cotización vieja la haría
+            // rebotar. Por eso solo se hereda la moneda y la cotización la
+            // resuelve el bloque de abajo como en cualquier emisión.
+            const monedaFacturaAsoc = esNotaExpo && facturaAsociada
+                ? String(facturaAsociada.draft_json?.moneda || '').toUpperCase().trim()
+                : null;
+            if (monedaFacturaAsoc && !monedaRaw.trim()) {
+                monedaRaw = monedaFacturaAsoc;
+                console.log(`[fe] ${docLabel}: moneda heredada de la factura asociada → ${monedaRaw}`);
+            }
             const moneda = await withWsfexTokenRetry((a) => resolveMonedaExpo(monedaRaw, a, feLanguage));
+            if (monedaFacturaAsoc && moneda.id !== monedaFacturaAsoc && moneda.id !== 'PES') {
+                throw new Error(L(
+                    `The ${docLabel} currency (${moneda.id}) doesn't match the referenced invoice ` +
+                    `(${monedaFacturaAsoc}). AFIP only accepts the same currency as the associated ` +
+                    `voucher, or PESOS. Fix the currency column on the item, or leave it empty to ` +
+                    `inherit the invoice's.`,
+                    `La moneda de la ${docLabel} (${moneda.id}) no coincide con la de la factura ` +
+                    `referenciada (${monedaFacturaAsoc}). AFIP solo acepta la misma moneda que el ` +
+                    `comprobante asociado, o PESOS. Corregí la columna de moneda del item, o dejala ` +
+                    `vacía para heredar la de la factura.`
+                ));
+            }
 
             // Precio: si la factura sale en moneda extranjera y el board tiene la
             // columna de precio en USD, se lee esa (mismo criterio que A/B/C y NC).
@@ -9449,22 +9500,108 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 wsfex_id: previousWsfexId,
             };
 
+            // ── 12-bis. Validación de fecha y control de saldo (NC/ND) ─────────
+            if (esNotaExpo && facturaAsociada) {
+                const refDraft = facturaAsociada.draft_json || {};
+                // Validación 2055: la fecha del comprobante debe ser IGUAL O
+                // POSTERIOR a la del asociado. Se emite con fecha de hoy, así que
+                // solo puede fallar si la factura quedó fechada en el futuro.
+                const fFactura = String(refDraft.fecha_emision || '').slice(0, 10);
+                const fNota    = String(feDraft.fecha_emision || '').slice(0, 10);
+                if (fFactura && fNota && fNota < fFactura) {
+                    throw new Error(L(
+                        `The ${docLabel} date (${fNota}) is earlier than the referenced invoice's ` +
+                        `(${fFactura}). AFIP requires it to be the same or later.`,
+                        `La fecha de la ${docLabel} (${fNota}) es anterior a la de la factura referenciada ` +
+                        `(${fFactura}). AFIP exige que sea igual o posterior.`
+                    ));
+                }
+
+                // Control de saldo — regla NUESTRA, no de AFIP: en exportación AFIP
+                // no limita cuánto se acredita. Se hace igual para que una NC parcial
+                // no termine acreditando más de lo facturado por un error de carga.
+                //
+                // Solo aplica a NC: la ND SUMA deuda, no tiene tope (mismo criterio
+                // que la ND doméstica).
+                //
+                // ⚠️ Moneda: AFIP permite emitir la nota en PESOS aunque la factura
+                // sea en otra moneda. Cuando eso pasa, sumar importes de monedas
+                // distintas daría cualquier cosa, así que todo se lleva a la moneda
+                // de la FACTURA usando la cotización con la que se emitió CADA nota
+                // (la que quedó guardada en su draft, no la de hoy): así el saldo es
+                // estable y no se mueve con el dólar.
+                if (esNCExpo) {
+                    const monedaFactura = String(refDraft.moneda || '').toUpperCase();
+                    const ctzFactura    = Number(refDraft.cotizacion) || 1;
+                    const aMonedaFactura = (importe, monedaNota, ctzNota) => {
+                        const m = String(monedaNota || '').toUpperCase();
+                        if (m === monedaFactura) return Number(importe) || 0;
+                        // La nota va en PES y la factura en moneda extranjera:
+                        // se convierte con la cotización de la propia nota.
+                        if (m === 'PES' && monedaFactura !== 'PES') {
+                            return (Number(importe) || 0) / (Number(ctzNota) || ctzFactura || 1);
+                        }
+                        // La nota va en moneda extranjera y la factura en PES.
+                        if (monedaFactura === 'PES' && m !== 'PES') {
+                            return (Number(importe) || 0) * (Number(ctzNota) || 1);
+                        }
+                        return Number(importe) || 0;
+                    };
+
+                    const facturaTotal = Number(refDraft.importe_total) || 0;
+                    const previas = await db.query(
+                        `SELECT draft_json FROM invoice_emissions
+                          WHERE company_id=$1 AND board_id=$2 AND invoice_type='NCE'
+                            AND status IN ('success','processing')
+                            AND related_emission_id=$3 AND item_id <> $4`,
+                        [company.id, boardId, facturaAsociada.id, itemId]
+                    );
+                    const yaAcreditado = previas.rows.reduce((acc, r) => {
+                        const d = r.draft_json || {};
+                        return acc + aMonedaFactura(d.importe_total, d.moneda, d.cotizacion);
+                    }, 0);
+                    const estaNota = aMonedaFactura(feDraft.importe_total, feDraft.moneda, feDraft.cotizacion);
+                    const saldoExpo = Number((facturaTotal - yaAcreditado).toFixed(2));
+                    if (estaNota > saldoExpo + 0.01) {
+                        const fmtM = (n) => `${monedaFactura} ${Number(n).toFixed(2)}`;
+                        throw new Error(L(
+                            `The Credit Note exceeds the invoice's available balance.\n` +
+                            `Invoice: ${fmtM(facturaTotal)} · already credited: ${fmtM(yaAcreditado)} · ` +
+                            `available: ${fmtM(saldoExpo)} · this note: ${fmtM(estaNota)}.\n` +
+                            `Lower the subitem amounts so the total fits within the available balance.`,
+                            `La Nota de Crédito supera el saldo disponible de la factura.\n` +
+                            `Factura: ${fmtM(facturaTotal)} · ya acreditado: ${fmtM(yaAcreditado)} · ` +
+                            `disponible: ${fmtM(saldoExpo)} · esta nota: ${fmtM(estaNota)}.\n` +
+                            `Bajá los importes de los subítems para que el total entre en el saldo disponible.`
+                        ));
+                    }
+                    console.log(`[fe] ${docLabel}: saldo OK — factura ${facturaTotal} ${monedaFactura}, ` +
+                                `ya acreditado ${yaAcreditado.toFixed(2)}, esta nota ${estaNota.toFixed(2)}`);
+                }
+            }
+
             // ── 13. Claim atómico ──────────────────────────────────────────────
             // Solo prospera si la fila NO está ya 'processing' (otra emisión en
             // curso) ni 'success'. Una 'processing' vieja (>5 min: server caído
             // mid-emisión) se puede re-reclamar.
+            // related_emission_id vincula la nota con la factura que ajusta. Es lo
+            // que hace posible el control de saldo (y que se vea la cadena
+            // factura→notas). En una Factura E va null.
             const feClaim = await db.query(
                 `INSERT INTO invoice_emissions
-                    (company_id, board_id, item_id, invoice_type, status, request_json, draft_json)
-                 VALUES ($1,$2,$3,$6,'processing',$4,$5)
+                    (company_id, board_id, item_id, invoice_type, status, request_json, draft_json,
+                     related_emission_id)
+                 VALUES ($1,$2,$3,$6,'processing',$4,$5,$7)
                  ON CONFLICT (company_id, board_id, item_id, invoice_type)
                  DO UPDATE SET status='processing', error_message=NULL,
                                request_json=$4, draft_json=$5,
+                               related_emission_id=$7,
                                updated_at=CURRENT_TIMESTAMP
                  WHERE invoice_emissions.status NOT IN ('processing','success')
                     OR invoice_emissions.updated_at < NOW() - INTERVAL '5 minutes'
                  RETURNING id`,
-                [company.id, boardId, itemId, JSON.stringify(inbound), JSON.stringify(feDraft), invoiceTypeDb]
+                [company.id, boardId, itemId, JSON.stringify(inbound), JSON.stringify(feDraft),
+                 invoiceTypeDb, facturaAsociada ? facturaAsociada.id : null]
             );
             if (feClaim.rows.length === 0) {
                 console.warn(`[fe] claim falló item ${itemId} — ya hay una Factura E en curso, abortando sin tocar la fila`);
