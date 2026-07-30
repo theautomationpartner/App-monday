@@ -9632,12 +9632,19 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                     const aMonedaFactura = (importe, monedaNota, ctzNota) => {
                         const m = String(monedaNota || '').toUpperCase();
                         if (m === monedaFactura) return Number(importe) || 0;
-                        // La nota va en PES y la factura en moneda extranjera:
-                        // se convierte con la cotización de la propia nota.
+                        // La nota va en PES y la factura en moneda extranjera.
+                        // Se convierte con la cotización de la FACTURA, no con la
+                        // de la nota: una nota en pesos tiene cotización 1 (pesos a
+                        // pesos), así que dividir por ella no convierte nada — es el
+                        // bug que hacía leer ARS 8.976 como USD 8.976. La factura se
+                        // valuó a SU cotización, y ese es el tipo de cambio contra
+                        // el que hay que medir cuánto de ella se está acreditando.
                         if (m === 'PES' && monedaFactura !== 'PES') {
-                            return (Number(importe) || 0) / (Number(ctzNota) || ctzFactura || 1);
+                            return (Number(importe) || 0) / (ctzFactura || 1);
                         }
-                        // La nota va en moneda extranjera y la factura en PES.
+                        // La nota va en moneda extranjera y la factura en PES. AFIP
+                        // no lo permite (solo misma moneda o PESOS), pero se cubre
+                        // por si acaso: acá sí manda la cotización de la nota.
                         if (monedaFactura === 'PES' && m !== 'PES') {
                             return (Number(importe) || 0) * (Number(ctzNota) || 1);
                         }
