@@ -205,6 +205,27 @@ const MappingSchema = z.object({
             path: ['mapping'],
         });
     }
+    // La bonificacion en USD depende de que exista el precio en USD: la app decide
+    // que columnas usar por la MONEDA DEL ITEM, y la bonificacion sigue al precio.
+    // Mapear Bonificacion USD sin Precio Unitario USD deja el descuento inalcanzable
+    // (el precio nunca usa la variante en dolares, asi que la bonificacion tampoco).
+    if (m.bonificacion_usd && !m.precio_unitario_usd) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Mapeaste Bonificación en USD pero no Precio Unitario en USD. La bonificación sigue al precio: sin el precio en dólares, el descuento en dólares nunca se usa. Mapeá también Precio Unitario en USD, o sacá la Bonificación en USD.',
+            path: ['mapping'],
+        });
+    }
+    // El espejo: un board que factura en dolares y tiene bonificacion en pesos pero
+    // no en dolares emite SIN descuento (no se lee la de pesos a proposito — seria
+    // mezclar monedas). Se avisa al guardar para que no se descubra emitiendo.
+    if (m.precio_unitario_usd && m.bonificacion && !m.bonificacion_usd) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Este board factura en dólares (mapeaste Precio Unitario en USD) y tiene Bonificación en pesos, pero falta Bonificación en USD. Los comprobantes en dólares se emitirían SIN descuento. Mapeá Bonificación en USD, o sacá la de pesos si no usás descuentos.',
+            path: ['mapping'],
+        });
+    }
     // Misma regla para la bonificacion: son dos importes en monedas distintas.
     // Mapear la misma columna a ambos haria que un item en dolares descuente el
     // numero cargado en pesos (o al reves), y nada lo detectaria despues.
