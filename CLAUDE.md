@@ -280,7 +280,16 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 ## Bonificación (descuento por línea)
 
 - Columna **opcional** del Mapeo Visual, a nivel **subítem**. Sin mapear no pasa nada: no hay descuento y el comportamiento es el de siempre.
-- Es un **IMPORTE**, no un porcentaje. Se aplica al **total de la línea** (cantidad × precio), **no por unidad**, y va en la **misma moneda que el precio unitario** (si la factura es en USD, el descuento es en USD — WSFEv1 expresa todos los importes en la moneda del comprobante).
+- Es un **IMPORTE**, no un porcentaje. Se aplica al **total de la línea** (cantidad × precio), **no por unidad**, y va en la **misma moneda que el precio unitario** (WSFEv1 expresa todos los importes en la moneda del comprobante).
+- **Son DOS columnas, igual que el precio**: `bonificacion` (pesos) y `bonificacion_usd`. Si el item va en dólares la app lee la de USD; si no está mapeada, cae a la de pesos. Mismo criterio y mismo lugar que `precio_unitario` / `precio_unitario_usd` — leer la columna en pesos para un comprobante en dólares daría un neto cualquiera y **nada lo detectaría después**.
+- Ya están en las dos plantillas del marketplace, con IDs distintos en cada una (`TEMPLATE_BONIF_SUBITEM_MAPPING` en `App.jsx` prueba los dos candidatos, igual que las columnas de exportación):
+
+  | Plantilla | Board de subítems | Pesos | USD |
+  |---|---|---|---|
+  | ES "Facturación" | 18410634619 | `numeric_mm5xw0w1` | `numeric_mm5xyz60` |
+  | EN "Invoicing" | 18419323354 | `numeric_mm5xv3tn` | `numeric_mm5x81` |
+
+- ⚠️ **Las columnas de fórmula del board de subítems** (`Subtotal $`, `Subtotal u$`) calculan `cantidad × precio` y **no restan la bonificación**. Hay que editarlas a mano en monday (la API no permite cambiar la fórmula de una columna existente) o el cliente ve un total en monday y otro en el PDF. `IVA` y `Total` cuelgan de `Subtotal`, así que con corregir los dos Subtotal alcanza.
 - Se detrae del **neto**: el IVA se calcula sobre lo que queda. Art. 10 de la Ley de IVA — el precio neto es el de la factura *"neto de descuentos y similares efectuados de acuerdo con las costumbres de plaza"*.
 - **SOLO facturas A, B, C y E. Las NC y ND la ignoran** aunque el board tenga la columna mapeada y los subítems de la nota la tengan cargada. El corte está en los *callers*: no le pasan `bonificacionColumnId` a `buildLinesFromSubitems` / `buildExportLinesFromSubitems`. Para habilitarla en NC/ND alcanza con pasar el parámetro.
 - **PDF**: las columnas `% Bonif` e `Imp. Bonif.` ya existían y estaban hardcodeadas en `'0,00'`. Ahora se llenan. En **B y C el precio se imprime con IVA adentro**, así que la bonificación se convierte igual (el usuario carga 1.000 → el PDF imprime 1.210) para que `precio − bonificación = subtotal` cierre. Es la regla del RCEL de AFIP: todos los números de la línea en la misma unidad. En A no hay conversión (se imprime todo neto).

@@ -279,6 +279,9 @@ export const translations = {
     "map.usdHint":
       "Columna numérica del subitem con el precio en dólares. Solo se usa para items con moneda Dólares.",
     "map.thDiscount": "Bonif.",
+    "map.discountUsd": "Bonificación USD",
+    "map.discountUsdHint":
+      "Columna numérica del subitem con el descuento en dólares. Solo se usa para items con moneda Dólares — el descuento tiene que estar en la misma moneda que el precio.",
     "map.bonificacionHint":
       "Columna numérica del subitem con el IMPORTE a descontar de esa línea (no un porcentaje). Se aplica al total de la línea —cantidad × precio—, no por unidad, y va en la misma moneda que el precio. Solo se usa en facturas: las Notas de Crédito y Débito la ignoran. Sin mapear, no se aplica ningún descuento.",
     "map.currencyWarn":
@@ -835,6 +838,9 @@ export const translations = {
     "map.usdHint":
       "Subitem numeric column with the price in dollars. Only used for items with currency Dollars.",
     "map.thDiscount": "Disc.",
+    "map.discountUsd": "Discount USD",
+    "map.discountUsdHint":
+      "Subitem numeric column with the discount in dollars. Only used for items with currency Dollars — the discount must be in the same currency as the price.",
     "map.bonificacionHint":
       "Subitem numeric column with the AMOUNT to discount from that line (not a percentage). It applies to the whole line —quantity × price—, not per unit, and uses the same currency as the price. Only used on invoices: Credit and Debit Notes ignore it. If left unmapped, no discount is applied.",
     "map.currencyWarn":

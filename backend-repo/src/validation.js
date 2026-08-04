@@ -145,9 +145,15 @@ const REQUIRED_MAPPING_FIELDS = [
 //                           ignoran aunque esté mapeada — el corte está en los
 //                           callers, que no le pasan la columna a
 //                           buildLinesFromSubitems / buildExportLinesFromSubitems.
+//   - bonificacion_usd    → par de la anterior para items en moneda extranjera,
+//                           igual que precio_unitario_usd lo es de precio_unitario.
+//                           La app lee ESTA cuando el item va en dólares: el
+//                           descuento tiene que estar en la misma moneda que el
+//                           precio o el neto declarado sale mal.
 const OPTIONAL_NC_MAPPING_FIELDS = [
     'punto_venta',
     'bonificacion',
+    'bonificacion_usd',
 ];
 
 const MappingSchema = z.object({
@@ -198,6 +204,34 @@ const MappingSchema = z.object({
             message: 'Precio Unitario (pesos) y Precio Unitario en USD deben ser columnas distintas — no podés mapear la misma columna a ambos.',
             path: ['mapping'],
         });
+    }
+    // Misma regla para la bonificacion: son dos importes en monedas distintas.
+    // Mapear la misma columna a ambos haria que un item en dolares descuente el
+    // numero cargado en pesos (o al reves), y nada lo detectaria despues.
+    if (m.bonificacion && m.bonificacion_usd && m.bonificacion === m.bonificacion_usd) {
+        ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'Bonificación (pesos) y Bonificación en USD deben ser columnas distintas — no podés mapear la misma columna a ambos.',
+            path: ['mapping'],
+        });
+    }
+    // La bonificacion tampoco puede apuntar a la columna de precio: se leerian el
+    // mismo valor como precio y como descuento, y la linea daria neto 0.
+    const bonifVsPrecio = [
+        ['bonificacion', 'precio_unitario'],
+        ['bonificacion', 'precio_unitario_usd'],
+        ['bonificacion_usd', 'precio_unitario'],
+        ['bonificacion_usd', 'precio_unitario_usd'],
+    ];
+    for (const [bonifKey, precioKey] of bonifVsPrecio) {
+        if (m[bonifKey] && m[precioKey] && m[bonifKey] === m[precioKey]) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'La columna de Bonificación no puede ser la misma que la de Precio Unitario — son dos valores distintos del subítem.',
+                path: ['mapping'],
+            });
+            break;
+        }
     }
 });
 

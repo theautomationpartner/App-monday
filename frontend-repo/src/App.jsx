@@ -210,6 +210,18 @@ const TEMPLATE_OPTIONAL_MAPPING = {
 const TEMPLATE_OPTIONAL_SUBITEM_MAPPING = {
   precio_unitario_usd: "numeric_mm344c83",
 };
+// Bonificación (descuento por línea). Va aparte del objeto de arriba porque, igual
+// que las columnas de exportación, se agregó DESPUÉS de que la plantilla EN fuera
+// clonada de la ES — así que monday le dio un ID distinto en cada una y hay que
+// probar los dos candidatos. Orden: [ES, EN].
+//   ES "Subitems of Facturación" (18410634619): Bonificación $ / Bonificación u$
+//   EN "Subitems of Invoicing"   (18419323354): Discount $     / Discount US$
+// Las instalaciones anteriores a estas columnas no las tienen — por eso se
+// pre-cargan condicionalmente, y si no hay match se cae a la detección por nombre.
+const TEMPLATE_BONIF_SUBITEM_MAPPING = {
+  bonificacion:     ["numeric_mm5xw0w1", "numeric_mm5xv3tn"],
+  bonificacion_usd: ["numeric_mm5xyz60", "numeric_mm5x81"],
+};
 
 // Column IDs de la plantilla que no son de mapeo visual pero sí de config
 const TEMPLATE_STATUS_COLUMN_ID = "status";
@@ -1153,22 +1165,37 @@ const App = () => {
       console.log(`[auto-mapeo] columnas opcionales pre-cargadas: ${Object.keys(optExtra).join(", ")}`);
     }
 
-    // Bonificación (descuento por línea): la plantilla TODAVÍA NO trae esta
-    // columna, así que no hay ID fijo que buscar — se detecta por nombre sobre las
-    // columnas numéricas del board de subítems. Va aparte de
+    // Bonificación (descuento por línea). Va aparte de
     // TEMPLATE_COLUMN_DETECTORS_SUBITEM a propósito: buildAutoMappingFromColumns
     // devuelve null si le falta CUALQUIER detector, así que meterla ahí rompería
-    // el auto-mapeo de todos los boards que no tengan la columna.
+    // el auto-mapeo de todos los boards anteriores a estas columnas.
     // Sin match queda sin mapear y las facturas salen como siempre (sin descuento).
-    if (!detectedMapping.bonificacion) {
-      const bonifCol = findColumnByDetector(subitemColumns, {
+    const bonifExtra = {};
+    // 1. Por ID de plantilla (dos candidatos: ES y EN tienen IDs distintos).
+    for (const [field, candidateIds] of Object.entries(TEMPLATE_BONIF_SUBITEM_MAPPING)) {
+      const found = candidateIds.find((colId) => subitemIds.includes(colId));
+      if (found) bonifExtra[field] = found;
+    }
+    // 2. Fallback por nombre, para boards donde la columna se creó a mano.
+    //    La de USD se busca PRIMERO: su nombre también matchea la regex de la de
+    //    pesos, así que si no la resolvemos antes se la lleva puesta.
+    if (!bonifExtra.bonificacion_usd) {
+      const usdCol = findColumnByDetector(subitemColumns, {
         type: "numbers",
-        nameRegex: /bonific|descuento|discount/i,
+        nameRegex: /(bonific|descuento|discount).*(usd|u\$|us\$|d[oó]lar)/i,
       });
-      if (bonifCol) {
-        detectedMapping = { ...detectedMapping, bonificacion: bonifCol.value };
-        console.log(`[auto-mapeo] columna de bonificación detectada por nombre: ${bonifCol.label}`);
-      }
+      if (usdCol) bonifExtra.bonificacion_usd = usdCol.value;
+    }
+    if (!bonifExtra.bonificacion) {
+      const pesosCol = subitemColumns.find((c) =>
+        c.type === "numbers"
+        && /bonific|descuento|discount/i.test(c.label || "")
+        && c.value !== bonifExtra.bonificacion_usd);
+      if (pesosCol) bonifExtra.bonificacion = pesosCol.value;
+    }
+    if (Object.keys(bonifExtra).length > 0) {
+      detectedMapping = { ...detectedMapping, ...bonifExtra };
+      console.log(`[auto-mapeo] columnas de bonificación pre-cargadas: ${Object.keys(bonifExtra).join(", ")}`);
     }
 
     // Detectar la columna File donde se va a subir el PDF de la factura emitida.
@@ -3731,6 +3758,41 @@ const App = () => {
                     </span>
                   )}
                   <span className="gd-confirm-hint">{t("map.usdHint")}</span>
+                </div>
+
+                {/* Bonificación en USD: par de la columna de Bonificación que está
+                    en la tabla de la Factura Modelo. Va acá, al lado del precio en
+                    USD, porque comparten el mismo criterio: si el item es en
+                    dólares, la app lee ESTA en vez de la de pesos. */}
+                <div className="gd-confirm-row">
+                  <span className="gd-confirm-label">
+                    {t("map.discountUsd")}
+                    <span style={{ color: "var(--ink-400)", fontWeight: 400, fontSize: 11, marginLeft: 4 }}>{t("map.subitemTag")}</span>
+                  </span>
+                  {inMappingEditMode ? (
+                    <select
+                      className={`invoice-preview-select ${mapping.bonificacion_usd ? "mapped" : "unmapped"}`}
+                      value={mapping.bonificacion_usd || ""}
+                      onChange={(e) => setMapping({ ...mapping, bonificacion_usd: e.target.value })}
+                    >
+                      <option value="">— {mapping.moneda ? t("map.onlyIfUsd") : t("map.notMapped")} —</option>
+                      {subitemNumericColumns
+                        .filter((c) => c.value !== mapping.precio_unitario
+                                    && c.value !== mapping.precio_unitario_usd
+                                    && c.value !== mapping.cantidad
+                                    && c.value !== mapping.bonificacion)
+                        .map((c) => (
+                          <option key={c.value} value={c.value}>{c.label}</option>
+                        ))}
+                    </select>
+                  ) : (
+                    <span className="gd-confirm-value">
+                      {subitemNumericColumns.find((c) => c.value === mapping.bonificacion_usd)?.label || (
+                        <em style={{ color: "var(--ink-400)" }}>{t("map.notMapped")}</em>
+                      )}
+                    </span>
+                  )}
+                  <span className="gd-confirm-hint">{t("map.discountUsdHint")}</span>
                 </div>
 
                 {mapping.moneda && (!mapping.cotizacion || !mapping.precio_unitario_usd) && (

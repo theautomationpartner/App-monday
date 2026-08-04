@@ -6574,6 +6574,14 @@ async function comprobanteHandler(req, res) {
             const precioColumnId = (moneda === 'DOL' && mapping.precio_unitario_usd)
                 ? mapping.precio_unitario_usd
                 : mapping.precio_unitario;
+            // Bonificación: mismo criterio que el precio. Tiene que salir de la
+            // MISMA moneda que el precio de al lado — si el item es en dólares y
+            // leyéramos la columna en pesos, el neto que se declara sale cualquier
+            // cosa y nada lo detectaría. Sin columna en USD mapeada cae a la de
+            // pesos (board que factura sólo en pesos: el caso de siempre).
+            const bonificacionColumnId = (moneda === 'DOL' && mapping.bonificacion_usd)
+                ? mapping.bonificacion_usd
+                : mapping.bonificacion;
             const rawLines = subitems.map(sub => ({
                 subitem_name: sub.name || `Subitem #${sub.id}`,
                 concept:    getColumnTextById(sub.column_values, mapping.concepto) || sub.name || '',
@@ -6585,7 +6593,7 @@ async function comprobanteHandler(req, res) {
                 // Bonificación: columna OPCIONAL. Sin mapear → '' → 0 y el
                 // comportamiento es el de siempre. Ver buildLinesFromSubitems,
                 // que hace lo mismo para el resto de los comprobantes.
-                bonificacion: mapping.bonificacion ? (getColumnTextById(sub.column_values, mapping.bonificacion) || '') : '',
+                bonificacion: bonificacionColumnId ? (getColumnTextById(sub.column_values, bonificacionColumnId) || '') : '',
             }));
             const validLines = rawLines.filter(l =>
                 l.concept && toNumberOrNull(l.quantity) !== null && toNumberOrNull(l.unit_price) !== null
@@ -9598,6 +9606,12 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             const precioColumnId = (moneda.id !== 'PES' && feMapping.precio_unitario_usd)
                 ? feMapping.precio_unitario_usd
                 : feMapping.precio_unitario;
+            // Bonificación: sale de la MISMA moneda que el precio de al lado. Si el
+            // comprobante va en dólares y leyéramos la columna en pesos, el
+            // Pro_total_item no cerraría con la validación 1815 de AFIP.
+            const bonifColumnId = (moneda.id !== 'PES' && feMapping.bonificacion_usd)
+                ? feMapping.bonificacion_usd
+                : feMapping.bonificacion;
 
             // Cotización. Precedencia idéntica al flujo de A/B/C:
             //   PES → 1  ·  override del cliente en la columna → ese  ·  si no → AFIP.
@@ -9677,7 +9691,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             const feLines = await withWsfexTokenRetry((a) => buildExportLinesFromSubitems({
                 subitems: feSubitems, mapping: feMapping,
                 precioColumnId,
-                bonificacionColumnId: esNotaExpo ? null : (feMapping.bonificacion || null),
+                bonificacionColumnId: esNotaExpo ? null : (bonifColumnId || null),
                 auth: a, language: feLanguage,
             }));
 
