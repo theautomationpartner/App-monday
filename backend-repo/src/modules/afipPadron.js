@@ -374,6 +374,31 @@ async function getCondicionFiscal({ cuitAConsultar, certPem, keyPem }) {
             });
             return parseCondicionFiscal(await retry.text());
         }
+        // AFIP responde los CUIT inexistentes con HTTP 500 + SOAP Fault, NO con un
+        // 200 + errorConstancia. Sin clasificar acá, el error llegaba pelado a
+        // server.js y caía en la rama del genérico "AFIP puede estar caído o lento,
+        // reintentá" — o sea, le echábamos la culpa a AFIP de un CUIT mal tipeado.
+        //
+        // Es el caso Polifroni: su CUIT tenía el dígito verificador mal, AFIP
+        // contestó "No existe persona con ese Id", y al cliente le dijimos que
+        // esperara a que AFIP se recuperara. Esperó, nunca se arregló, y terminó
+        // facturando a mano.
+        //
+        // El marcador confiable es SRValidationException: AFIP lo usa para los
+        // errores de DATO (el id no existe / no es válido), no para sus propias
+        // caídas. Si viene eso, el problema es el número que cargó el usuario y
+        // reintentar no lo arregla nunca.
+        const faultString = xmlTag(xmlText, 'faultstring');
+        const esErrorDeDato = /SRValidationException/i.test(xmlText)
+            || /no existe persona|id.*no.*v[aá]lid|persona.*no.*encontrad/i.test(faultString || '');
+        if (faultString && esErrorDeDato) {
+            const err = new Error(`Padrón AFIP: ${faultString}`);
+            err.errorType = 'CUIT_INEXISTENTE';
+            err.padronRaw = faultString;
+            throw err;
+        }
+        // Sin fault de validación → sí es un problema del lado de AFIP y ahí el
+        // genérico "reintentá en unos minutos" es el mensaje correcto.
         throw new Error(`Padrón HTTP ${response.status}: ${xmlText.substring(0, 300)}`);
     }
 
@@ -422,7 +447,13 @@ function dniToPossibleCuits(dni) {
  * parseCondicionFiscal ya etiqueta los errores propios del padrón con errorType.
  */
 function esPadronNotFound(err) {
-    return err?.errorType === 'CONSTANCIA_ERROR' || err?.errorType === 'CUIT_INACTIVO';
+    // CUIT_INEXISTENTE va acá también: cuando se prueban los 4 prefijos de un DNI,
+    // que 3 no existan es lo normal y NO es una caída de AFIP. Sin esto, el primer
+    // prefijo inexistente se tomaba como fallo de infraestructura y abortaba la
+    // búsqueda antes de llegar al prefijo bueno.
+    return err?.errorType === 'CONSTANCIA_ERROR'
+        || err?.errorType === 'CUIT_INACTIVO'
+        || err?.errorType === 'CUIT_INEXISTENTE';
 }
 
 async function getCondicionFiscalByDoc({ documento, certPem, keyPem }) {

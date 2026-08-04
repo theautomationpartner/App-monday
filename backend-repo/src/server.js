@@ -946,6 +946,38 @@ function checkReceptorWriteBackMapped(mapping, language = 'es') {
 // `language` ('es' default | 'en'): los bullets de error se inyectan tal cual en
 // el comentario del item, así que se emiten en el idioma del board. La rama 'es'
 // es byte-idéntica a la versión histórica (clientes español intactos).
+/**
+ * Valida la fila de certificados ANTES de intentar usarla.
+ *
+ * Antes el chequeo era solo `rows.length === 0`. Pero una empresa que generó el
+ * pedido de certificado y no lo terminó de subir SÍ tiene fila (status
+ * 'pending_crt') con el .crt vacío — o sea, pasaba el chequeo y reventaba más
+ * adelante al parsear el PEM, con este mensaje llegándole al usuario:
+ *
+ *     "Invalid PEM formatted message. Revisá los datos del item y reintentá."
+ *
+ * En inglés, de una librería de criptografía, y mandándolo a revisar un item que
+ * está perfecto. Es el estado exacto de una instalación a medias: el caso más
+ * común de un cliente nuevo. Medido en el tablero de pruebas el 2026-08-04.
+ */
+function assertCertificadoUsable(rows, language = 'es') {
+    const L = (en, es) => language === 'en' ? en : es;
+    const falta = () => {
+        const err = new Error(L(
+            'AFIP certificate not uploaded for this company',
+            'Falta subir el certificado de AFIP de esta empresa'
+        ));
+        err.errorType = 'CERT_FALTANTE';
+        throw err;
+    };
+    if (!rows || rows.length === 0) falta();
+    const row = rows[0];
+    // El .crt vacío es el caso 'pending_crt': se generó el pedido y no se subió.
+    if (!row.crt_file_url || !String(row.crt_file_url).trim()) falta();
+    if (!row.encrypted_private_key || !String(row.encrypted_private_key).trim()) falta();
+    return row;
+}
+
 function validateItemDataCompleteness({ mainColumns, subitems, mapping, language = 'es' }) {
     const errors = [];
     const L = (en, es) => language === 'en' ? en : es;
@@ -6432,7 +6464,7 @@ async function comprobanteHandler(req, res) {
                 'SELECT id, crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
                 [company.id]
             );
-            if (certResult.rows.length === 0) throw new Error('Faltan certificados AFIP para este emisor');
+            assertCertificadoUsable(certResult.rows);
 
             const certRow = certResult.rows[0];
             const emisorCertPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
@@ -6528,7 +6560,12 @@ async function comprobanteHandler(req, res) {
                         // arregla. Sin clasificación (timeout, red, WSAA) sí vale la pena
                         // reintentar, ahí el genérico es correcto.
                         if (padronErr.errorType) {
-                            const hint = padronErr.errorType === 'CUIT_INACTIVO'
+                            // CUIT_INEXISTENTE es el caso más común y el que más daño hacía:
+                            // un dígito mal tipeado. Antes caía en el genérico de abajo y le
+                            // decíamos al cliente que AFIP estaba caído (caso Polifroni).
+                            const hint = padronErr.errorType === 'CUIT_INEXISTENTE'
+                                ? 'Ese CUIT no existe en AFIP: casi siempre es un dígito mal tipeado. Revisalo en la columna del item y volvé a intentar. Reintentar sin corregirlo va a dar lo mismo.'
+                                : padronErr.errorType === 'CUIT_INACTIVO'
                                 ? 'Verificá que el CUIT del receptor esté activo e inscripto en AFIP antes de reintentar.'
                                 : 'Consultá con el titular de ese CUIT — el problema está en su propio registro de AFIP, no se resuelve reintentando la emisión.';
                             throw new Error(`${padronErr.message} (doc ${receptorDocClean}). ${hint}`);
@@ -7269,7 +7306,16 @@ async function comprobanteHandler(req, res) {
                     // no quede colgado en amarillo. (Antes solo evitabamos pisar
                     // a "Error" — defensa IDVTA-153 — pero olvidabamos revertir
                     // el "Creando" intermedio.)
-                    const errStatusColId = readinessForErr?.boardConfig?.status_column_id;
+                    // OJO: no alcanza con readinessForErr. Cuando la falla ES la
+                    // configuración, readiness no devuelve boardConfig y el item quedaba
+                    // SIN MARCAR — en "Crear Comprobante", como si siguiera procesando.
+                    // El resolver busca la columna por otros dos caminos antes de rendirse.
+                    const { columnId: errStatusColId, via } = await resolverColumnaEstadoParaAviso({
+                        readiness: readinessForErr, boardId, apiToken: errToken,
+                    });
+                    if (via !== 'readiness' && errStatusColId) {
+                        console.log(`[emit] columna de estado resuelta por "${via}" — la config del tablero no la daba`);
+                    }
                     const errAutoUpdateStatus = readinessForErr?.boardConfig?.auto_update_status !== false;
                     if (errAutoUpdateStatus && errStatusColId) {
                         const targetLabel = isIdempotencyError
@@ -7929,7 +7975,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
                 [company.id]
             );
-            if (certResult.rows.length === 0) throw new Error('Faltan certificados AFIP para este emisor');
+            assertCertificadoUsable(certResult.rows);
             const certRow = certResult.rows[0];
             const emisorCertPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
             const decryptedKey  = CryptoJS.AES.decrypt(certRow.encrypted_private_key, process.env.ENCRYPTION_KEY)
@@ -9463,7 +9509,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 'SELECT crt_file_url, encrypted_private_key FROM afip_credentials WHERE company_id=$1 LIMIT 1',
                 [company.id]
             );
-            if (certResult.rows.length === 0) throw new Error('Faltan certificados AFIP para este emisor');
+            assertCertificadoUsable(certResult.rows);
             const certRow = certResult.rows[0];
             const emisorCertPem = normalizePem(certRow.crt_file_url, 'CERTIFICATE');
             const decryptedKey  = CryptoJS.AES.decrypt(certRow.encrypted_private_key, process.env.ENCRYPTION_KEY)
@@ -11163,6 +11209,54 @@ async function renameMondayItem({ apiToken, boardId, itemId, newName }) {
     } catch (err) {
         console.warn(`[rename] excepción:`, err.message);
     }
+}
+
+/**
+ * Resuelve QUÉ columna de estado usar para avisar del error, incluso cuando la
+ * configuración del tablero es justamente lo que está roto.
+ *
+ * El problema medido (tablero de pruebas, 2026-08-04): cuando la falla es de
+ * configuración, `validateEmissionReadiness` no devuelve boardConfig, así que
+ * `status_column_id` quedaba vacío y el item NUNCA se marcaba. La persona ponía
+ * "Crear Comprobante", se iba, y el item quedaba igual que antes — sin factura y
+ * sin ninguna señal de que algo falló. Solo un comentario que no sabe que existe.
+ *
+ * Se intenta en tres pasos, del más confiable al menos:
+ *   1. Lo que resolvió el readiness (camino normal).
+ *   2. La fila de board_automation_configs directa: existe aunque el mapeo o el
+ *      vínculo con la empresa estén rotos.
+ *   3. La única columna de tipo `status` del tablero. Solo si hay exactamente una:
+ *      con dos o más no adivinamos y preferimos no escribir en la equivocada.
+ */
+async function resolverColumnaEstadoParaAviso({ readiness, boardId, apiToken }) {
+    const delReadiness = readiness?.boardConfig?.status_column_id;
+    if (delReadiness) return { columnId: delReadiness, via: 'readiness' };
+
+    try {
+        const r = await db.query(
+            'SELECT status_column_id FROM board_automation_configs WHERE board_id=$1 AND status_column_id IS NOT NULL LIMIT 1',
+            [String(boardId)]
+        );
+        if (r.rows[0]?.status_column_id) return { columnId: r.rows[0].status_column_id, via: 'db' };
+    } catch (e) {
+        console.warn('[aviso-estado] no se pudo leer la config del tablero:', e.message);
+    }
+
+    if (!apiToken || !boardId) return { columnId: null, via: 'sin-datos' };
+    try {
+        const res = await fetch('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({ query: `query { boards(ids:[${Number(boardId)}]) { columns { id type } } }` }),
+        });
+        const j = await res.json();
+        const cols = (j?.data?.boards?.[0]?.columns || []).filter((c) => c.type === 'status');
+        if (cols.length === 1) return { columnId: cols[0].id, via: 'única columna de estado del tablero' };
+        console.warn(`[aviso-estado] el tablero ${boardId} tiene ${cols.length} columnas de estado — no se adivina`);
+    } catch (e) {
+        console.warn('[aviso-estado] no se pudieron leer las columnas del tablero:', e.message);
+    }
+    return { columnId: null, via: 'no resuelta' };
 }
 
 async function updateMondayItemStatus({ apiToken, boardId, itemId, statusColumnId, label }) {
