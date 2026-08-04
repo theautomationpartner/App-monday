@@ -10440,6 +10440,25 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Revisá cada subitem del item y completá los campos obligatorios: <b>Concepto</b>, <b>Cantidad</b> (número) y <b>Precio Unitario</b> (número). Si no hay subitems, creá al menos uno.',
         },
         {
+            // La validación de bonificación arma un bullet por subítem con problema.
+            // Sin esta entrada el comentario cae al fallback, que muestra SOLO la
+            // primera línea del mensaje y se come el detalle — que es justamente
+            // lo único que le sirve al usuario para saber dónde tocar.
+            match: /importes de bonificaci[oó]n/i,
+            title: 'Problemas con la bonificación de los subitems',
+            detail: subitemDetails.length > 0
+                ? 'Revisá estos subitems:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
+                : 'Alguno de los subitems tiene un importe de bonificación inválido.',
+            solucion: 'La bonificación es un <b>importe</b> (no un porcentaje), se aplica al <b>total de la línea</b> (cantidad × precio) y va en la <b>misma moneda que el precio unitario</b>. No puede ser negativa ni superar el total de la línea.',
+        },
+        {
+            match: /bonificaciones se comieron/i,
+            title: 'El comprobante quedó en cero',
+            detail: mainMsg,
+            solucion: 'Bajá los importes de bonificación para que el total sea mayor a cero — AFIP rechaza los comprobantes con total cero o negativo.',
+        },
+        {
             match: /Configuración incompleta/i,
             title: 'Configuración incompleta',
             detail: mainMsg,
@@ -10619,6 +10638,23 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             title: 'Column mapping not configured',
             detail: "The board doesn't have configured which column corresponds to each invoice field.",
             solucion: "Open the app's view → <b>Visual Mapping</b> section → select the columns and save.",
+        },
+        {
+            // Espejo de la entrada en español: sin esto el comentario muestra solo
+            // la primera línea y se pierde el detalle por subítem.
+            match: /discount amounts/i,
+            title: 'Problems with the subitem discounts',
+            detail: subitemDetails.length > 0
+                ? 'Check these subitems:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
+                : 'One of the subitems has an invalid discount amount.',
+            solucion: 'The discount is an <b>amount</b> (not a percentage), applies to the <b>whole line</b> (quantity × price) and uses the <b>same currency as the unit price</b>. It cannot be negative or exceed the line total.',
+        },
+        {
+            match: /discounts consumed the entire/i,
+            title: 'The voucher total came out as zero',
+            detail: mainMsg,
+            solucion: 'Lower the discount amounts so the total is above zero — AFIP rejects vouchers with a total of zero or less.',
         },
         {
             match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0|no valid lines/i,
