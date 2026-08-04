@@ -136,8 +136,18 @@ const REQUIRED_MAPPING_FIELDS = [
 // estas claves viajan solas; se listan acá solo como documentación:
 //   - punto_venta         → columna donde el usuario elige el punto de venta a
 //                           facturar (por ítem). Sin mapear → usa el default.
+//   - bonificacion        → columna (de SUBITEM) con el importe a descontar de esa
+//                           línea. Es un IMPORTE, no un porcentaje, se aplica al
+//                           total de la línea (cantidad × precio) y NO por unidad,
+//                           y va en la misma moneda que el precio unitario.
+//                           Sin mapear → 0 → el comportamiento es el de siempre.
+//                           SOLO aplica a FACTURAS (A, B, C y E): las NC y ND la
+//                           ignoran aunque esté mapeada — el corte está en los
+//                           callers, que no le pasan la columna a
+//                           buildLinesFromSubitems / buildExportLinesFromSubitems.
 const OPTIONAL_NC_MAPPING_FIELDS = [
     'punto_venta',
+    'bonificacion',
 ];
 
 const MappingSchema = z.object({

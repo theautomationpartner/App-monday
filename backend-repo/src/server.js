@@ -2344,7 +2344,14 @@ function extractCaeFromColumn(columnValues, columnId) {
 //   letra          — 'A' | 'B' | 'C' (C no lleva IVA)
 // Devuelve { validLines, lineas, alicuotaElegida, alicuotaConfig,
 //            importeNeto, importeIva, importeTotal }.
-function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra, language = 'es' }) {
+// `bonificacionColumnId` es OPCIONAL y el caller decide si lo pasa — mismo patrón
+// que precioColumnId. Sin él, la bonificación es 0 en todas las líneas y el
+// resultado es idéntico al de siempre.
+//
+// Esto es lo que deja a NC y ND afuera de la feature: emitNotaHandler no lo pasa,
+// así que aunque el board tenga la columna mapeada y los subítems de la nota la
+// tengan cargada, se ignora. Sin flags ni ramas condicionales.
+function buildLinesFromSubitems({ subitems, mapping, precioColumnId, bonificacionColumnId = null, letra, language = 'es' }) {
     const L = (en, es) => language === 'en' ? en : es;
     const ALICUOTA_MAP = {
         '0':    { id: 3, rate: 0 },
@@ -2362,6 +2369,7 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra, lang
         unit_price:    getColumnTextById(sub.column_values, precioColumnId),
         alicuota_iva:  mapping.alicuota_iva ? (getColumnTextById(sub.column_values, mapping.alicuota_iva) || '') : '',
         unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
+        bonificacion:  bonificacionColumnId ? (getColumnTextById(sub.column_values, bonificacionColumnId) || '') : '',
     }));
     // Una línea es válida si tiene concepto y cantidad/precio numéricos y > 0.
     // (Un precio o cantidad en 0 o negativo daría un comprobante de importe 0 o
@@ -2423,17 +2431,61 @@ function buildLinesFromSubitems({ subitems, mapping, precioColumnId, letra, lang
         );
     }
 
+    // Bonificación: importe (no porcentaje) que se descuenta del total de la línea,
+    // NO por unidad. Se detrae del NETO, así que el IVA se calcula sobre lo que
+    // queda — art. 10 de la Ley de IVA: el precio neto es el de la factura "neto de
+    // descuentos y similares efectuados de acuerdo con las costumbres de plaza".
+    // Una línea con neto negativo la rechaza AFIP con un error críptico; la cortamos acá.
+    const bonifProblemas = [];
+    for (const l of validLines) {
+        const bonif = toNumberOrNull(l.bonificacion);
+        if (bonif === null) continue;   // columna vacía en ese subítem = sin descuento
+        const bruto = (toNumberOrNull(l.quantity) || 0) * (toNumberOrNull(l.unit_price) || 0);
+        if (bonif < 0) {
+            bonifProblemas.push(L(
+                `• "${l.subitem_name}": the discount cannot be negative (${bonif.toFixed(2)}).`,
+                `• "${l.subitem_name}": la bonificación no puede ser negativa (${bonif.toFixed(2)}).`));
+        } else if (bonif > bruto + 0.01) {
+            bonifProblemas.push(L(
+                `• "${l.subitem_name}": discount ${bonif.toFixed(2)} exceeds the line total ${bruto.toFixed(2)}.`,
+                `• "${l.subitem_name}": la bonificación ${bonif.toFixed(2)} supera el total de la línea ${bruto.toFixed(2)}.`));
+        }
+    }
+    if (bonifProblemas.length > 0) {
+        throw new Error(
+            L('Problems with the discount amounts:\n', 'Problemas con los importes de bonificación:\n') +
+            bonifProblemas.join('\n') + '\n' +
+            L('The discount is an amount in the same currency as the unit price, and applies to the whole line (quantity × price) — not per unit.',
+              'La bonificación es un importe en la misma moneda que el precio unitario, y se aplica al total de la línea (cantidad × precio) — no por unidad.')
+        );
+    }
+
     const lineas = validLines.map((l) => ({
         concept:       l.concept,
         quantity:      toNumberOrNull(l.quantity) || 0,
         unit_price:    toNumberOrNull(l.unit_price) || 0,
+        bonificacion:  toNumberOrNull(l.bonificacion) || 0,
         alicuota_iva:  l.alicuota_iva || '',
         unidad_medida: l.unidad_medida || '',
     }));
-    const importeNeto  = Number(lineas.reduce((s, l) => s + l.quantity * l.unit_price, 0).toFixed(2));
+    // La bonificación se resta del bruto de la línea. El esquema de redondeo es el
+    // mismo de siempre (una sola vez, sobre el total) — sin bonificación el
+    // resultado es idéntico al que daba antes.
+    const importeNeto  = Number(lineas
+        .reduce((s, l) => s + (l.quantity * l.unit_price - l.bonificacion), 0)
+        .toFixed(2));
     const ivaRate      = (letra === 'C') ? 0 : alicuotaConfig.rate;
     const importeIva   = Number((importeNeto * ivaRate).toFixed(2));
     const importeTotal = Number((importeNeto + importeIva).toFixed(2));
+
+    // Un comprobante en 0 (o negativo) lo rechaza AFIP. Solo puede pasar si las
+    // bonificaciones se comieron el total entero.
+    if (importeTotal <= 0) {
+        throw new Error(
+            L(`The voucher total is ${importeTotal.toFixed(2)}. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.`,
+              `El total del comprobante es ${importeTotal.toFixed(2)}. Las bonificaciones se comieron el importe completo — AFIP rechaza comprobantes con total cero o negativo.`)
+        );
+    }
 
     return { validLines, lineas, alicuotaElegida, alicuotaConfig, importeNeto, importeIva, importeTotal };
 }
@@ -6530,6 +6582,10 @@ async function comprobanteHandler(req, res) {
                 prod_serv:  mapping.prod_serv ? (getColumnTextById(sub.column_values, mapping.prod_serv) || '').toLowerCase().trim() : '',
                 alicuota_iva: mapping.alicuota_iva ? (getColumnTextById(sub.column_values, mapping.alicuota_iva) || '') : '',
                 unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
+                // Bonificación: columna OPCIONAL. Sin mapear → '' → 0 y el
+                // comportamiento es el de siempre. Ver buildLinesFromSubitems,
+                // que hace lo mismo para el resto de los comprobantes.
+                bonificacion: mapping.bonificacion ? (getColumnTextById(sub.column_values, mapping.bonificacion) || '') : '',
             }));
             const validLines = rawLines.filter(l =>
                 l.concept && toNumberOrNull(l.quantity) !== null && toNumberOrNull(l.unit_price) !== null
@@ -6656,21 +6712,61 @@ async function comprobanteHandler(req, res) {
                 );
             }
 
+            // Bonificación: importe que se descuenta del total de la línea (no por
+            // unidad) y se detrae del NETO — el IVA se calcula sobre lo que queda
+            // (art. 10 Ley de IVA). Misma validación que buildLinesFromSubitems.
+            const bonifProblemas = [];
+            for (const l of validLines) {
+                const bonif = toNumberOrNull(l.bonificacion);
+                if (bonif === null) continue;   // columna vacía en ese subítem = sin descuento
+                const bruto = (toNumberOrNull(l.quantity) || 0) * (toNumberOrNull(l.unit_price) || 0);
+                if (bonif < 0) {
+                    bonifProblemas.push(readiness.boardConfig?.language === 'en'
+                        ? `• "${l.subitem_name}": the discount cannot be negative (${bonif.toFixed(2)}).`
+                        : `• "${l.subitem_name}": la bonificación no puede ser negativa (${bonif.toFixed(2)}).`);
+                } else if (bonif > bruto + 0.01) {
+                    bonifProblemas.push(readiness.boardConfig?.language === 'en'
+                        ? `• "${l.subitem_name}": discount ${bonif.toFixed(2)} exceeds the line total ${bruto.toFixed(2)}.`
+                        : `• "${l.subitem_name}": la bonificación ${bonif.toFixed(2)} supera el total de la línea ${bruto.toFixed(2)}.`);
+                }
+            }
+            if (bonifProblemas.length > 0) {
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `Problems with the discount amounts:\n${bonifProblemas.join('\n')}\n` +
+                      `The discount is an amount in the same currency as the unit price, and applies to the whole line (quantity × price) — not per unit.`
+                    : `Problemas con los importes de bonificación:\n${bonifProblemas.join('\n')}\n` +
+                      `La bonificación es un importe en la misma moneda que el precio unitario, y se aplica al total de la línea (cantidad × precio) — no por unidad.`);
+            }
+
             const lineas = validLines.map(l => ({
                 concept:       l.concept,
                 quantity:      toNumberOrNull(l.quantity) || 0,
                 unit_price:    toNumberOrNull(l.unit_price) || 0,
+                bonificacion:  toNumberOrNull(l.bonificacion) || 0,
                 alicuota_iva:  l.alicuota_iva || '',
                 unidad_medida: l.unidad_medida || '',
             }));
 
-            const importeNeto  = lineas.reduce((s, l) => s + l.quantity * l.unit_price, 0);
+            // La bonificación se resta del bruto de la línea. El redondeo queda
+            // como estaba (una sola vez, más abajo) — sin bonificación el
+            // resultado es idéntico al de antes.
+            const importeNeto  = lineas.reduce(
+                (s, l) => s + (l.quantity * l.unit_price - l.bonificacion), 0);
             // AFIP exige el desglose de IVA en el XML para A y B (emisor RI).
             // C va sin IVA porque emisor Monotributo/Exento no factura IVA.
             // discriminaIva controla solo la presentación del PDF, no el cálculo fiscal.
             const ivaRate      = (tipo === 'C') ? 0 : alicuotaConfig.rate;
             const importeIva   = Number((importeNeto * ivaRate).toFixed(2));
             const importeTotal = Number((importeNeto + importeIva).toFixed(2));
+
+            // Total 0 o negativo: AFIP lo rechaza con un error críptico. Solo se
+            // chequea si hubo bonificación — sin ella, el caso ya existía (precio 0)
+            // y no le cambiamos el comportamiento a nadie.
+            if (lineas.some(l => l.bonificacion > 0) && importeTotal <= 0) {
+                throw new Error(readiness.boardConfig?.language === 'en'
+                    ? `The invoice total is ${importeTotal.toFixed(2)}. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.`
+                    : `El total de la factura es ${importeTotal.toFixed(2)}. Las bonificaciones se comieron el importe completo — AFIP rechaza comprobantes con total cero o negativo.`);
+            }
 
             // El punto de venta (ptoVentaItem) ya se resolvió y validó en el
             // pre-flight, antes del claim/status — ver sección 2b-bis arriba.
@@ -7846,6 +7942,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             const ncPrecioColId = (facturaMoneda === 'DOL' && ncMapping.precio_unitario_usd)
                 ? ncMapping.precio_unitario_usd
                 : ncMapping.precio_unitario;
+            // OJO: a propósito NO se pasa bonificacionColumnId. La bonificación es
+            // una feature SOLO de facturas (A, B, C y E) — si el board mapeó la
+            // columna y los subítems de la nota la tienen cargada, se ignora.
+            // Si alguna vez se habilita para NC/ND, alcanza con pasarla acá.
             const ncLines = buildLinesFromSubitems({
                 language: ncLanguage,
                 subitems: ncSubitems, mapping: ncMapping,
@@ -8642,7 +8742,11 @@ async function resolveUnidadMedidaExpo(raw, auth, language) {
 //   3. Validación 1610: Imp_total tiene que ser EXACTAMENTE la suma de los
 //      Pro_total_item. Se suma en centavos enteros para que el redondeo cierre
 //      al centavo y no por acumulación de floats.
-async function buildExportLinesFromSubitems({ subitems, mapping, precioColumnId, auth, language = 'es' }) {
+// `bonificacionColumnId` es OPCIONAL y lo decide el caller — igual que en
+// buildLinesFromSubitems. El handler de exportación es UNIFICADO (Factura E, NC E
+// y ND E comparten emitFacturaEHandler), así que es ahí donde se corta: la pasa
+// solo para la factura y null para las notas.
+async function buildExportLinesFromSubitems({ subitems, mapping, precioColumnId, bonificacionColumnId = null, auth, language = 'es' }) {
     const L = (en, es) => (language === 'en' ? en : es);
 
     const rawLines = (subitems || []).map((sub) => ({
@@ -8651,6 +8755,7 @@ async function buildExportLinesFromSubitems({ subitems, mapping, precioColumnId,
         quantity:      getColumnTextById(sub.column_values, mapping.cantidad),
         unit_price:    getColumnTextById(sub.column_values, precioColumnId),
         unidad_medida: mapping.unidad_medida ? (getColumnTextById(sub.column_values, mapping.unidad_medida) || '') : '',
+        bonificacion:  bonificacionColumnId ? (getColumnTextById(sub.column_values, bonificacionColumnId) || '') : '',
     }));
 
     // Misma regla de validez que el mercado interno: concepto + cantidad y precio
@@ -8680,14 +8785,49 @@ async function buildExportLinesFromSubitems({ subitems, mapping, precioColumnId,
         );
     }
 
+    // Bonificación: acá AFIP SÍ la valida (a diferencia del mercado interno, donde
+    // no ve el detalle de líneas). Manual WSFEX v3.1.1, pág. 22:
+    //   1811 → Pro_bonificacion debe ser >= 0
+    //   1812 → si es > 0, debe ser <= Pro_precio_uni * Pro_qty
+    //   1815 → Pro_total_item = Pro_precio_uni * Pro_qty - Pro_bonificacion
+    //          (tolerancia: error relativo <= 0.01% o absoluto <= 0.01)
+    // Cortamos acá con un mensaje claro en vez de dejar que AFIP devuelva el código.
+    const bonifProblemas = [];
+    for (const l of validLines) {
+        const bonif = toNumberOrNull(l.bonificacion);
+        if (bonif === null) continue;   // columna vacía en ese subítem = sin descuento
+        const bruto = (toNumberOrNull(l.quantity) || 0) * (toNumberOrNull(l.unit_price) || 0);
+        if (bonif < 0) {
+            bonifProblemas.push(L(
+                `• "${l.subitem_name}": the discount cannot be negative (${bonif.toFixed(2)}).`,
+                `• "${l.subitem_name}": la bonificación no puede ser negativa (${bonif.toFixed(2)}).`));
+        } else if (bonif > bruto + 0.01) {
+            bonifProblemas.push(L(
+                `• "${l.subitem_name}": discount ${bonif.toFixed(2)} exceeds the line total ${bruto.toFixed(2)}.`,
+                `• "${l.subitem_name}": la bonificación ${bonif.toFixed(2)} supera el total de la línea ${bruto.toFixed(2)}.`));
+        }
+    }
+    if (bonifProblemas.length > 0) {
+        throw new Error(
+            L('Problems with the discount amounts:\n', 'Problemas con los importes de bonificación:\n') +
+            bonifProblemas.join('\n') + '\n' +
+            L('The discount is an amount in the same currency as the unit price, and applies to the whole line (quantity × price) — not per unit.',
+              'La bonificación es un importe en la misma moneda que el precio unitario, y se aplica al total de la línea (cantidad × precio) — no por unidad.')
+        );
+    }
+
     const lineas = [];
     let totalCents = 0;
     for (const l of validLines) {
         const cantidad = toNumberOrNull(l.quantity);
         const precio   = toNumberOrNull(l.unit_price);
         const umed     = await resolveUnidadMedidaExpo(l.unidad_medida, auth, language);
-        // Sin columna de bonificación en el mapeo: siempre 0 → total = qty * precio.
-        const itemCents = Math.round(cantidad * precio * 100);
+        // Sin columna de bonificación mapeada queda en 0 → total = qty * precio,
+        // exactamente como antes. Se redondea a 2 decimales para que el importe
+        // que viaja en Pro_bonificacion sea el mismo con el que calculamos el
+        // total (si no, la validación 1815 podría no cerrar).
+        const bonif = Number((toNumberOrNull(l.bonificacion) || 0).toFixed(2));
+        const itemCents = Math.round((cantidad * precio - bonif) * 100);
         totalCents += itemCents;
         lineas.push({
             concept:       l.concept,
@@ -8695,9 +8835,18 @@ async function buildExportLinesFromSubitems({ subitems, mapping, precioColumnId,
             unit_price:    precio,
             unidad_medida: l.unidad_medida || '',
             unidad_medida_afip: umed,
-            bonificacion:  0,
+            bonificacion:  bonif,
             total_item:    itemCents / 100,
         });
+    }
+
+    // Total 0 o negativo: AFIP lo rechaza. Solo puede pasar por bonificación —
+    // el filtro de líneas válidas ya exige cantidad y precio > 0.
+    if (totalCents <= 0) {
+        throw new Error(
+            L(`The voucher total is ${(totalCents / 100).toFixed(2)}. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.`,
+              `El total del comprobante es ${(totalCents / 100).toFixed(2)}. Las bonificaciones se comieron el importe completo — AFIP rechaza comprobantes con total cero o negativo.`)
+        );
     }
 
     return { lineas, importeTotal: totalCents / 100 };
@@ -9522,9 +9671,14 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                     'estás exportando (concepto, cantidad y precio).'
                 ));
             }
+            // La bonificación es una feature SOLO de facturas: las notas (NC/ND E)
+            // no la aplican aunque el board tenga la columna mapeada y los subítems
+            // de la nota la tengan cargada.
             const feLines = await withWsfexTokenRetry((a) => buildExportLinesFromSubitems({
                 subitems: feSubitems, mapping: feMapping,
-                precioColumnId, auth: a, language: feLanguage,
+                precioColumnId,
+                bonificacionColumnId: esNotaExpo ? null : (feMapping.bonificacion || null),
+                auth: a, language: feLanguage,
             }));
 
             // Observaciones propias del item (opcional).

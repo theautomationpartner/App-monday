@@ -105,7 +105,11 @@ function calcularDesgloseIva(draft) {
     for (const l of lineas) {
         const qty = Number(l.quantity || l.cantidad || 0);
         const price = Number(l.unit_price || l.precio_unitario || 0);
-        const subtotal = qty * price;
+        // Bonificación: importe que se descuenta del total de la línea. Las
+        // facturas anteriores a la feature no traen el campo en su draft_json
+        // → 0 → el neto sale igual que siempre.
+        const bonif = Number(l.bonificacion || 0);
+        const subtotal = qty * price - bonif;
         const ali = normalizeAlicuota(l.alicuota_iva) || fallbackAlicuota;
         const rate = Number(ali) / 100;
         netoGravado += subtotal;
@@ -684,7 +688,31 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
             // Cuando isMonExt: AFIP exige indicar la moneda en los headers de las
             // columnas que llevan importes (Precio Unit., Subtotal, etc.).
             const monSuffix = isMonExt ? ` (${monSym})` : '';
-            const cols = isFacturaA ? [
+            // ¿Alguna línea trae bonificación? Si no, la tabla queda EXACTAMENTE
+            // como antes de la feature — importante para los clientes que ya
+            // facturan y no mapearon la columna (y para regenerar PDFs viejos,
+            // cuyo draft_json ni siquiera tiene el campo).
+            const hayBonif = (draft.lineas || []).some(l => Number(l.bonificacion || 0) > 0);
+            // Factura A: la columna de importe bonificado solo aparece cuando hay
+            // bonificación — agregarla siempre le cambiaría el ancho de la tabla a
+            // todos. Los anchos de esta variante están rebalanceados para que la
+            // suma siga dando 1.00.
+            const cols = isFacturaA ? (hayBonif ? [
+                // El ancho extra sale de "Producto / Servicio" (0.26 → 0.18): es la
+                // única columna que wrapea sin romperse. Los rótulos de las demás
+                // entran en una línea justo con estos anchos — bajarlos más parte
+                // "Código" y "Cantidad" en dos renglones.
+                { label: L.thCodigo,                        w: W * 0.06, align: 'center' },
+                { label: L.thProdServ,                      w: W * 0.18, align: 'left'   },
+                { label: L.thCantidad,                      w: W * 0.07, align: 'right'  },
+                { label: L.thUMedida,                       w: W * 0.08, align: 'center' },
+                { label: `${L.thPrecioUnit}${monSuffix}`,   w: W * 0.11, align: 'right'  },
+                { label: L.thBonif,                         w: W * 0.06, align: 'right'  },
+                { label: `${L.thImpBonif}${monSuffix}`,     w: W * 0.09, align: 'right'  },
+                { label: `${L.thSubtotal}${monSuffix}`,     w: W * 0.11, align: 'right'  },
+                { label: L.thAlicIva,                       w: W * 0.10, align: 'center' },
+                { label: `${L.thSubtotalIva}${monSuffix}`,  w: W * 0.14, align: 'right'  },
+            ] : [
                 { label: L.thCodigo,                        w: W * 0.06, align: 'center' },
                 { label: L.thProdServ,                      w: W * 0.26, align: 'left'   },
                 { label: L.thCantidad,                      w: W * 0.07, align: 'right'  },
@@ -694,7 +722,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
                 { label: `${L.thSubtotal}${monSuffix}`,     w: W * 0.11, align: 'right'  },
                 { label: L.thAlicIva,                       w: W * 0.10, align: 'center' },
                 { label: `${L.thSubtotalIva}${monSuffix}`,  w: W * 0.14, align: 'right'  },
-            ] : [
+            ]) : [
                 { label: L.thCodigo,                        w: W * 0.08, align: 'center' },
                 { label: L.thProdServ,                      w: W * 0.30, align: 'left'   },
                 { label: L.thCantidad,                      w: W * 0.08, align: 'right'  },
@@ -731,11 +759,23 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
             for (const line of lineas) {
                 const qty = Number(line.quantity || line.cantidad || 0);
                 const price = Number(line.unit_price || line.precio_unitario || 0);
-                const subtotal = qty * price;
+                // Bonificación: importe que se descuenta del total de la línea (no
+                // por unidad). Las facturas viejas no traen el campo → 0.
+                const bonif = Number(line.bonificacion || 0);
+                const bruto = qty * price;
+                const subtotal = bruto - bonif;
+                // El % se calcula sobre el bruto de la línea. Da lo mismo en neto
+                // que en bruto, así que sirve igual para A, B y C.
+                const bonifPct = bruto > 0 ? (bonif / bruto) * 100 : 0;
                 const ali = normalizeAlicuota(line.alicuota_iva) || fallbackAlicuota;
                 const aliRate = Number(ali) / 100;
                 const priceConIva    = price * (1 + aliRate);
                 const subtotalConIva = subtotal * (1 + aliRate);
+                // En B el precio se muestra con IVA adentro, así que la bonificación
+                // se convierte igual — si no, las columnas no cerrarían (precio −
+                // bonificación ≠ subtotal). Es la misma regla que usa el RCEL de
+                // AFIP: todos los números de la línea en la misma unidad.
+                const bonifConIva    = bonif * (1 + aliRate);
 
                 cx = colLeft;
                 let vals;
@@ -747,7 +787,9 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
                         String(qty),
                         (line.unidad_medida || L.unidades).toLowerCase(),
                         fmtMoney(price),
-                        '0,00',
+                        fmtMoney(bonifPct),
+                        // La columna de importe bonificado solo existe si hayBonif
+                        ...(hayBonif ? [fmtMoney(bonif)] : []),
                         fmtMoney(subtotal),
                         `${ali}%`,
                         fmtMoney(subtotalConIva),
@@ -761,8 +803,8 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
                         String(qty),
                         (line.unidad_medida || L.unidades).toLowerCase(),
                         fmtMoney(priceConIva),
-                        '0,00',
-                        '0,00',
+                        fmtMoney(bonifPct),
+                        fmtMoney(bonifConIva),
                         fmtMoney(subtotalConIva),
                     ];
                 } else {
@@ -773,8 +815,8 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
                         String(qty),
                         (line.unidad_medida || L.unidades).toLowerCase(),
                         fmtMoney(price),
-                        '0,00',
-                        '0,00',
+                        fmtMoney(bonifPct),
+                        fmtMoney(bonif),
                         fmtMoney(subtotal),
                     ];
                 }
@@ -1116,6 +1158,7 @@ const PDF_LABELS_E = {
         fechaCorta: 'Fecha: ',
         thItem: 'Ítem', thDescripcion: 'Descripción', thCantidad: 'Cantidad',
         thPrecioUnit: 'Precio Unit.', thTotalItem: 'Total por ítem',
+        thImpBonif: 'Bonificación',
         uMedida: 'U. Medida:', observaciones: 'Observaciones:',
         tipoCambio: 'Tipo de Cambio: ', importeTotal: 'Importe Total: ',
         caeVto: 'Fecha de Vto. de CAE: ', pendiente: 'PENDIENTE',
@@ -1134,6 +1177,7 @@ const PDF_LABELS_E = {
         fechaCorta: 'Date: ',
         thItem: 'Item', thDescripcion: 'Description', thCantidad: 'Quantity',
         thPrecioUnit: 'Unit Price', thTotalItem: 'Item Total',
+        thImpBonif: 'Discount',
         uMedida: 'Unit:', observaciones: 'Remarks:',
         tipoCambio: 'Exchange Rate: ', importeTotal: 'Total Amount: ',
         caeVto: 'CAE Due Date: ', pendiente: 'PENDING',
@@ -1439,11 +1483,22 @@ async function generateFacturaEPdfBuffer({ company, draft, afipResult, language 
             y += pagoH;
 
             // ── TABLA DE ÍTEMS ───────────────────────────────────
-            // Sin columna de IVA ni de bonificación: la operación es exenta y el
-            // mapeo de exportación no tiene columna de bonificación.
+            // Sin columna de IVA: la operación de exportación es exenta.
+            // La columna de bonificación solo aparece si alguna línea la trae — el
+            // layout replica el comprobante oficial y no conviene alterarlo para
+            // quien no la usa (ni para regenerar comprobantes viejos, cuyo
+            // draft_json ni siquiera tiene el campo).
             // La moneda va en el encabezado de las columnas con importes.
             const monSuffix = ` (${monSym})`;
-            const cols = [
+            const hayBonif = (draft.lineas || []).some(l => Number(l.bonificacion || 0) > 0);
+            const cols = hayBonif ? [
+                { label: L.thItem,                        w: W * 0.06, align: 'center' },
+                { label: L.thDescripcion,                 w: W * 0.42, align: 'left'   },
+                { label: L.thCantidad,                    w: W * 0.13, align: 'right'  },
+                { label: `${L.thPrecioUnit}${monSuffix}`, w: W * 0.13, align: 'right'  },
+                { label: `${L.thImpBonif}${monSuffix}`,   w: W * 0.13, align: 'right'  },
+                { label: `${L.thTotalItem}${monSuffix}`,  w: W * 0.13, align: 'right'  },
+            ] : [
                 { label: L.thItem,                        w: W * 0.06, align: 'center' },
                 { label: L.thDescripcion,                 w: W * 0.53, align: 'left'   },
                 { label: L.thCantidad,                    w: W * 0.15, align: 'right'  },
@@ -1480,6 +1535,10 @@ async function generateFacturaEPdfBuffer({ company, draft, afipResult, language 
                     line.concept || '',
                     fmtExpoCantidad(qty),
                     fmtExpoCantidad(price),
+                    // Es el mismo importe que viajó en Pro_bonificacion. AFIP valida
+                    // que Pro_total_item = precio × cantidad − bonificación (1815),
+                    // así que las tres columnas cierran por construcción.
+                    ...(hayBonif ? [fmtExpoMoney(Number(line.bonificacion || 0))] : []),
                     fmtExpoMoney(totalItem),
                 ];
 

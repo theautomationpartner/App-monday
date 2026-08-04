@@ -1153,6 +1153,24 @@ const App = () => {
       console.log(`[auto-mapeo] columnas opcionales pre-cargadas: ${Object.keys(optExtra).join(", ")}`);
     }
 
+    // Bonificación (descuento por línea): la plantilla TODAVÍA NO trae esta
+    // columna, así que no hay ID fijo que buscar — se detecta por nombre sobre las
+    // columnas numéricas del board de subítems. Va aparte de
+    // TEMPLATE_COLUMN_DETECTORS_SUBITEM a propósito: buildAutoMappingFromColumns
+    // devuelve null si le falta CUALQUIER detector, así que meterla ahí rompería
+    // el auto-mapeo de todos los boards que no tengan la columna.
+    // Sin match queda sin mapear y las facturas salen como siempre (sin descuento).
+    if (!detectedMapping.bonificacion) {
+      const bonifCol = findColumnByDetector(subitemColumns, {
+        type: "numbers",
+        nameRegex: /bonific|descuento|discount/i,
+      });
+      if (bonifCol) {
+        detectedMapping = { ...detectedMapping, bonificacion: bonifCol.value };
+        console.log(`[auto-mapeo] columna de bonificación detectada por nombre: ${bonifCol.label}`);
+      }
+    }
+
     // Detectar la columna File donde se va a subir el PDF de la factura emitida.
     // Estrategia:
     //   1. Match exacto por ID hardcoded (la plantilla preserva ese ID al clonarla).
@@ -3824,11 +3842,19 @@ const App = () => {
                 <table className="rf-invoice-table">
                   <thead>
                     <tr>
-                      <th style={{ width: "32%" }}>{t("map.thConcept")} {mapSel("concepto", t("map.colConcepto"), "subitem")}</th>
+                      <th style={{ width: "28%" }}>{t("map.thConcept")} {mapSel("concepto", t("map.colConcepto"), "subitem")}</th>
                       <th>{t("map.thQty")} {mapSel("cantidad", t("map.colQty"), "subitem")}</th>
                       <th>{t("map.thUnit")} {mapSel("unidad_medida", t("map.optional"), "subitem")}</th>
                       <th>{t("map.thProdServ")} {mapSel("prod_serv", t("map.colProdServ"), "subitem")}</th>
                       <th>{t("map.thUnitPrice")} {mapSel("precio_unitario", t("map.colPrice"), "subitem", ["precio_unitario_usd"])}</th>
+                      {/* Bonificación: importe a descontar de la línea. Va acá y no en
+                          "Configuración opcional" para que quede al lado del precio,
+                          igual que el resto de los campos de subítem. El title explica
+                          que es un IMPORTE (la confusión más probable) y que las NC/ND
+                          la ignoran. */}
+                      <th title={t("map.bonificacionHint")}>
+                        {t("map.thDiscount")} {mapSel("bonificacion", t("map.optional"), "subitem", ["precio_unitario", "precio_unitario_usd", "cantidad"])}
+                      </th>
                       <th>{t("map.thVat")} {mapSel("alicuota_iva", t("map.optional"), "subitem")}</th>
                     </tr>
                   </thead>
@@ -3839,19 +3865,25 @@ const App = () => {
                       <td>{t("map.sampleUnit")}</td>
                       <td>{t("map.sampleServ")}</td>
                       <td className="mono">$ 180.000,00</td>
+                      {/* En formato de plata, para que se lea que es un importe y no un % */}
+                      <td className="mono">{mapping.bonificacion ? "$ 18.000,00" : "$ 0,00"}</td>
                       <td>21%</td>
                     </tr>
                     <tr className="rf-invoice-row-ghost">
-                      <td colSpan="6">{t("map.ghostRow")}</td>
+                      <td colSpan="7">{t("map.ghostRow")}</td>
                     </tr>
                   </tbody>
                 </table>
 
                 {/* Totales (solo demo) */}
+                {/* Los totales acompañan a la fila de ejemplo: con bonificación
+                    mapeada muestran 180.000 − 18.000 = 162.000 y el IVA sobre ese
+                    neto. Si no cerraran, la demo enseñaría justo lo contrario de lo
+                    que hace la factura real. */}
                 <div className="rf-invoice-totals">
-                  <div><span>{t("map.subtotal")}</span><span className="mono">$ 180.000,00</span></div>
-                  <div><span>{t("map.vat21")}</span><span className="mono">$ 37.800,00</span></div>
-                  <div className="rf-total"><span>{t("map.total")}</span><span className="mono">$ 217.800,00</span></div>
+                  <div><span>{t("map.subtotal")}</span><span className="mono">{mapping.bonificacion ? "$ 162.000,00" : "$ 180.000,00"}</span></div>
+                  <div><span>{t("map.vat21")}</span><span className="mono">{mapping.bonificacion ? "$ 34.020,00" : "$ 37.800,00"}</span></div>
+                  <div className="rf-total"><span>{t("map.total")}</span><span className="mono">{mapping.bonificacion ? "$ 196.020,00" : "$ 217.800,00"}</span></div>
                 </div>
               </div>
             </div>

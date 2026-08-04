@@ -277,6 +277,20 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 
 ---
 
+## Bonificación (descuento por línea)
+
+- Columna **opcional** del Mapeo Visual, a nivel **subítem**. Sin mapear no pasa nada: no hay descuento y el comportamiento es el de siempre.
+- Es un **IMPORTE**, no un porcentaje. Se aplica al **total de la línea** (cantidad × precio), **no por unidad**, y va en la **misma moneda que el precio unitario** (si la factura es en USD, el descuento es en USD — WSFEv1 expresa todos los importes en la moneda del comprobante).
+- Se detrae del **neto**: el IVA se calcula sobre lo que queda. Art. 10 de la Ley de IVA — el precio neto es el de la factura *"neto de descuentos y similares efectuados de acuerdo con las costumbres de plaza"*.
+- **SOLO facturas A, B, C y E. Las NC y ND la ignoran** aunque el board tenga la columna mapeada y los subítems de la nota la tengan cargada. El corte está en los *callers*: no le pasan `bonificacionColumnId` a `buildLinesFromSubitems` / `buildExportLinesFromSubitems`. Para habilitarla en NC/ND alcanza con pasar el parámetro.
+- **PDF**: las columnas `% Bonif` e `Imp. Bonif.` ya existían y estaban hardcodeadas en `'0,00'`. Ahora se llenan. En **B y C el precio se imprime con IVA adentro**, así que la bonificación se convierte igual (el usuario carga 1.000 → el PDF imprime 1.210) para que `precio − bonificación = subtotal` cierre. Es la regla del RCEL de AFIP: todos los números de la línea en la misma unidad. En A no hay conversión (se imprime todo neto).
+- Si ninguna línea tiene bonificación, la tabla sale **exactamente como antes** — en factura A la columna `Imp. Bonif.` ni siquiera aparece. Vale también para regenerar PDFs viejos, cuyo `draft_json` no tiene el campo.
+- **En mercado interno AFIP no ve nada de esto**: `FECAESolicitar` manda solo totales, sin detalle de líneas. Lo único que cambia es que el `ImpNeto` sale más chico.
+- **En Factura E AFIP SÍ valida** (manual WSFEX v3.1.1, pág. 22): **1811** (≥ 0), **1812** (≤ `Pro_precio_uni × Pro_qty`), **1815** (`Pro_total_item = Pro_precio_uni × Pro_qty − Pro_bonificacion`, tolerancia 0,01), **1817** (12 enteros y 6 decimales). Sigue vigente la **1610**: `Imp_total` = suma exacta de los `Pro_total_item`.
+- La lógica está en los **3 lugares de siempre** (`buildLinesFromSubitems`, la copia inline de la emisión de factura y `buildExportLinesFromSubitems`). Si tocás una, tocá las tres.
+
+---
+
 ## Estado actual de las versiones en monday
 
 (Snapshot 2026-05-21 — los números de versión suben en cada feature.)
