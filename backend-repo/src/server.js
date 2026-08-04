@@ -6564,7 +6564,7 @@ async function comprobanteHandler(req, res) {
                             // un dígito mal tipeado. Antes caía en el genérico de abajo y le
                             // decíamos al cliente que AFIP estaba caído (caso Polifroni).
                             const hint = padronErr.errorType === 'CUIT_INEXISTENTE'
-                                ? 'Ese CUIT no existe en AFIP: casi siempre es un dígito mal tipeado. Revisalo en la columna del item y volvé a intentar. Reintentar sin corregirlo va a dar lo mismo.'
+                                ? 'Ese CUIT no existe en AFIP. Revisá que esté bien tipeado en la columna del item — reintentar sin corregirlo va a dar lo mismo.'
                                 : padronErr.errorType === 'CUIT_INACTIVO'
                                 ? 'Verificá que el CUIT del receptor esté activo e inscripto en AFIP antes de reintentar.'
                                 : 'Consultá con el titular de ese CUIT — el problema está en su propio registro de AFIP, no se resuelve reintentando la emisión.';
@@ -10555,6 +10555,15 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // puntual de AFIP (ej. "CUIT con requerimientos pendientes"), acá se
             // perdia y se mostraba siempre "puede ser caida temporal, reintenta".
             // Ahora se muestra el mensaje real (mainMsg) tal cual llego.
+            // OJO con el orden: gana la PRIMERA regla que matchea. La de "ese CUIT
+            // no existe" tiene que ir arriba de esta, porque su mensaje también
+            // contiene "Padrón AFIP" y esta genérica se lo comería.
+            match: /no existe persona con ese id|ese cuit no existe en afip/i,
+            title: 'Ese CUIT no existe en AFIP',
+            detail: mainMsg,
+            solucion: 'Abrí el item y revisá el CUIT del cliente: son 11 dígitos, sin puntos ni guiones. Un solo dígito cambiado alcanza para que AFIP no lo encuentre. Corregilo y volvé a poner el estado que dispara la emisión.',
+        },
+        {
             match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
             title: 'Error consultando el Padrón AFIP',
             detail: mainMsg,
@@ -10746,6 +10755,15 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             title: 'Invalid recipient CUIT / DNI',
             detail: mainMsg,
             solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with an <b>11-digit CUIT</b> (e.g. 20327446348) or a <b>7 or 8-digit DNI</b>. No dashes or spaces. If the sale is to an unidentified final consumer, leave the column <b>empty</b>.',
+        },
+        {
+            // OJO con el orden: gana la PRIMERA regla que matchea. La de "ese CUIT
+            // no existe" tiene que ir arriba de esta, porque su mensaje también
+            // contiene "Padrón AFIP" y esta genérica se lo comería.
+            match: /no existe persona con ese id|ese cuit no existe en afip/i,
+            title: 'Ese CUIT no existe en AFIP',
+            detail: mainMsg,
+            solucion: 'Abrí el item y revisá el CUIT del cliente: son 11 dígitos, sin puntos ni guiones. Un solo dígito cambiado alcanza para que AFIP no lo encuentre. Corregilo y volvé a poner el estado que dispara la emisión.',
         },
         {
             match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
