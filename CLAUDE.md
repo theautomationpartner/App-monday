@@ -242,7 +242,34 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 
 ---
 
+## Mensajes de error al usuario — cómo se arman (leer antes de tocar un `throw`)
+
+Todo error que llega al item de monday pasa por **`buildErrorComment`** (`server.js`). Su lógica:
+
+1. Parte el mensaje en líneas. **La primera línea es la "Causa"**.
+2. Las líneas que empiezan con `•` son el detalle por subítem.
+3. Busca el mensaje en **`KNOWN_ERRORS`** (español) o **`KNOWN_ERRORS_EN`** (inglés), dos arrays de `{ match: /regex/, title, detail, solucion }`.
+4. Si **matchea** una entrada: muestra `title` + `detail` (que puede usar los bullets) + `solucion`.
+5. Si **NO matchea**: cae al fallback, que muestra **solo la primera línea** y un texto genérico.
+
+⚠️ **La trampa:** un `throw new Error()` con detalle en varias líneas **pierde todo salvo la primera** si no está en `KNOWN_ERRORS`. Pasó con la bonificación: el comentario decía *"Problemas con los importes de bonificación:"* y cortaba ahí, justo antes de la parte que le dice al usuario qué subítem arreglar.
+
+**Al agregar un error nuevo con detalle, agregá también su entrada en los DOS arrays** y verificá que ninguna regex anterior de la lista se lo robe (gana la primera que matchea).
+
+Ejemplos de entradas que sí usan los bullets: `Item incompleto`, `no hay subitems`, `importes de bonificación`.
+
+### Errores con mensaje mejorable (pendientes)
+
+- **CAE que apunta a una NC/ND en vez de una factura**: dice *"verificá que el CAE esté bien copiado"* cuando el CAE está perfecto — el problema es que referencia una nota. La query de búsqueda excluye `invoice_type IN ('NC','ND','E','NCE','NDE')` a propósito. Ya existe el patrón a copiar: cuando el CAE es de exportación, el código detecta el caso y dice *"poné Nota De Credito E"*.
+- **"El comprobante quedó en cero"**: repite la misma frase en la causa y en la solución.
+
+---
+
 ## Cosas que ya pasaron (lecciones aprendidas)
+
+- **Automatizaciones de monday que pisan columnas al crear un item.** El board "Facturación TAP SA" (18415550350) tiene una que le pone **moneda = Dólares** y le agrega un **subítem vacío** a cada item nuevo. Resultado: 4 notas de crédito salieron emitidas como **facturas** porque la automatización también pisó `Tipo Comprobante`. Si creás items por API en un board con automatizaciones, **releé los campos después de crear** — no alcanza con mandarlos en el `create_item`.
+- **AFIP se cae y el error es suyo, no nuestro.** Un `FECompUltimoAutorizado HTTP 503` es AFIP caído. Se confirma en 5 segundos con el `FEDummy`, que no pide autenticación: `POST https://servicios1.afip.gov.ar/wsfev1/service.asmx` con `SOAPAction: http://ar.gov.afip.dif.FEV1/FEDummy` — si `AppServer`/`DbServer`/`AuthServer` no dicen OK, hay que esperar.
+- **CUIT de receptor inexistente:** el `30000000007` que traen los items de ejemplo NO existe en el padrón, y la emisión muere ahí con un error de padrón antes de cualquier validación nuestra. Para pruebas conviene **dejar el CUIT vacío** (consumidor final): así ni consulta el padrón.
 
 - **`/etc/nginx/sites-enabled/tap-monday` no era un symlink al `sites-available/`** → editar uno no afectaba al otro. Lo arreglé el 2026-05-06 (ahora SÍ es symlink).
 - **Cloudflare cachea HTML por defecto.** El backend manda `Cache-Control: no-cache` para `index.html` y Cloudflare lo respeta (`cf-cache-status: DYNAMIC`). Pero browsers cachean también — si no ves un cambio, hacé Ctrl+Shift+R.
