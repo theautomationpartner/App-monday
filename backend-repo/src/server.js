@@ -10511,7 +10511,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Abrí la vista de la app → completá los pasos pendientes en <b>Mapeo Visual</b>. Asegurate de mapear todas las columnas obligatorias.',
         },
         {
-            match: /faltan certificados|certificados.*afip|falta.*crt|falta.*key/i,
+            match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip|falta.*crt|falta.*key/i,
             title: 'Faltan los certificados AFIP',
             detail: 'No se encontraron certificados digitales para autenticar con AFIP.',
             solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → cargá el archivo .crt y la clave privada (.key).',
@@ -10718,7 +10718,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "Open the app's view → complete the pending steps in <b>Visual Mapping</b>. Make sure to map all required columns.",
         },
         {
-            match: /faltan certificados|certificados.*afip|falta.*crt|falta.*key/i,
+            match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip|falta.*crt|falta.*key/i,
             title: 'Missing AFIP certificates',
             detail: 'No digital certificates were found to authenticate with AFIP.',
             solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the .crt file and the private key (.key).",
