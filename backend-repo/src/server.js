@@ -10521,6 +10521,18 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Hay que sacar uno nuevo: es el mismo trámite que hiciste la primera vez, y el paso a paso está en la vista de la app → <b>Certificados ARCA</b>. Cuando lo termines de subir, volvé a disparar la receta. Hasta entonces reintentar no sirve.',
         },
         {
+            // Errores crudos de la libreria de criptografia cuando el .crt o la .key
+            // estan danados, cruzados de distinto tramite, o pegados mal. Llegaban al
+            // usuario TAL CUAL, en ingles y sin decir de que hablan:
+            //     "Invalid PEM formatted message. Revisá los datos del item"
+            // Medido el 2026-08-05 con un certificado invalido a proposito. El item
+            // estaba perfecto; el problema era el certificado.
+            match: /invalid pem|pem formatted|too few bytes to parse DER|Cannot read.*ASN\.1|invalid.*private key|error de firma/i,
+            title: 'El certificado de ARCA no se puede leer',
+            detail: 'El archivo del certificado o el de la clave están dañados, o no son del mismo trámite. <b>No es un problema de los datos del item.</b>',
+            solucion: 'Volvé a subir el par completo en la vista de la app → <b>Certificados ARCA</b>. Tienen que ser los dos archivos que se generaron juntos: la clave (.key) y el certificado que te descargó ARCA (.crt) — uno de un trámite y otro de otro no funciona. Si no los encontrás, sacá un certificado nuevo y subí los dos.',
+        },
+        {
             match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip|falta.*crt|falta.*key/i,
             title: 'Falta subir el certificado de ARCA',
             detail: 'No hay ningún certificado cargado para esta empresa, y sin él la app no se puede identificar ante ARCA.',
