@@ -53,7 +53,101 @@ const RUNTIME_CRASH_PATTERN = /cannot read propert|reading '|of undefined|of nul
 // lado son lo mismo: algo se rompió acá y no hay nada que pueda hacer.
 const NUESTRO_PATTERN = new RegExp(`${INTERNAL_ERROR_PATTERN.source}|${RUNTIME_CRASH_PATTERN.source}`, 'i');
 
-function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
+/**
+ * Rellena los huecos ${...} de un mensaje con los datos reales del tablero.
+ *
+ * La regla de oro acá es NO INVENTAR. Si no sabemos cómo se llama la columna de
+ * estado en ESE tablero, decimos "la columna de estado" y no "la columna Estado":
+ * el cliente pudo haberla renombrado, y mandarlo a una columna que no existe es
+ * exactamente el tipo de mensaje que estuvimos sacando todo el día. El nombre
+ * exacto se usa solo cuando lo leímos del tablero.
+ *
+ * Un hueco sin dato se borra junto con el espacio que lo precede, así no quedan
+ * frases con un agujero en el medio.
+ */
+// Nombres genéricos para cuando NO leímos el nombre real de la columna en ese
+// tablero. Decir "la columna del CUIT" siempre es cierto; decir "la columna CUIT
+// Receptor" cuando el cliente la renombró manda a buscar algo que no existe.
+const NOMBRE_GENERICO = {
+    es: {
+        columna_estado: 'la columna de estado',
+        columna_cuit: 'la columna del CUIT',
+        columna_pv: 'la columna del Punto de Venta',
+        columna_punto_venta: 'la columna del Punto de Venta',
+        columna_fecha_pago: 'la columna de Fecha de Pago',
+        columna_tipo: 'la columna de Tipo de Comprobante',
+        columna_letra: 'la columna de Letra',
+        columna_alicuota: 'la columna de Alícuota IVA',
+    },
+    en: {
+        columna_estado: 'the status column',
+        columna_cuit: 'the CUIT column',
+        columna_pv: 'the Point of Sale column',
+        columna_punto_venta: 'the Point of Sale column',
+        columna_fecha_pago: 'the Payment Date column',
+        columna_tipo: 'the Voucher Type column',
+        columna_letra: 'the Letter column',
+        columna_alicuota: 'the VAT Rate column',
+    },
+};
+
+function rellenarDatos(texto, meta = {}, language = 'es') {
+    const isEn = language === 'en';
+    const gen = NOMBRE_GENERICO[isEn ? 'en' : 'es'];
+
+    // Las columnas se muestran en negrita SOLO cuando tenemos el nombre real.
+    const valores = { ...meta };
+    for (const clave of Object.keys(gen)) {
+        valores[clave] = meta[clave]
+            ? (isEn ? `the <b>${meta[clave]}</b> column` : `la columna <b>${meta[clave]}</b>`)
+            : gen[clave];
+    }
+    valores.estado_disparo = meta.estado_disparo || (isEn ? 'Create Voucher' : 'Crear Comprobante');
+
+    // Se trabaja oración por oración: si a UNA le falta un dato, se cae esa sola y
+    // el resto del mensaje se entiende igual. Reemplazar el hueco por nada dejaría
+    // frases mutiladas ("Revisá el CUIT  en la columna : son 11 dígitos"), que es
+    // peor que no decir la frase.
+    return String(texto)
+        .split('\n')
+        .map(parrafo => parrafo
+            .split(/(?<=[.:»])\s+/)
+            .filter(oracion => {
+                const huecos = oracion.match(/\$\{(\w+)\}/g) || [];
+                return huecos.every(h => {
+                    const v = valores[h.slice(2, -1)];
+                    return v !== undefined && v !== null && v !== '';
+                });
+            })
+            .join(' '))
+        .filter(p => p.trim())
+        .join('<br/>')
+        .replace(/\$\{(\w+)\}/g, (_, clave) => valores[clave]);
+}
+
+/**
+ * Saca del propio texto del error los datos que el mensaje necesita nombrar.
+ *
+ * Es más confiable que pasarlos desde el handler: el mensaje ya los tiene (AFIP
+ * los devolvió ahí) y no hay que plomearlos por cinco funciones para que lleguen.
+ * Lo que no aparezca queda sin definir y su oración se descarta sola.
+ */
+function derivarDatosDelError(msg) {
+    const t = String(msg || '');
+    const d = {};
+    const cuitRec = t.match(/\((?:doc|CUIT)\s+(\d{7,11})\)/i);
+    if (cuitRec) d.doc_receptor = cuitRec[1];
+    const cuitEmi = t.match(/cuit=(\d{11})/i);
+    if (cuitEmi) d.cuit_emisor = cuitEmi[1];
+    // El motivo que dio AFIP, sin el prefijo nuestro ni el CUIT del final.
+    const motivo = t.match(/^Padr[oó]n AFIP(?: error)?:\s*([^\n(]+?)\s*(?:\(|$)/i);
+    if (motivo) d.motivo_afip = motivo[1].trim();
+    const pv = t.match(/^El Punto de Venta "([^"]*)"|^The Point of Sale "([^"]*)"/);
+    if (pv) d.pv_raw = pv[1] || pv[2];
+    return d;
+}
+
+function buildErrorComment(err, displayKind = 'comprobante', language = 'es', meta = {}) {
     const msg = err?.message || 'Error desconocido';
     const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
 
@@ -68,6 +162,15 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // El detalle de QUÉ columnas faltan viene en los bullets del mensaje.
             match: /Item incompleto|Item incomplete/i,
             title: 'Faltan datos en el item',
+            // Forma nueva (aprobada): la acción primero. Es el error más frecuente
+            // que medimos — 47 veces — y el que más se beneficia de que la primera
+            // línea diga qué hacer en vez de por qué falló.
+            accion: 'Completá lo que está marcado con ❌ acá abajo y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: subitemDetails.length > 0
+                ? subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>') +
+                  '<br/><br/>No se emitió nada.'
+                : 'Hay campos obligatorios sin completar en el item o en sus subitems.<br/><br/>No se emitió nada.',
+            detalle: 'Si alguna de esas columnas no te aparece en el item, revisá el <b>Mapeo Visual</b> en la vista de la app.',
             detail: subitemDetails.length > 0
                 ? 'Completá estas columnas (vacías o con datos inválidos) y volvé a disparar la receta:<br/><br/>' +
                   subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
@@ -208,6 +311,12 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         {
             match: /padrón.*error|padron.*error|padrón.*falló|padron.*fallo/i,
             title: 'Error consultando el Padrón AFIP',
+            // Forma nueva (aprobada). 22 veces medido. El CUIT y el motivo salen del
+            // propio mensaje (derivarDatosDelError): AFIP los manda ahí adentro.
+            accion: 'Revisá el CUIT ${doc_receptor} en ${columna_cuit}: son 11 dígitos, sin puntos ni guiones. Corregilo y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'AFIP contestó: «${motivo_afip}». Si el número está bien escrito, lo tiene que regularizar tu cliente.\n' +
+                'Si la venta es a consumidor final sin identificar, dejá ${columna_cuit} vacía y emitís igual. Ojo: sale otro comprobante y tu cliente no lo va a poder usar para descargar IVA.',
             detail: mainMsg,
             solucion: 'Si el mensaje de arriba señala un problema puntual del CUIT (inactivo, con requerimientos pendientes, etc.), lo tiene que resolver el titular de ese CUIT directamente con AFIP — reintentar no alcanza. Si no da mayor detalle, puede ser una caída temporal de AFIP: esperá unos minutos y reintentá.',
         },
@@ -261,12 +370,28 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // crudo. Ahora los dos casos van al mismo lugar, que es lo correcto.
             match: /^No se pudo consultar el padr[oó]n de AFIP para el (receptor|emisor) \(/i,
             title: 'AFIP no contestó sobre ese CUIT',
+            // Forma nueva (aprobada). 22 veces medido.
+            accion: 'Esperá unos minutos y volvé a poner ${columna_estado} en "${estado_disparo}" sin tocar nada más. AFIP no contestó.',
+            estado: 'No se emitió nada.',
+            detalle: 'No toques ${columna_cuit}: el dato del cliente está bien, el que no contesta es AFIP.',
+            soporte: 'Si a la media hora sigue sin salir,',
             detail: 'La app le preguntó a AFIP por los datos del cliente y AFIP no respondió. <b>No es un problema del dato que cargaste</b>: el número está bien formado, el que no contesta es AFIP.',
             solucion: 'Esperá unos minutos y volvé a disparar la receta sin tocar nada del item. Si a la media hora sigue igual, avisá al soporte de la app.',
         },
         {
             match: /no autorizado a acceder al servicio|computador no autorizado/i,
             title: 'Falta habilitar la facturación en AFIP',
+            // Forma nueva (aprobada). 13 veces medido, y las 13 leyendo "AFIP no está
+            // respondiendo, esperá 30 minutos" cuando esperar no lo arregla nunca.
+            accion: 'Tenés que darle permiso al certificado en AFIP. Es un trámite de una sola vez y esperar no lo arregla.',
+            pasos: [
+                'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación.',
+                'En "Servicio" seguí este camino: AFIP → WebServices → <b>Facturación Electrónica</b>. Está escrito así, mitad en inglés, porque lo nombró AFIP.',
+                'En "Representante" elegí el certificado que ya cargaste en la app.',
+                'Confirmá y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            ],
+            estado: 'No se emitió nada.',
+            detalle: 'Si tu certificado no aparece en esa lista de AFIP, revisá con qué CUIT lo generaste. Tiene que ser el ${cuit_emisor}.',
             detail: 'AFIP reconoce tu certificado, pero todavía no le diste permiso para emitir comprobantes. <b>No es una caída de AFIP: esperar no lo arregla.</b> Es un trámite de una sola vez.',
             solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. En "Servicio" seguí este camino: AFIP → WebServices → <b>Facturación Electrónica</b> (está escrito así, mitad en inglés, porque es el nombre que le puso AFIP). En "Representante" elegí el certificado que ya cargaste en la app. Confirmá y volvé a disparar la receta.',
         },
@@ -768,6 +893,39 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             fallback: "Review the item data and retry. If the error persists, contact the app's support with the item name." }
         : { issue: 'No se pudo emitir', cause: 'Causa:', fix: 'Cómo solucionarlo:',
             fallback: 'Revisá los datos del item y reintentá. Si el error persiste, contactá al soporte de la app indicando el nombre del item.' };
+
+    // ── Forma nueva: la acción primero ──────────────────────────────────────
+    // La forma vieja abre con la causa y deja la instrucción al final. La persona
+    // que abre el item quiere saber QUÉ HACER; el por qué es secundario y muchas
+    // veces ni le interesa. Si solo lee el primer renglón, con la forma nueva ya
+    // puede resolver.
+    //
+    // Convive con la vieja a propósito: una regla se pasa a la forma nueva cuando
+    // tiene su texto escrito y aprobado. Las que no lo tienen siguen como estaban
+    // — que es correcto, solo que ordenado al revés. Nunca hay dos listas: es la
+    // MISMA regla, con más campos.
+    if (known && known.accion) {
+        // Lo que viene del handler manda; lo que se saca del texto del error rellena
+        // los huecos que quedaron.
+        const datos = { ...derivarDatosDelError(msg), ...meta };
+        const V = (t) => rellenarDatos(t, datos, language);
+        let html = `<b>❌ ${V(known.accion)}</b>`;
+
+        if (known.pasos && known.pasos.length) {
+            html += '<br/><br/>' + known.pasos
+                .map((p, i) => `&nbsp;&nbsp;<b>${i + 1}.</b>&nbsp;&nbsp;${V(p)}`)
+                .join('<br/><br/>');
+        }
+        // El estado va SIEMPRE: "no se emitió nada" es lo primero que se pregunta
+        // el que ve un error de facturación, y no decirlo lo obliga a ir a AFIP a
+        // fijarse.
+        html += `<br/><br/>${V(known.estado || (isEn ? 'Nothing was issued.' : 'No se emitió nada.'))}`;
+        if (known.detalle) html += `<br/><br/>${V(known.detalle)}`;
+        // El soporte va SOLO donde está declarado. Ofrecerlo cuando la persona
+        // puede resolverlo sola le da permiso para no intentarlo.
+        if (known.soporte) html += `<br/><br/>${V(known.soporte)} escribinos a <b>arca@theautomationpartner.com</b>.`;
+        return html;
+    }
 
     if (known) {
         return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +

@@ -142,7 +142,7 @@
  {
   "origen": "server.js:6028",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: en• Choose a value in the … column: Invoice, Credit Note or Debit Note• Elegí un valor en la columna …: Factura, Nota de Crédito o Nota de Débito",
-  "esperado": "Faltan datos en el item"
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6082",
@@ -167,12 +167,12 @@
  {
   "origen": "server.js:6165",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: • …",
-  "esperado": "Faltan datos en el item"
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6184",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: en• Choose the Point of Sale in the … column• Elegí el Punto de Venta en la columna …",
-  "esperado": "Faltan datos en el item"
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6193",
@@ -197,12 +197,12 @@
  {
   "origen": "server.js:6449",
   "mensaje": "No se pudo consultar el padrón de AFIP para el emisor (CUIT …). AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.",
-  "esperado": "AFIP no contestó sobre ese CUIT"
+  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\" sin tocar nada más. AFIP no contestó."
  },
  {
   "origen": "server.js:6484",
   "mensaje": "No se pudo consultar el padrón de AFIP para el receptor (doc …). AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.",
-  "esperado": "AFIP no contestó sobre ese CUIT"
+  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\" sin tocar nada más. AFIP no contestó."
  },
  {
   "origen": "server.js:6495",
@@ -777,7 +777,7 @@
   "origen": "server.js:9361",
   "mensaje": "Item incomplete — fix the following before issuing:",
   "idioma": "en",
-  "esperado": "Missing item data"
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner the status column en \"Create Voucher\"."
  },
  {
   "origen": "server.js:9376",
@@ -976,5 +976,131 @@
   "mensaje": "Cannot read properties of undefined (reading 'text')",
   "idioma": "en",
   "esperado": "This one's on us"
+ },
+ {
+  "origen": "catalogo — item-incompleto-celdas",
+  "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir:\n• Concepto\n• Cantidad (subítem \"Puerta\")",
+  "idioma": "es",
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "catalogo — tipo-comprobante-no-reconocido",
+  "mensaje": "Tipo de Comprobante no reconocido: \"NC\".",
+  "idioma": "es",
+  "esperado": "Tipo de Comprobante no reconocido"
+ },
+ {
+  "origen": "catalogo — punto-venta-invalido",
+  "mensaje": "El Punto de Venta \"Casa Central\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej. 1, 5, 0005).",
+  "idioma": "es",
+  "esperado": "No pudimos leer el punto de venta"
+ },
+ {
+  "origen": "catalogo — padron-receptor-rechazado",
+  "mensaje": "Padrón AFIP error: La CUIT registra requerimientos pendientes de verificaciones. (doc 30717423867). Consultá con el titular de ese CUIT.",
+  "idioma": "es",
+  "esperado": "❌ Revisá el CUIT 30717423867 en la columna del CUIT: son 11 dígitos, sin puntos ni guiones. Corregilo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "catalogo — factura-ya-emitida-aviso",
+  "mensaje": "Factura ya emitida para este item (Factura C, Comp. Nº 91, CAE 12345678901234). Para crear una factura nueva usá un item nuevo.",
+  "idioma": "es",
+  "esperado": "Ya se emitió un comprobante para este item"
+ },
+ {
+  "origen": "catalogo — item-no-encontrado",
+  "mensaje": "Item 12345678 no encontrado en Monday",
+  "idioma": "es",
+  "esperado": "No encontramos el item o la empresa"
+ },
+ {
+  "origen": "catalogo — afip-iva-faltante",
+  "mensaje": "AFIP rechazó la factura: [10070] Si ImpNeto es mayor a 0 el objeto IVA es obligatorio.",
+  "idioma": "es",
+  "esperado": "AFIP rechazó el comprobante"
+ },
+ {
+  "origen": "catalogo — afip-numeracion-desfasada",
+  "mensaje": "AFIP rechazó la factura: [10016] El numero o fecha del comprobante no se corresponde con el siguiente a registrar",
+  "idioma": "es",
+  "esperado": "AFIP rechazó el comprobante"
+ },
+ {
+  "origen": "catalogo — fecha-pago-pasada",
+  "mensaje": "La Fecha de Pago (28/07/2026) es anterior a la fecha de emisión (29/07/2026). AFIP rechaza la Factura E con fecha de pago pasada.",
+  "idioma": "es",
+  "esperado": "Revisá la Fecha de Pago"
+ },
+ {
+  "origen": "catalogo — empresa-no-cargada",
+  "mensaje": "Empresa no encontrada para la cuenta monday.",
+  "idioma": "es",
+  "esperado": "Empresa no configurada"
+ },
+ {
+  "origen": "catalogo — certificados-faltantes",
+  "mensaje": "Faltan certificados AFIP para esta empresa.",
+  "idioma": "es",
+  "esperado": "Falta subir el certificado de ARCA"
+ },
+ {
+  "origen": "catalogo — mapeo-sin-configurar",
+  "mensaje": "Configuración incompleta. Falta: Mapeo visual de columnas del tablero · Configuración de datos fiscales",
+  "idioma": "es",
+  "esperado": "Falta configurar el mapeo de columnas"
+ },
+ {
+  "origen": "catalogo — cert-sin-permiso-facturacion",
+  "mensaje": "WSAA HTTP 500 (service=wsfe, cuit=30637662755, env=production): Computador no autorizado a acceder al servicio",
+  "idioma": "es",
+  "esperado": "❌ Tenés que darle permiso al certificado en AFIP. Es un trámite de una sola vez y esperar no lo arregla."
+ },
+ {
+  "origen": "catalogo — punto-venta-no-habilitado",
+  "mensaje": "AFIP rechazó la factura: [10005] NO AUTORIZADO A EMITIR COMPROBANTES - EL PUNTO DE VENTA NO SE ENCUENTRA AUTORIZADO",
+  "idioma": "es",
+  "esperado": "AFIP rechazó el comprobante"
+ },
+ {
+  "origen": "catalogo — afip-cuit-no-habilitado",
+  "mensaje": "AFIP rechazó la factura: [10000] NO AUTORIZADO A EMITIR COMPROBANTES - LA CUIT INFORMADA NO SE ENCUENTRA AUTORIZADA",
+  "idioma": "es",
+  "esperado": "AFIP rechazó el comprobante"
+ },
+ {
+  "origen": "catalogo — falta-permiso-exportacion",
+  "mensaje": "AFIP rechazó el acceso al web service de exportación (wsfex).\nTu certificado todavía no está delegado a ese servicio.",
+  "idioma": "es",
+  "esperado": "Falta habilitar la facturación de exportación en AFIP"
+ },
+ {
+  "origen": "catalogo — afip-sin-respuesta-datos-receptor",
+  "mensaje": "No se pudo consultar el padrón de AFIP para el receptor (doc 20215005962). AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.",
+  "idioma": "es",
+  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\" sin tocar nada más. AFIP no contestó."
+ },
+ {
+  "origen": "catalogo — afip-sin-numero-siguiente",
+  "mensaje": "No se pudo obtener último comprobante: FECompUltimoAutorizado HTTP 503",
+  "idioma": "es",
+  "esperado": "AFIP no está respondiendo correctamente"
+ },
+ {
+  "origen": "catalogo — afip-error-al-autorizar",
+  "mensaje": "FECompConsultar HTTP 500: Internal Server Error",
+  "idioma": "es",
+  "esperado": "AFIP no está respondiendo correctamente"
+ },
+ {
+  "origen": "catalogo — conexion-cortada-al-autorizar",
+  "mensaje": "fetch failed",
+  "idioma": "es",
+  "esperado": "Falla de conexión temporal con AFIP"
+ },
+ {
+  "origen": "catalogo — sesion-afip-cruzada",
+  "mensaje": "WSAA HTTP 500 (service=wsfe, cuit=30637662755, env=production): El CEE ya posee un TA valido para el acceso al WSN solicitado",
+  "idioma": "es",
+  "esperado": "AFIP no está respondiendo correctamente"
  }
 ]

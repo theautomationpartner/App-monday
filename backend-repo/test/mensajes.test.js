@@ -74,7 +74,17 @@ const causaDe = (html) => {
 const corpus = JSON.parse(fs.readFileSync(CORPUS, 'utf8'));
 const t0 = Date.now();
 
-let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0;
+let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0;
+const detalleHuecos = [];
+
+// Los datos que el handler pasa cuando pudo leer el tablero. Los nombres van a
+// propósito DISTINTOS de los de la plantilla: si el código asumiera el nombre por
+// defecto en vez de usar el real del cliente, acá se vería.
+const META_COMPLETA = {
+    columna_estado: 'Estado del Comprobante',
+    estado_disparo: 'Crear Comprobante',
+    columna_cuit: 'CUIT / DNI Receptor',
+};
 const detalleRegresion = [], detalleSinRegla = [], detalleCulpaMal = [];
 const detalleSinReglaEn = [], detalleEspanol = [];
 
@@ -100,6 +110,20 @@ for (const c of corpus) {
     if (CULPA_AFIP.test(html) && !INFRA_LEGITIMA.test(msg)) {
         culpaMal++;
         detalleCulpaMal.push({ origen: c.origen, msg: msg.slice(0, 74) });
+    }
+
+    // La forma nueva escribe el nombre real de la columna adentro de la frase. Si
+    // un dato no llega, el hueco NO puede quedar a la vista: un comentario que
+    // diga «poné ${columna_estado} en...» es peor que cualquier error.
+    // Se prueban los dos extremos — con todos los datos y sin ninguno — porque el
+    // segundo es el que ocurre cuando la config del tablero está rota, que es
+    // justo cuando más se lee el comentario.
+    for (const [nombre, datos] of [['con datos', META_COMPLETA], ['sin datos', {}]]) {
+        const h = buildErrorComment(new Error(msg), 'Factura', idioma, datos);
+        if (/\$\{/.test(h)) {
+            huecos++;
+            detalleHuecos.push({ origen: c.origen, nombre, trozo: (h.match(/.{0,40}\$\{\w+\}.{0,20}/) || [''])[0] });
+        }
     }
 
     // Los mensajes en español TAMBIÉN llegan a tableros en inglés: solo 42 de los
@@ -156,6 +180,8 @@ console.log('  en un tablero en INGLÉS:');
 console.log(`    con mensaje propio ....... ${corpus.length - sinReglaEn} de ${corpus.length}`);
 console.log(`    caen al genérico ......... ${sinReglaEn}`);
 console.log(`    con español escapado ..... ${espanolEnIngles}`);
+console.log('');
+console.log(`  huecos sin rellenar a la vista ... ${huecos}`);
 
 if (detalleSinRegla.length) {
     console.log('\n  LOS QUE CAEN AL GENÉRICO (el usuario lee "revisá los datos" sin saber cuáles):');
@@ -182,6 +208,14 @@ if (regresiones > 0) {
 }
 if (culpaMal > 0) {
     console.log(`FALLA: ${culpaMal} error(es) le echan la culpa a AFIP y no corresponde.`);
+    process.exit(1);
+}
+if (detalleHuecos.length) {
+    console.log('\n  MENSAJES CON UN HUECO A LA VISTA DEL USUARIO:');
+    detalleHuecos.forEach(d => console.log(`     [${d.nombre}] ${d.origen.padEnd(30)} "...${d.trozo}..."`));
+}
+if (huecos > 0) {
+    console.log(`FALLA: ${huecos} mensaje(s) le dejan un hueco sin rellenar a la vista del usuario.`);
     process.exit(1);
 }
 if (espanolEnIngles > 0) {

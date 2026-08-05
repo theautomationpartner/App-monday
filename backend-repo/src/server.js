@@ -6035,6 +6035,12 @@ async function comprobanteHandler(req, res) {
         // el mensaje con el copy correcto cuando el delegado tire un error
         // sincrono antes del setImmediate interno del wrapper.
         let displayKind = 'Factura';
+        // Las columnas del item, guardadas ACÁ AFUERA del try a propósito: el catch
+        // las necesita para poder nombrar en el comentario la columna de estado tal
+        // como se llama en ESE tablero. Declararlas adentro del try las deja fuera
+        // de scope justo donde hacen falta — el mismo bug que ya nos pasó con
+        // `readiness` y dejó el feedback de error fallando en silencio.
+        let mainColumnsParaError = null;
 
         try {
             markStart('preflight');
@@ -6068,6 +6074,7 @@ async function comprobanteHandler(req, res) {
             if (!company) throw new Error('Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.');
 
             const { mainColumns, subitems } = itemData;
+            mainColumnsParaError = mainColumns;
             itemSourceName = itemData?.name || null;
             if (!boardId) boardId = itemData.boardId;
             if (!boardId) throw new Error(`No se pudo resolver boardId para item ${itemId}`);
@@ -7295,7 +7302,11 @@ async function comprobanteHandler(req, res) {
                     // de error fallaba en silencio y el item no mostraba nada.)
                     const readinessForErr = await validateEmissionReadiness({ mondayAccountId: accountId, boardId }).catch(() => null);
 
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind, language: readinessForErr?.boardConfig?.language });
+                    await postMondayErrorComment({
+                        apiToken: errToken, itemId, error: err, displayKind,
+                        language: readinessForErr?.boardConfig?.language,
+                        meta: datosDelTableroParaComentario(readinessForErr, mainColumnsParaError),
+                    });
 
                     // Si NO es idempotencia → marcar el item como "Error".
                     // Si SI es idempotencia → la fila DB ya esta en success, pero
@@ -7632,6 +7643,10 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         let errorLabel       = COMPROBANTE_STATUS_FLOW.error;
         let processingLabel  = COMPROBANTE_STATUS_FLOW.processing;
         let ncLanguage       = 'es'; // idioma del board (para el PDF de la NC/ND)
+        let triggerLabel     = COMPROBANTE_STATUS_FLOW.trigger;
+        // Fuera del try: el catch las usa para nombrar la columna de estado tal
+        // como se llama en ese tablero cuando arma el comentario del error.
+        let ncItemColumns    = [];
 
         try {
             // ── 1. Token de Monday ─────────────────────────────────────────────
@@ -7645,7 +7660,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // Esas columnas las necesitamos para leer la columna de CAE de
             // referencia y la de Tipo de Comprobante (ver paso 3). La empresa
             // se resuelve por board (multi-empresa).
-            let ncItemColumns = [];
+            ncItemColumns     = [];
             let ncSubitems    = [];
             try {
                 const ncItemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
@@ -7691,6 +7706,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     successLabel    = cfgRes.rows[0].success_label    || flowNc.success;
                     errorLabel      = cfgRes.rows[0].error_label      || flowNc.error;
                     processingLabel = cfgRes.rows[0].processing_label || flowNc.processing;
+                    triggerLabel    = cfgRes.rows[0].trigger_label    || flowNc.trigger;
                 }
             } catch (cfgErr) {
                 console.warn('[nc] no se pudo leer board config para status:', cfgErr.message);
@@ -8424,7 +8440,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 const errToken = req.mondayAutomation?.shortLivedToken
                     || await getStoredMondayUserApiToken({ mondayAccountId: accountId });
                 if (errToken && itemId) {
-                    await postMondayErrorComment({ apiToken: errToken, itemId, error: err, displayKind: docLabel, language: ncLanguage });
+                    await postMondayErrorComment({
+                        apiToken: errToken, itemId, error: err, displayKind: docLabel, language: ncLanguage,
+                        meta: datosDelTableroParaComentario(
+                            { boardConfig: { language: ncLanguage, trigger_label: triggerLabel, status_column_id: statusColumnId } },
+                            ncItemColumns,
+                        ),
+                    });
                     // Si NO es idempotencia → "Error". Si SI es idempotencia → restaurar a
                     // "Comprobante Creado" (la NC/ND ya existe en success; el status habia
                     // pasado a "Creando" antes del claim y quedaria colgado en amarillo si
@@ -9057,6 +9079,9 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
         let errorLabel       = COMPROBANTE_STATUS_FLOW.error;
         let processingLabel  = COMPROBANTE_STATUS_FLOW.processing;
         let feLanguage       = 'es';   // idioma de la APP (mensajes al usuario)
+        let feTriggerLabel   = COMPROBANTE_STATUS_FLOW.trigger;
+        // Fuera del try: el catch las necesita para nombrar la columna de estado.
+        let feItemColumns    = [];
 
         try {
             // ── 1. Token de Monday ─────────────────────────────────────────────
@@ -9065,7 +9090,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
             if (!mondayToken) throw new Error('No hay token de Monday para consultar el item');
 
             // ── 2. Item + empresa ──────────────────────────────────────────────
-            let feItemColumns = [];
+            feItemColumns     = [];
             let feSubitems    = [];
             try {
                 const itemData = await fetchMondayItem({ apiToken: mondayToken, itemId });
@@ -9110,6 +9135,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                     successLabel    = cfgRes.rows[0].success_label    || flowFe.success;
                     errorLabel      = cfgRes.rows[0].error_label      || flowFe.error;
                     processingLabel = cfgRes.rows[0].processing_label || flowFe.processing;
+                    feTriggerLabel  = cfgRes.rows[0].trigger_label    || flowFe.trigger;
                 }
             } catch (cfgErr) {
                 console.warn('[fe] no se pudo leer board config para status:', cfgErr.message);
@@ -10396,6 +10422,10 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                         apiToken: errToken, itemId, error: err,
                         displayKind: feLanguage === 'en' ? 'Export Invoice' : 'Factura E',
                         language: feLanguage,
+                        meta: datosDelTableroParaComentario(
+                            { boardConfig: { language: feLanguage, trigger_label: feTriggerLabel, status_column_id: statusColumnId } },
+                            feItemColumns,
+                        ),
                     });
                     // Idempotencia → restaurar a "Comprobante Creado" (la Factura E ya
                     // existe en success; el status había pasado a "Creando" antes del
@@ -10457,8 +10487,40 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
  * displayKind es el nombre user-facing del comprobante ('Factura' / 'Nota de Crédito' /
  * 'Nota de Débito'); default 'comprobante' para call sites legacy.
  */
-async function postMondayErrorComment({ apiToken, itemId, error, displayKind, language = 'es' }) {
-    const body = buildErrorComment(error, displayKind, language);
+/**
+ * Los datos del tablero que el comentario necesita nombrar.
+ *
+ * Con esto el mensaje puede decir «volvé a poner la columna Estado del Comprobante
+ * en "Crear Comprobante"» en vez del genérico. Es la diferencia entre una
+ * instrucción que se sigue sin pensar y una que hay que interpretar.
+ *
+ * Lo que NO se sepa se devuelve sin definir a propósito: buildErrorComment tiene
+ * un texto genérico para cada dato («la columna de estado») que siempre es cierto.
+ * Inventar el nombre —asumir que se llama "Estado" porque así viene en la
+ * plantilla— mandaría a buscar una columna que el cliente pudo haber renombrado.
+ */
+function datosDelTableroParaComentario(readiness, mainColumns) {
+    const cfg = readiness?.boardConfig;
+    if (!cfg) return {};
+    // getColumnLabel no sirve acá: devuelve el formato de los bullets
+    // ('"Mi Columna" (Fecha de emision)'). Adentro de una frase hace falta el
+    // título pelado, tal cual lo ve el cliente arriba de la columna.
+    const titulo = (columnId) => {
+        if (!columnId) return null;
+        const found = (mainColumns || []).find(c => c.id === columnId);
+        return found?.column?.title || null;
+    };
+    const flow = resolveStatusFlow(cfg.language);
+    const meta = { estado_disparo: cfg.trigger_label || flow.trigger };
+    const est = titulo(cfg.status_column_id);
+    if (est) meta.columna_estado = est;
+    const cuit = titulo(readiness?.mapping?.receptor_cuit);
+    if (cuit) meta.columna_cuit = cuit;
+    return meta;
+}
+
+async function postMondayErrorComment({ apiToken, itemId, error, displayKind, language = 'es', meta = {} }) {
+    const body = buildErrorComment(error, displayKind, language, meta);
     const mutation = `
         mutation {
             create_update(item_id: ${itemId}, body: ${JSON.stringify(body)}) {
