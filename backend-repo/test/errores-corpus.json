@@ -1159,5 +1159,161 @@
   "mensaje": "WSAA HTTP 500 (service=wsfe, cuit=30637662755, env=production): El CEE ya posee un TA valido para el acceso al WSN solicitado",
   "idioma": "es",
   "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — monday: rate limit",
+  "mensaje": "Complexity budget exhausted, query cost 5000 budget remaining 0",
+  "idioma": "es",
+  "esperado": "❌ Esperá un par de minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — monday: token vencido",
+  "mensaje": "Not Authenticated",
+  "idioma": "es",
+  "esperado": "❌ Abrí la vista de la app desde el tablero. Con eso se renueva el permiso solo."
+ },
+ {
+  "origen": "infra — monday: item borrado",
+  "mensaje": "ResourceNotFoundException: item not found",
+  "idioma": "es",
+  "esperado": "❌ Fijate si el item sigue en el tablero y si no borraste alguna columna de las que usa la app."
+ },
+ {
+  "origen": "infra — monday: columna borrada",
+  "mensaje": "ColumnValueException: The column does not exist",
+  "idioma": "es",
+  "esperado": "❌ Fijate si el item sigue en el tablero y si no borraste alguna columna de las que usa la app."
+ },
+ {
+  "origen": "infra — monday: 500",
+  "mensaje": "Internal server error",
+  "idioma": "es",
+  "esperado": "❌ Esperá un par de minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — pg: conexion cortada",
+  "mensaje": "Connection terminated unexpectedly",
+  "idioma": "es",
+  "esperado": "❌ Volvé a poner la columna de estado en \"Crear Comprobante\". Fue un corte de red, no un problema de tus datos."
+ },
+ {
+  "origen": "infra — pg: pool agotado",
+  "mensaje": "timeout exceeded when trying to connect",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — pg: deadlock",
+  "mensaje": "deadlock detected",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — pg: columna faltante",
+  "mensaje": "column \"foo\" does not exist",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — pg: duplicado",
+  "mensaje": "duplicate key value violates unique constraint \"idx_invoice_emissions_cae\"",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — pdfkit",
+  "mensaje": "Cannot read properties of undefined (reading 'widthOfString')",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — pdf: fuente faltante",
+  "mensaje": "ENOENT: no such file or directory, open 'fonts/Helvetica.afm'",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — TLS vencido",
+  "mensaje": "certificate has expired",
+  "idioma": "es",
+  "esperado": "❌ Sacá un certificado nuevo, subilo en la app → Certificados ARCA y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — TLS cadena rota",
+  "mensaje": "unable to verify the first certificate",
+  "idioma": "es",
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
+ },
+ {
+  "origen": "infra — DNS",
+  "mensaje": "getaddrinfo EAI_AGAIN servicios1.afip.gov.ar",
+  "idioma": "es",
+  "esperado": "❌ Volvé a poner la columna de estado en \"Crear Comprobante\". Fue un corte de red, no un problema de tus datos."
+ },
+ {
+  "origen": "infra — socket",
+  "mensaje": "socket hang up",
+  "idioma": "es",
+  "esperado": "❌ Volvé a poner la columna de estado en \"Crear Comprobante\". Fue un corte de red, no un problema de tus datos."
+ },
+ {
+  "origen": "infra — clave con passphrase",
+  "mensaje": "error:1E08010C:DECODER routines::unsupported",
+  "idioma": "es",
+  "esperado": "❌ Generá el certificado de nuevo desde la app → Certificados ARCA, sin ponerle contraseña a la clave."
+ },
+ {
+  "origen": "infra — clave que no es RSA",
+  "mensaje": "error:0909006C:PEM routines:get_name:no start line",
+  "idioma": "es",
+  "esperado": "❌ Volvé a subir el par completo en la app → Certificados ARCA y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — AFIP devuelve HTML",
+  "mensaje": "<html><head><title>Service Unavailable</title></head></html>",
+  "idioma": "es",
+  "esperado": "❌ Esperá un par de minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — AFIP XML cortado",
+  "mensaje": "Unexpected close tag\nLine: 42\nColumn: 18",
+  "idioma": "es",
+  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "infra — monday: rate limit (en)",
+  "mensaje": "Complexity budget exhausted, query cost 5000 budget remaining 0",
+  "idioma": "en",
+  "esperado": "❌ Wait a couple of minutes and set the status column back to \"Create Voucher\"."
+ },
+ {
+  "origen": "infra — monday: token vencido (en)",
+  "mensaje": "Not Authenticated",
+  "idioma": "en",
+  "esperado": "❌ Open the app's view from the board. That renews the permission on its own."
+ },
+ {
+  "origen": "infra — monday: item borrado (en)",
+  "mensaje": "ResourceNotFoundException: item not found",
+  "idioma": "en",
+  "esperado": "❌ Check whether the item is still on the board, and whether you deleted any of the columns the app uses."
+ },
+ {
+  "origen": "infra — monday: columna borrada (en)",
+  "mensaje": "ColumnValueException: The column does not exist",
+  "idioma": "en",
+  "esperado": "❌ Check whether the item is still on the board, and whether you deleted any of the columns the app uses."
+ },
+ {
+  "origen": "infra — monday: 500 (en)",
+  "mensaje": "Internal server error",
+  "idioma": "en",
+  "esperado": "❌ Wait a couple of minutes and set the status column back to \"Create Voucher\"."
+ },
+ {
+  "origen": "infra — pg: conexion cortada (en)",
+  "mensaje": "Connection terminated unexpectedly",
+  "idioma": "en",
+  "esperado": "❌ Set the status column back to \"Create Voucher\". It was a network glitch, not a problem with your data."
  }
 ]

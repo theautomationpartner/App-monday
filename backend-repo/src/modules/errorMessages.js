@@ -48,10 +48,19 @@ const INTERNAL_ERROR_PATTERN = /rowCount|no impact[oó] la fila|no se pudo seria
 // no tiene texto que buscar.
 const RUNTIME_CRASH_PATTERN = /cannot read propert|reading '|of undefined|of null|is not a function|is not defined|is not iterable|TypeError|ReferenceError|SyntaxError|RangeError|unexpected token|in JSON at position|JSON\.parse|Maximum call stack|Converting circular|Assignment to constant|Invalid array length/i;
 
-// La red final: los estados rotos que sí declaramos + los crashes que no.
-// Las dos cosas terminan en el mismo mensaje, porque para la persona del otro
-// lado son lo mismo: algo se rompió acá y no hay nada que pueda hacer.
-const NUESTRO_PATTERN = new RegExp(`${INTERNAL_ERROR_PATTERN.source}|${RUNTIME_CRASH_PATTERN.source}`, 'i');
+// Infraestructura NUESTRA rota: la base de datos, el disco del servidor, la
+// cadena de certificados de salida. Nada de esto lo escribimos nosotros — lo
+// tiran pg, el sistema de archivos o TLS — y por eso ninguno estaba cubierto:
+// los 8 caían al genérico y le decían "revisá los datos del item" a alguien
+// cuyo item estaba perfecto y cuyo problema era que se nos agotó el pool.
+const INFRA_NUESTRA_PATTERN = /timeout exceeded when trying to connect|deadlock detected|duplicate key value|violates .{0,20}constraint|relation .{0,40}does not exist|column .{0,30}does not exist|Connection terminated|too many clients|ENOENT|EACCES|EMFILE|ENOSPC|unable to verify the first certificate|self.signed certificate|UNABLE_TO_VERIFY|DEPTH_ZERO_SELF_SIGNED/i;
+
+// La red final: los estados rotos que sí declaramos, los crashes que no, y la
+// infraestructura nuestra. Las tres cosas terminan en el mismo mensaje, porque
+// para la persona del otro lado son lo mismo: algo se rompió acá y no hay nada
+// que pueda hacer.
+const NUESTRO_PATTERN = new RegExp(
+    `${INTERNAL_ERROR_PATTERN.source}|${RUNTIME_CRASH_PATTERN.source}|${INFRA_NUESTRA_PATTERN.source}`, 'i');
 
 /**
  * Rellena los huecos ${...} de un mensaje con los datos reales del tablero.
@@ -279,7 +288,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             //     "Invalid PEM formatted message. Revisá los datos del item"
             // Medido el 2026-08-05 con un certificado invalido a proposito. El item
             // estaba perfecto; el problema era el certificado.
-            match: /invalid pem|pem formatted|too few bytes to parse DER|Cannot read.*ASN\.1|invalid.*private key|error de firma/i,
+            // Se suman las firmas crudas de OpenSSL, que es lo que sale cuando el
+            // archivo no es un PEM: subir el .csr en vez del .crt, o un .txt que el
+            // Bloc de notas guardó con basura adelante.
+            match: /invalid pem|pem formatted|too few bytes to parse DER|Cannot read.*ASN\.1|invalid.*private key|error de firma|PEM routines|no start line|asn1 encoding routines/i,
             title: 'El certificado de ARCA no se puede leer',
             accion: "Volvé a subir el par completo en la app → <b>Certificados ARCA</b> y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
             estado: "No se emitió nada. <b>No es un problema de los datos del item.</b>",
@@ -773,6 +785,66 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: 'Los que aceptamos son: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E y Nota de Débito E.\nLas abreviaturas no las tomamos: NC, ND, Fact, N/C.',
             detail: mainMsg,
             solucion: 'En la columna Tipo de Comprobante dejá exactamente uno de estos, con el nombre completo: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E o Nota de Débito E. Las abreviaturas (NC, ND, Fact) no las tomamos.',
+        },
+        {
+            // monday nos corto por limite de consultas. Es transitorio y se pasa solo;
+            // la accion es esperar, no tocar el item.
+            // Se suma "Internal server error" y compañía: son las caídas genéricas
+            // de cualquier servicio externo (monday o AFIP). No dicen de quién es la
+            // culpa, pero la acción es la misma —esperar y reintentar— y eso es lo
+            // único que la persona necesita saber. Era el último que caía al
+            // genérico y le decía "revisá los datos del item".
+            match: /complexity budget|rate limit|too many requests|429|Internal server error|Bad Gateway|Gateway Time-?out|Service Unavailable/i,
+            title: "monday nos frenó por exceso de consultas",
+            accion: "Esperá un par de minutos y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada. <b>No es un problema de tus datos</b>: monday nos limitó la cantidad de consultas por minuto.",
+            detalle: "Suele pasar cuando se disparan muchos comprobantes juntos. Se destraba solo.",
+            detail: "monday limitó temporalmente las consultas de la app.",
+            solucion: "Esperá unos minutos y reintentá.",
+        },
+        {
+            // El permiso de monday se venció o se revoco. Reintentar no sirve: hay que
+            // renovar el acceso reabriendo la app.
+            match: /not authenticated|unauthorized|invalid token|token.{0,20}(expired|inv[aá]lid)/i,
+            title: "Se venció el permiso de la app en monday",
+            accion: "Abrí la vista de la app desde el tablero. Con eso se renueva el permiso solo.",
+            estado: "No se emitió nada.",
+            detalle: "Si después de abrirla sigue igual, desinstalá la app del tablero y volvé a instalarla desde el Marketplace de monday. No se pierde nada de lo configurado.",
+            detail: "El token de acceso a monday no es válido.",
+            solucion: "Abrí la vista de la app para renovar el permiso.",
+        },
+        {
+            // monday dice que el item o la columna no existen. Casi siempre es que se
+            // borro algo despues de configurar el mapeo.
+            match: /ResourceNotFoundException|ColumnValueException|column does not exist|item not found/i,
+            title: "monday no encuentra el item o una columna",
+            accion: "Fijate si el item sigue en el tablero y si no borraste alguna columna de las que usa la app.",
+            estado: "No se emitió nada.",
+            detalle: "Si borraste una columna, volvé a emparejarla en la app → <b>Mapeo Visual</b>. Si el item no está, revisá la papelera de monday.",
+            detail: "monday respondió que el recurso no existe.",
+            solucion: "Revisá que el item y las columnas mapeadas sigan existiendo.",
+        },
+        {
+            // AFIP contesto algo que no es una respuesta: una pagina de error, un XML
+            // cortado. Es una caida suya disfrazada.
+            match: /<html|Service Unavailable|Unexpected close tag|Non-whitespace before first tag|Invalid XML|mismatched tag/i,
+            title: "AFIP contestó algo que no se entiende",
+            accion: "Esperá unos minutos y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada. <b>No es un problema de tus datos</b>: AFIP devolvió una respuesta rota, que es lo que pasa cuando su servicio se está cayendo.",
+            soporte: "Si a la media hora sigue igual,",
+            detail: "AFIP devolvió una respuesta que no se pudo interpretar.",
+            solucion: "Esperá unos minutos y reintentá.",
+        },
+        {
+            // La clave privada del certificado tiene contraseña. La app no puede usarla:
+            // el usuario tiene que generar una sin contraseña.
+            match: /DECODER routines|bad decrypt|unsupported.{0,20}(cipher|algorithm)|passphrase|bad password read/i,
+            title: "La clave del certificado tiene contraseña",
+            accion: "Generá el certificado de nuevo desde la app → <b>Certificados ARCA</b>, sin ponerle contraseña a la clave.",
+            estado: "No se emitió nada.",
+            detalle: "La app firma sola cada comprobante, así que no puede escribir una contraseña. Si el asistente de la app te genera la solicitud, la clave sale sin contraseña y este problema no aparece.",
+            detail: "La clave privada está protegida con contraseña y la app no puede usarla.",
+            solucion: "Generá un certificado nuevo desde el asistente de la app.",
         },
         {
             // Bugs o estados raros NUESTROS. La persona no puede hacer nada con el
@@ -1406,6 +1478,37 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             estado: "Nothing was issued.",
             detalle: "That is where the three things AFIP requires for Factura E live: ticking that you issue exports, the export point of sale (a separate one from the domestic one) and the payment method.",
         },
+        "monday nos frenó por exceso de consultas": {
+            title: "monday throttled us for too many requests",
+            accion: "Wait a couple of minutes and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued. <b>This is not a problem with your data</b>: monday limited how many requests the app can make per minute.",
+            detalle: "It usually happens when many vouchers are triggered at once. It clears on its own.",
+        },
+        "Se venció el permiso de la app en monday": {
+            title: "The app's monday permission expired",
+            accion: "Open the app's view from the board. That renews the permission on its own.",
+            estado: "Nothing was issued.",
+            detalle: "If it is still the same afterwards, uninstall the app from the board and reinstall it from the monday Marketplace. Nothing you configured is lost.",
+        },
+        "monday no encuentra el item o una columna": {
+            title: "monday can't find the item or a column",
+            accion: "Check whether the item is still on the board, and whether you deleted any of the columns the app uses.",
+            estado: "Nothing was issued.",
+            detalle: "If you deleted a column, map it again in the app → <b>Visual Mapping</b>. If the item is gone, look in monday's recycle bin.",
+        },
+        "AFIP contestó algo que no se entiende": {
+            title: "AFIP answered something we couldn't read",
+            accion: "Wait a few minutes and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued. <b>This is not a problem with your data</b>: AFIP returned a broken response, which is what happens when their service is going down.",
+            soporte: "If it is still the same after half an hour,",
+        },
+        "La clave del certificado tiene contraseña": {
+            title: "The certificate key is password-protected",
+            accion: "Generate the certificate again from the app → <b>ARCA Certificates</b>, without setting a password on the key.",
+            estado: "Nothing was issued.",
+            detalle: "The app signs every voucher on its own, so it can't type a password. If you let the app's wizard generate the request, the key comes out without one and this doesn't happen.",
+        },
+
     };
 
 
