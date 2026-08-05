@@ -175,6 +175,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // reglas de abajo, que dicen exactamente qué hacer con esa.
             match: /^Configuraci[oó]n incompleta\. Falta:[^\n]* · |^Incomplete configuration\. Missing:[^\n]* · /,
             title: 'Falta terminar de configurar la app',
+            accion: "Abrí la app parado en este tablero y completá los pasos pendientes en <b>Mapeo Visual</b> y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
             // El número sale de contar la lista, no fijo: decir "estas tres cosas"
             // cuando son dos es exactamente el tipo de detalle que hace desconfiar
             // del resto del mensaje.
@@ -217,6 +219,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0|no valid lines in the subitems/i,
             title: 'Subitems incompletos o faltantes',
+            accion: "Completá en cada subítem el <b>Concepto</b>, la <b>Cantidad</b> y el <b>Precio Unitario</b> y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Si el item no tiene ningún subítem, creá al menos uno: cada subítem es una línea del comprobante.",
             detail: subitemDetails.length > 0
                 ? 'Los siguientes subitems tienen campos vacíos o inválidos:<br/>' +
                   subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
@@ -230,6 +235,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // lo único que le sirve al usuario para saber dónde tocar.
             match: /importes de bonificaci[oó]n|discount amounts/i,
             title: 'Problemas con la bonificación de los subitems',
+            accion: "Corregí la bonificación de los subítems marcados y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            detalle: "La bonificación es un <b>importe</b>, no un porcentaje. Se aplica al <b>total de la línea</b> (cantidad × precio) y va en la <b>misma moneda que el precio unitario</b>. No puede ser negativa ni superar el total de la línea.",
             detail: subitemDetails.length > 0
                 ? 'Revisá estos subitems:<br/><br/>' +
                   subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
@@ -239,6 +246,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /bonificaciones se comieron|discounts consumed the entire/i,
             title: 'El comprobante quedó en cero',
+            accion: "Bajá los importes de bonificación para que el total quede arriba de cero y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "AFIP rechaza los comprobantes con total cero o negativo.",
             detail: mainMsg,
             solucion: 'Bajá los importes de bonificación para que el total sea mayor a cero — AFIP rechaza los comprobantes con total cero o negativo.',
         },
@@ -271,6 +281,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // estaba perfecto; el problema era el certificado.
             match: /invalid pem|pem formatted|too few bytes to parse DER|Cannot read.*ASN\.1|invalid.*private key|error de firma/i,
             title: 'El certificado de ARCA no se puede leer',
+            accion: "Volvé a subir el par completo en la app → <b>Certificados ARCA</b> y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada. <b>No es un problema de los datos del item.</b>",
+            detalle: "Tienen que ser los dos archivos que se generaron juntos: la clave (.key) y el certificado que te descargó ARCA (.crt). Uno de un trámite y otro de otro no funciona. Si no los encontrás, sacá un certificado nuevo y subí los dos.",
             detail: 'El archivo del certificado o el de la clave están dañados, o no son del mismo trámite. <b>No es un problema de los datos del item.</b>',
             solucion: 'Volvé a subir el par completo en la vista de la app → <b>Certificados ARCA</b>. Tienen que ser los dos archivos que se generaron juntos: la clave (.key) y el certificado que te descargó ARCA (.crt) — uno de un trámite y otro de otro no funciona. Si no los encontrás, sacá un certificado nuevo y subí los dos.',
         },
@@ -321,6 +334,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // matcheaban cualquier mensaje con "corresponde" + una a/b/c suelta.
             match: /tipo de factura incorrecto/i,
             title: 'Tipo de factura incorrecto',
+            accion: "Revisá la <b>Condición IVA</b> de tu empresa en la app → <b>Datos Fiscales</b>, y el CUIT del cliente en el item y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "La app le pregunta a AFIP la condición del cliente para decidir si corresponde A, B o C. Si alguno de esos dos datos está mal, sale la letra equivocada.",
             detail: mainMsg,
             solucion: 'Revisá dos cosas:<br/>&nbsp;&nbsp;1) En la app, abrí <b>Datos Fiscales</b> y confirmá que la <b>Condición IVA</b> de tu empresa esté bien cargada (Responsable Inscripto, Monotributo, etc.).<br/>&nbsp;&nbsp;2) En el item, confirmá que el <b>CUIT del receptor</b> sea correcto. La app consulta automáticamente a AFIP la condición del receptor para decidir si corresponde A, B o C.',
         },
@@ -338,12 +354,18 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // solo con la suya.
             match: /este item ya emiti[oó]|this item already issued/i,
             title: 'Este item ya tiene un comprobante',
+            accion: "Creá un <b>item nuevo</b> en el tablero y poné ${columna_estado} en \"${estado_disparo}\" ahí.",
+            estado: "No se emitió otro, a propósito: cada item corresponde a un solo comprobante.",
+            detalle: "Si lo que querés es la Nota de Crédito de esta factura, también va en un item nuevo: se referencia por el CAE.",
             detail: mainMsg,
             solucion: 'Cada item corresponde a <b>un solo comprobante</b>. Para emitir otro — o la Nota de Crédito de esta factura — creá un <b>item nuevo</b> en el tablero. La NC referencia la factura por su CAE.',
         },
         {
             match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
             title: 'CUIT / DNI del receptor inválido',
+            accion: "Completá ${columna_cuit} con un <b>CUIT de 11 dígitos</b> o un <b>DNI de 7 u 8</b>, sin guiones ni espacios y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Si la venta es a consumidor final sin identificar, dejá esa columna <b>vacía</b> y se emite igual.",
             detail: mainMsg,
             solucion: 'Completá la columna <b>CUIT / DNI Receptor</b> del item con un <b>CUIT de 11 dígitos</b> (ej: 20327446348) o un <b>DNI de 7 u 8</b>. Sin guiones ni espacios. Si la operación es a consumidor final sin identificar, dejá la columna <b>vacía</b>.',
         },
@@ -359,6 +381,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // contiene "Padrón AFIP" y esta genérica se lo comería.
             match: /no existe persona con ese id|ese cuit no existe en afip/i,
             title: 'Ese CUIT no existe en AFIP',
+            accion: "Revisá el CUIT del cliente en ${columna_cuit}: son 11 dígitos, sin puntos ni guiones y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Un solo dígito cambiado alcanza para que AFIP no lo encuentre.",
             detail: mainMsg,
             solucion: 'Abrí el item y revisá el CUIT del cliente: son 11 dígitos, sin puntos ni guiones. Un solo dígito cambiado alcanza para que AFIP no lo encuentre. Corregilo y volvé a poner el estado que dispara la emisión.',
         },
@@ -411,6 +436,11 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // AFIP habia contestado perfecto y con los motivos del rechazo.
             match: /\[wsfex:\w+\]\s*\[\d+\]|\[wsfex:\w+\]\s*AFIP rechaz[oó]/i,
             title: 'AFIP rechazó la Factura E',
+            accion: "Corregí en el item el dato que menciona AFIP acá abajo y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: 'No se emitió nada: AFIP contestó y no lo aceptó, así que no hay número quemado.<br/><br/>Lo que dijo AFIP:<br/>' +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^\[wsfex:\w+\]\s*/, '')}`,
+            detalle: 'Suele ser el país de destino, la fecha de pago o el domicilio del cliente.',
+            soporte: "Si el mensaje de AFIP no te dice nada,",
             detail: 'AFIP respondió, pero no aceptó el comprobante. <b>No se emitió</b> (no hay número quemado).<br/><br/>' +
                 'Lo que dijo AFIP:<br/>' +
                 `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^\[wsfex:\w+\]\s*/, '')}`,
@@ -539,6 +569,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // importes y CUITs con un "500" adentro que disparaban el /afip.*500/.
             match: /AFIP rechaz[oó] (la factura|el comprobante|la Nota).*\[\d{4,5}\]/i,
             title: 'AFIP rechazó el comprobante',
+            accion: "Corregí lo que menciona AFIP acá abajo. <b>No es una caída suya: es una regla, y reintentar sin cambiar nada va a dar lo mismo.</b>",
+            // El texto de AFIP va en el `estado`, no en el `detalle`, para que quede
+            // pegado a la acción: si la acción dice "lo que menciona AFIP acá abajo",
+            // abajo tiene que estar AFIP y no nuestra explicación.
+            estado: 'No se emitió nada y no se gastó ningún número.<br/><br/>Lo que dijo AFIP:<br/>' +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^AFIP rechaz[oó] [^:]*:\s*/i, '')}`,
+            detalle: "Si habla del punto de venta, revisá que esté dado de alta en AFIP para facturación electrónica. Si habla del CUIT, mirá qué comprobantes tenés habilitados en afip.gob.ar → Comprobantes en línea. Si habla de IVA o de importes, revisá los subítems.",
             detail: 'AFIP contestó y no lo aceptó. <b>No se emitió nada</b> y no se gastó ningún número.<br/><br/>Lo que dijo AFIP:<br/>' +
                 `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^AFIP rechaz[oó] [^:]*:\s*/i, '')}`,
             solucion: 'Esto no es una caída de AFIP: es una regla suya. Si el mensaje menciona el punto de venta, revisá que esté dado de alta en AFIP para facturación electrónica. Si menciona el CUIT, revisá qué comprobantes tenés habilitados en afip.gob.ar → Comprobantes en línea. Si menciona IVA o importes, revisá los subítems. Reintentar sin cambiar nada va a dar lo mismo.',
@@ -564,6 +601,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // otras alternativas.
             match: /^WSAA\b|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|^(FECompUltimoAutorizado|FECompConsultar|FEParamGetCotizacion|FECAESolicitar|FEParamGet\w+)\b|^No se pudo obtener [uú]ltimo comprobante|^AFIP rechazo cotizacion|\bHTTP\s+5\d\d\b|\bloginCms\b|\bFEDummy\b|\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|\btimeout tras \d+\s*ms\b|\bSOAP fault\b/i,
             title: 'AFIP no está respondiendo correctamente',
+            accion: "Esperá unos minutos y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada. <b>No es un problema de tu configuración</b>, es del lado de AFIP.",
+            detalle: "AFIP suele tener cortes breves o mantenimientos.",
+            soporte: "Si a la media hora sigue igual,",
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
             solucion: 'Esperá unos minutos y volvé a intentarlo. AFIP suele tener cortes breves o mantenimientos. Si después de 30 minutos sigue fallando, avisá al soporte de la app.',
         },
@@ -580,24 +621,36 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /^La fecha de la .* es anterior a la de la factura referenciada|^The .{0,24} date .* is earlier than the referenced invoice/i,
             title: 'La nota no puede tener fecha anterior a la factura',
+            accion: "Cambiá la Fecha de Emisión del item para que sea igual o posterior a la de la factura que estás anulando y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "AFIP no acepta una nota fechada antes que su factura.",
             detail: mainMsg,
             solucion: 'Cambiá la Fecha de Emisión del item para que sea igual o posterior a la de la factura que estás anulando. AFIP no acepta una nota fechada antes que su factura.',
         },
         {
             match: /^La unidad de medida ".*" no es una de las de AFIP|^The unit of measure ".*" is not one of AFIP/i,
             title: 'Esa unidad de medida no existe en AFIP',
+            accion: "Poné en la unidad de medida una de las que acepta AFIP y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Son estas: <b>unidades</b>, <b>kilogramos</b>, <b>metros</b>, <b>litros</b>, <b>horas</b>, <b>docenas</b>, <b>toneladas</b>. En las facturas A, B y C esta columna es texto libre y solo se imprime en el PDF, por eso ahí no molesta.",
             detail: mainMsg,
             solucion: 'En la Factura E la unidad tiene que ser una de la lista de AFIP: <b>unidades</b>, <b>kilogramos</b>, <b>metros</b>, <b>litros</b>, <b>horas</b>, <b>docenas</b>, <b>toneladas</b>. En las facturas A, B y C esta columna es texto libre y solo se imprime en el PDF, por eso ahí no molesta.',
         },
         {
             match: /hay que mapear la columna que tiene el CAE de la factura de exportaci[oó]n|you must map the column that holds the CAE/i,
             title: 'Falta emparejar la columna del CAE',
+            accion: "Abrí la app → <b>Mapeo Visual</b> → en <b>Factura de referencia</b> elegí la columna donde ponés el CAE, guardá y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Para anular una Factura E, la app necesita saber en qué columna está el CAE de la factura que se ajusta.",
             detail: 'Para anular una Factura E, la app necesita saber en qué columna del tablero está el CAE de la factura que se ajusta.',
             solucion: 'Abrí la vista de la app → <b>Mapeo Visual</b> → en <b>Factura de referencia</b> elegí la columna donde ponés el CAE, y guardá. Después volvé al item y disparalo de nuevo.',
         },
         {
             match: /AFIP no tiene un "?CUIT pa[ií]s"?|AFIP has no "?country CUIT"?/i,
             title: 'AFIP no tiene CUIT para ese país',
+            accion: "Completá la columna <b>ID impositivo del cliente</b> con el número fiscal que use tu cliente en su país y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Cuando AFIP no tiene un CUIT genérico para ese destino, ese dato pasa a ser obligatorio.",
             detail: mainMsg,
             solucion: 'Completá la columna <b>ID impositivo del cliente</b> del item con el número de identificación fiscal que use tu cliente en su país. Cuando AFIP no tiene un CUIT genérico para ese destino, ese dato pasa a ser obligatorio.',
         },
@@ -634,24 +687,35 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // anula: AFIP lleva la numeracion por punto de venta.
             match: /pero esta .* anula la Factura .* que es del Punto de Venta|se emite desde el MISMO/i,
             title: 'La nota tiene que salir del mismo punto de venta que la factura',
+            accion: "Cambiá el punto de venta del item para que coincida con el de la factura que estás anulando, o dejá esa columna vacía y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Si la dejás vacía, la app usa el correcto sola. AFIP lleva la numeración por punto de venta, por eso la nota tiene que salir del mismo.",
             detail: mainMsg,
             solucion: 'Cambiá el punto de venta del item para que coincida con el de la factura que estás anulando, o dejá esa columna vacía y la app usa el correcto sola.',
         },
         {
             match: /no tiene los datos completos \(CAE|no se pudo determinar la letra de la factura original|le faltan tipo \/ punto de venta \/ n[uú]mero|is missing its type \/ point of sale \/ number/i,
             title: 'A la factura referenciada le faltan datos',
+            accion: "Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "La factura que estás anulando quedó guardada sin todos los datos que AFIP pide para vincularla (CAE, número, tipo o punto de venta).",
+            soporte: "Si es la correcta y aun así falla, lo tenemos que destrabar nosotros:",
             detail: 'La factura que estás anulando quedó guardada sin todos los datos que AFIP pide para vincularla (CAE, número, tipo o punto de venta).',
             solucion: 'Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero. Si es la correcta y aun así falla, escribinos a <b>arca@theautomationpartner.com</b>: lo tenemos que destrabar nosotros.',
         },
         {
             match: /Una Nota de D[eé]bito E solo puede referenciar|no es una exportaci[oó]n de servicios|An Export Debit Note can only reference|is not a services export/i,
             title: 'Esa nota no puede referenciar ese comprobante',
+            accion: "Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "No sirve el de otra nota ni el de una exportación de bienes.",
             detail: mainMsg,
             solucion: 'Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios, no el de otra nota ni el de una exportación de bienes.',
         },
         {
             match: /^No se puede emitir(?: la Factura E)?[^:]*:\s*•|^Can.t issue(?: the Export Invoice)?[^:]*:\s*•/i,
             title: 'Faltan datos para este comprobante',
+            accion: "Corregí en el item lo que está marcado con ❌ acá abajo y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
             detail: subitemDetails.length > 0
                 ? 'Completá esto y volvé a intentar:<br/><br/>' +
                   subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
@@ -661,6 +725,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /AFIP no devolvi[oó] CAE para/i,
             title: 'AFIP no devolvió el número del comprobante',
+            accion: "Volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada: AFIP contestó, pero sin el CAE, y sin CAE no hay comprobante.",
+            detalle: "Si falla tres veces seguidas, esperá 15 minutos y probá otra vez.",
+            soporte: "Si a la hora sigue igual,",
             detail: 'AFIP contestó, pero sin el CAE. <b>No se emitió nada</b>: sin CAE no hay comprobante.',
             solucion: 'Volvé a poner el estado que dispara la emisión. Si falla tres veces seguidas, esperá 15 minutos y probá otra vez. Si a la hora sigue igual, escribinos a <b>arca@theautomationpartner.com</b>.',
         },
@@ -676,6 +744,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /^Padr[oó]n HTTP|^No se pudo consultar el padr[oó]n para el DNI/i,
             title: 'AFIP no contestó sobre ese documento',
+            accion: "Esperá unos minutos y volvé a poner ${columna_estado} en \"${estado_disparo}\" sin tocar nada del item.",
+            estado: "No se emitió nada. <b>No es un problema del número que cargaste.</b>",
+            soporte: "Si a la media hora sigue igual,",
             detail: 'La app le preguntó a AFIP por los datos del cliente y no obtuvo respuesta. <b>No es un problema del número que cargaste.</b>',
             solucion: 'Esperá unos minutos y volvé a poner el estado que dispara la emisión, sin tocar nada del item. Si a la media hora sigue igual, escribinos.',
         },
@@ -705,24 +776,35 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /token.*monday|no hay token|sessionToken/i,
             title: 'Error de autenticación con Monday',
+            accion: "Cerrá la vista de la app y volvé a abrirla.",
+            estado: "No se emitió nada.",
+            detalle: "Si el error sigue, desinstalá la app desde el tablero y volvé a instalarla desde el Marketplace de monday.",
             detail: 'La app no pudo acceder a los datos del tablero.',
             solucion: 'Cerrá la vista de la app y volvé a abrirla. Si el error sigue, desinstalá la app desde el tablero y volvé a instalarla desde el Marketplace de Monday.',
         },
         {
             match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta|missing required service dates/i,
             title: 'Fechas de servicio obligatorias',
+            accion: "Completá las columnas <b>Fecha Servicio Desde</b> y <b>Fecha Servicio Hasta</b> del item y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Son obligatorias cuando los subítems incluyen servicios.",
             detail: mainMsg,
             solucion: 'Completá las columnas <b>Fecha Servicio Desde</b> y <b>Fecha Servicio Hasta</b> en el item. Son obligatorias cuando los subitems incluyen servicios.',
         },
         {
             match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva|vat rate incompatible with invoice c/i,
             title: 'El comprobante C no lleva IVA',
+            accion: "Poné ${columna_alicuota} en <b>0</b> en todos los subítems y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Los comprobantes C no discriminan IVA porque el emisor es Monotributista o Exento.",
             detail: mainMsg,
             solucion: 'Los comprobantes C (Factura o Nota de Crédito) no discriminan IVA porque el emisor es Monotributista o Exento. Abrí los subítems del item y poné la columna <b>Alícuota IVA %</b> en <b>0</b> en todos. Después reintentá.',
         },
         {
             match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida|different vat rates|missing vat rate|invalid vat rate/i,
             title: 'Alícuota IVA inválida',
+            accion: "Poné la <b>misma</b> alícuota IVA en todos los subítems y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            detalle: "Los valores que acepta AFIP son 0, 2.5, 5, 10.5, 21 y 27. Un comprobante no puede mezclar alícuotas.",
             detail: subitemDetails.length > 0
                 ? 'Los subitems tienen alícuotas IVA diferentes:<br/>' +
                   subitemDetails.map(l => l.replace('•', '').trim()).map(l => `&nbsp;&nbsp;- ${l}`).join('<br/>')
@@ -741,30 +823,45 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // Errores de la columna del CAE de referencia (Nota de Crédito).
             match: /cae de referencia|columna del cae|no se encontró ninguna factura|reference CAE (column )?is (empty|missing)|no invoice.{0,20}found with cae/i,
             title: 'No se pudo identificar la factura a anular',
+            accion: "Pegá en la columna del <b>CAE</b> el código de 14 dígitos de la factura que querés anular y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Lo sacás del PDF de esa factura o del comentario que dejó la app cuando se emitió.",
             detail: mainMsg,
             solucion: 'En el item de la Nota de Crédito, pegá en la columna del <b>CAE</b> el código de 14 dígitos de la factura que querés anular. Lo sacás del PDF de esa factura o del comentario que dejó la app cuando se emitió.',
         },
         {
             match: /item de nota de (cr[eé]dito|d[eé]bito) no tiene sub[ií]tems|(credit|debit) note item has no subitems/i,
             title: 'La Nota de Crédito no tiene líneas para acreditar',
+            accion: "Agregá como <b>subítems</b> del item lo que querés acreditar, cada línea con Concepto, Cantidad y Precio y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "La Nota de Crédito se emite por la suma de esos subítems.",
             detail: mainMsg,
             solucion: 'Agregá como <b>subítems</b> del item lo que querés acreditar — cada línea con Concepto, Cantidad y Precio. La Nota de Crédito se emite por la suma de esos subítems.',
         },
         {
             match: /supera el saldo disponible de la factura|exceeds the (invoice.{0,3}s )?available (invoice )?balance/i,
             title: 'La Nota de Crédito supera el saldo de la factura',
+            accion: "Bajá los importes de los subítems para que el total no supere el saldo disponible y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "No se puede acreditar más de lo que se facturó. El saldo que te queda disponible está más abajo.",
             detail: mainMsg,
             solucion: 'No se puede acreditar más de lo que se facturó. Bajá los importes de los subítems para que el total no supere el <b>saldo disponible</b> indicado arriba.',
         },
         {
             match: /alícuota iva de la nota de crédito.*no coincide|vat rate.{0,20}doesn.t match the invoice/i,
             title: 'La alícuota IVA de la Nota de Crédito no coincide con la factura',
+            accion: "Ajustá ${columna_alicuota} de los subítems para que coincida con la de la factura original y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "La Nota de Crédito se acredita con el mismo IVA que se facturó.",
             detail: mainMsg,
             solucion: 'La Nota de Crédito se acredita con el mismo IVA que se facturó. Ajustá la columna <b>Alícuota IVA %</b> de los subítems para que coincida con la de la factura original.',
         },
         {
             match: AFIP_IDEMPOTENT_ERROR_PATTERN,
             title: 'Ya se emitió un comprobante para este item',
+            accion: "Creá un <b>item nuevo</b> en el tablero y poné ${columna_estado} en \"${estado_disparo}\" ahí.",
+            estado: "No se emitió otro, a propósito: cada item corresponde a un solo comprobante.",
+            detalle: "Es lo que evita duplicar comprobantes en AFIP.",
             detail: mainMsg,
             solucion: 'Cada item del tablero corresponde a <b>un solo comprobante</b>. ' +
                 'Para emitir otro, <b>creá un item nuevo</b> en el tablero y disparálo ' +
@@ -821,6 +918,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Open the app's view → <b>Visual Mapping</b> section → select the columns and save.",
         },
         'Subitems incompletos o faltantes': {
+            title: "Incomplete or missing subitems",
+            accion: "Fill in the <b>Description</b>, <b>Quantity</b> and <b>Unit Price</b> on every subitem and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "If the item has no subitems at all, create at least one: each subitem is a line of the voucher.",
             title: 'Incomplete or missing subitems',
             detail: subitemDetails.length > 0
                 ? 'The following subitems have empty or invalid fields:<br/>' +
@@ -829,6 +930,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Check each subitem and fill in the required fields: <b>Description</b>, <b>Quantity</b> (number) and <b>Unit Price</b> (number). If there are none, create at least one.',
         },
         'Problemas con la bonificación de los subitems': {
+            title: "Problems with the subitem discounts",
+            accion: "Fix the discount on the subitems marked below and set ${columna_estado} back to \"${estado_disparo}\".",
+            detalle: "The discount is an <b>amount</b>, not a percentage. It applies to the <b>whole line</b> (quantity × price) and uses the <b>same currency as the unit price</b>. It cannot be negative or exceed the line total.",
             title: 'Problems with the subitem discounts',
             detail: subitemDetails.length > 0
                 ? 'Check these subitems:<br/><br/>' +
@@ -837,6 +941,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'The discount is an <b>amount</b> (not a percentage), applies to the <b>whole line</b> (quantity × price) and uses the <b>same currency as the unit price</b>. It cannot be negative or exceed the line total.',
         },
         'El comprobante quedó en cero': {
+            title: "The voucher total came out as zero",
+            accion: "Lower the discount amounts so the total is above zero and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "AFIP rejects vouchers with a total of zero or less.",
             title: 'The voucher total came out as zero',
             solucion: 'Lower the discount amounts so the total is above zero — AFIP rejects vouchers with a total of zero or less.',
         },
@@ -850,6 +958,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "You need to issue a new one: it's the same procedure you did the first time, and the step by step is in the app's view → <b>ARCA Certificates</b>. Once you finish uploading it, start the issuing again. Until then, retrying won't help.",
         },
         'El certificado de ARCA no se puede leer': {
+            title: "The ARCA certificate can't be read",
+            accion: "Upload the complete pair again in the app → <b>ARCA Certificates</b> and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued. <b>This is not a problem with the item data.</b>",
+            detalle: "They have to be the two files that were generated together: the key (.key) and the certificate ARCA gave you (.crt). One from one procedure and one from another will not work. If you cannot find them, get a new certificate and upload both.",
             title: "The ARCA certificate can't be read",
             detail: 'The certificate file or the key file is damaged, or they are not from the same procedure. <b>This is not a problem with the item data.</b>',
             solucion: "Upload the complete pair again in the app's view → <b>ARCA Certificates</b>. They have to be the two files that were generated together: the key (.key) and the certificate ARCA gave you (.crt) — one from one procedure and one from another will not work. If you can't find them, issue a new certificate and upload both.",
@@ -877,26 +989,48 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the certificate (.crt) and the key (.key). If you haven't issued them yet, the step by step is on that same screen: it's done once and lasts two years.",
         },
         'Falta terminar de configurar la app': {
-            accion: `Complete ${faltantesConfig.length > 1 ? `these ${faltantesConfig.length} things` : "this"} in the app and set  back to "".`,
-            estado: faltantesConfig.map(x => `&nbsp;&nbsp;❌&nbsp;&nbsp;${x}`).join("<br/>") +
-                "<br/><br/>Nothing was issued.",
-            detalle: "They are all in the app view: the company details and the certificate under <b>Tax Details</b> and <b>ARCA Certificates</b>, and the columns under <b>Visual Mapping</b>.",
+            // Esta entrada sirve a DOS reglas: la de "faltan varias cosas" (que trae
+            // la lista) y la genérica de configuración incompleta. Cuando hay lista,
+            // se muestra como checklist; cuando no, la instrucción sola.
+            accion: faltantesConfig.length > 1
+                ? `Complete these ${faltantesConfig.length} things in the app and set \${columna_estado} back to "\${estado_disparo}".`
+                : 'Open the app from this board and complete the pending steps in <b>Visual Mapping</b> and set ${columna_estado} back to "${estado_disparo}".',
+            estado: faltantesConfig.length > 1
+                ? faltantesConfig.map(x => `&nbsp;&nbsp;❌&nbsp;&nbsp;${x}`).join('<br/>') + '<br/><br/>Nothing was issued.'
+                : 'Nothing was issued.',
+            detalle: 'They are all in the app view: the company details and the certificate under <b>Tax Details</b> and <b>ARCA Certificates</b>, and the columns under <b>Visual Mapping</b>.',
             title: 'The app setup is not finished',
             solucion: "Open the app's view → complete the pending steps in <b>Visual Mapping</b>. Make sure to map all required columns.",
         },
         'Tipo de factura incorrecto': {
+            title: "Incorrect invoice type",
+            accion: "Check your company's <b>VAT Condition</b> in the app → <b>Tax Details</b>, and the client's CUIT on the item and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "The app asks AFIP for the client's condition to decide whether A, B or C applies. If either of those two is wrong, the wrong letter comes out.",
             title: 'Incorrect invoice type',
             solucion: "Check two things:<br/>&nbsp;&nbsp;1) In the app, open <b>Tax Details</b> and confirm your company's <b>VAT Condition</b> is set correctly (Registered, Monotributo, etc.).<br/>&nbsp;&nbsp;2) In the item, confirm the <b>recipient CUIT</b> is correct. The app automatically asks AFIP for the recipient's condition to decide whether A, B or C applies.",
         },
         'Este item ya tiene un comprobante': {
+            title: "This item already has a voucher",
+            accion: "Create a <b>new item</b> on the board and set ${columna_estado} to \"${estado_disparo}\" there.",
+            estado: "Another one was not issued, on purpose: each item corresponds to a single voucher.",
+            detalle: "If what you want is the Credit Note for this invoice, that also goes on a new item: it references the invoice by its CAE.",
             title: 'This item already has a voucher',
             solucion: 'Each item corresponds to <b>a single voucher</b>. To issue another — or the Credit Note for this invoice — create a <b>new item</b> on the board. The Credit Note references the invoice by its CAE.',
         },
         'CUIT / DNI del receptor inválido': {
+            title: "Invalid recipient CUIT / DNI",
+            accion: "Fill in ${columna_cuit} with an <b>11-digit CUIT</b> or a <b>7 or 8-digit DNI</b>, no dashes or spaces and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "If the sale is to an unidentified final consumer, leave that column <b>empty</b> and it will go through.",
             title: 'Invalid recipient CUIT / DNI',
             solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with an <b>11-digit CUIT</b> (e.g. 20327446348) or a <b>7 or 8-digit DNI</b>. No dashes or spaces. If the sale is to an unidentified final consumer, leave the column <b>empty</b>.',
         },
         'Ese CUIT no existe en AFIP': {
+            title: "That CUIT doesn't exist in AFIP",
+            accion: "Check the client's CUIT in ${columna_cuit}: it is 11 digits, no dots or dashes and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "A single wrong digit is enough for AFIP not to find it.",
             title: "That CUIT doesn't exist in AFIP",
             solucion: "Open the item and check the client's CUIT: it's 11 digits, no dots or dashes. A single wrong digit is enough for AFIP not to find it. Fix it and set the status that starts the issuing again.",
         },
@@ -923,6 +1057,12 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Start the issuing again. If it keeps failing, wait a few minutes and retry.',
         },
         'AFIP rechazó la Factura E': {
+            estado: "Nothing was issued: AFIP answered and did not accept it, so no number was burned.<br/><br/>What AFIP said:<br/>" +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^[wsfex:w+]s*/, "")}`,
+            detalle: "It is usually the destination country, the payment date or the client address.",
+            title: "AFIP rejected the Factura E",
+            accion: "Fix the field AFIP mentions below on the item and set ${columna_estado} back to \"${estado_disparo}\".",
+            soporte: "If AFIP's message doesn't make sense to you,",
             title: 'AFIP rejected the Factura E',
             detail: 'AFIP responded, but did not accept the voucher. It <b>was not issued</b> (no number was burned).<br/><br/>' +
                 'What AFIP said:<br/>' +
@@ -953,12 +1093,22 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Go to afip.gob.ar with your tax key → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. Under "Servicio" follow this path: AFIP → WebServices → <b>Facturación Electrónica</b>. Under "Representante" pick the certificate you already uploaded in the app. Confirm and start the issuing again.',
         },
         'AFIP rechazó el comprobante': {
+            estado: "Nothing was issued and no number was used up.<br/><br/>What AFIP said:<br/>" +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^AFIP rechaz[oó] [^:]*:s*/i, "")}`,
+            title: "AFIP rejected the voucher",
+            accion: "Fix what AFIP mentions below. <b>This is not an outage on their side: it is a rule, and retrying without changing anything will give the same result.</b>",
+            detalle: "If it mentions the point of sale, check that it is registered in AFIP for electronic invoicing. If it mentions the CUIT, look at which vouchers you are authorised to issue at afip.gob.ar → Comprobantes en línea. If it mentions VAT or amounts, check the subitems.",
             title: 'AFIP rejected the voucher',
             detail: 'AFIP answered and did not accept it. <b>Nothing was issued</b> and no number was used up.<br/><br/>What AFIP said:<br/>' +
                 `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^AFIP rechaz[oó] [^:]*:\s*/i, '')}`,
             solucion: "This is not an AFIP outage: it's a rule of theirs. If the message mentions the point of sale, check that it is registered in AFIP for electronic invoicing. If it mentions the CUIT, check which vouchers you are authorised to issue at afip.gob.ar → Comprobantes en línea. If it mentions VAT or amounts, check the subitems. Retrying without changing anything will give the same result.",
         },
         'AFIP no está respondiendo correctamente': {
+            title: "AFIP is not responding correctly",
+            accion: "Wait a few minutes and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued. <b>This is not a problem with your configuration</b>, it is on AFIP's side.",
+            detalle: "AFIP usually has brief outages or maintenance windows.",
+            soporte: "If it is still the same after half an hour,",
             title: 'AFIP is not responding correctly',
             detail: "AFIP's servers didn't respond in time or returned an error. <b>This is not a configuration problem on your end</b>, it's on AFIP's side.",
             solucion: "Wait a few minutes and try again. AFIP usually has brief outages or maintenance. If it's still failing after 30 minutes, contact the app's support.",
@@ -972,18 +1122,34 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         },
         'La nota no puede tener fecha anterior a la factura': {
             title: "The note can't be dated before the invoice",
+            accion: "Change the item's Issue Date so it is the same as or later than the invoice you are cancelling and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "AFIP does not accept a note dated before its invoice.",
+            title: "The note can't be dated before the invoice",
             solucion: "Change the item's Issue Date so it is the same as or later than the invoice you are cancelling. AFIP does not accept a note dated before its invoice.",
         },
         'Esa unidad de medida no existe en AFIP': {
             title: "That unit of measure doesn't exist in AFIP",
+            accion: "Set the unit of measure to one of the ones AFIP accepts and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "These are the ones: <b>units</b>, <b>kilograms</b>, <b>metres</b>, <b>litres</b>, <b>hours</b>, <b>dozens</b>, <b>tonnes</b>. On A, B and C invoices this column is free text and is only printed on the PDF, which is why it does not matter there.",
+            title: "That unit of measure doesn't exist in AFIP",
             solucion: "On a Factura E the unit has to be one from AFIP's list: <b>units</b>, <b>kilograms</b>, <b>metres</b>, <b>litres</b>, <b>hours</b>, <b>dozens</b>, <b>tonnes</b>. On A, B and C invoices this column is free text and is only printed on the PDF, which is why it doesn't matter there.",
         },
         'Falta emparejar la columna del CAE': {
+            title: "The CAE column has not been mapped",
+            accion: "Open the app → <b>Visual Mapping</b> → under <b>Reference invoice</b> pick the column where you put the CAE, save and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "To cancel a Factura E, the app needs to know which column holds the CAE of the invoice being adjusted.",
             title: 'The CAE column has not been mapped',
             detail: 'To cancel a Factura E, the app needs to know which board column holds the CAE of the invoice being adjusted.',
             solucion: "Open the app's view → <b>Visual Mapping</b> → under <b>Reference invoice</b> pick the column where you put the CAE, and save. Then go back to the item and start it again.",
         },
         'AFIP no tiene CUIT para ese país': {
+            title: "AFIP has no CUIT for that country",
+            accion: "Fill in the <b>Client tax ID</b> column with the tax number your client uses in their country and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "When AFIP has no generic CUIT for that destination, that field becomes required.",
             title: "AFIP has no CUIT for that country",
             solucion: "Fill in the item's <b>Client tax ID</b> column with the tax identification number your client uses in their country. When AFIP has no generic CUIT for that destination, that field becomes required.",
         },
@@ -1012,19 +1178,34 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'That column takes only the point of sale number (1, 5, 0005). If you want to keep seeing the shop name on the board, leave the number there and use a separate column for the name.',
         },
         'La nota tiene que salir del mismo punto de venta que la factura': {
+            title: "The note has to come from the same point of sale as the invoice",
+            accion: "Change the item's point of sale so it matches the invoice you are cancelling, or leave that column empty and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "If you leave it empty, the app uses the right one on its own. AFIP numbers vouchers per point of sale, which is why the note has to come from the same one.",
             title: 'The note has to come from the same point of sale as the invoice',
             solucion: "Change the item's point of sale so it matches the invoice you are cancelling, or leave that column empty and the app will use the right one on its own.",
         },
         'A la factura referenciada le faltan datos': {
+            title: "The referenced invoice is missing data",
+            accion: "Check that the CAE you entered belongs to an invoice issued by the app from this same board and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "The invoice you are cancelling was stored without all the fields AFIP requires to link it (CAE, number, type or point of sale).",
+            soporte: "If it is the right one and it still fails, we have to unblock it ourselves:",
             title: 'The referenced invoice is missing data',
             detail: 'The invoice you are cancelling was stored without all the fields AFIP requires to link it (CAE, number, type or point of sale).',
             solucion: 'Check that the CAE you entered belongs to an invoice issued by the app from this same board. If it is the right one and it still fails, write to us at <b>arca@theautomationpartner.com</b>: we have to unblock it ourselves.',
         },
         'Esa nota no puede referenciar ese comprobante': {
             title: "That note can't reference that voucher",
+            accion: "Check the CAE you entered: it has to belong to a Factura E for services and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "Another note or an export of goods will not work.",
+            title: "That note can't reference that voucher",
             solucion: 'Check the CAE you entered: it has to belong to a Factura E for services, not to another note or to an export of goods.',
         },
         'Faltan datos para este comprobante': {
+            title: "Missing data for this voucher",
+            accion: "Fix what is marked with ❌ below on the item and set ${columna_estado} back to \"${estado_disparo}\".",
             title: 'Missing data for this voucher',
             detail: subitemDetails.length > 0
                 ? 'Fill this in and try again:<br/><br/>' +
@@ -1033,6 +1214,11 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Fix what is marked with ❌ on the item and set the status that starts the issuing again.',
         },
         'AFIP no devolvió el número del comprobante': {
+            title: "AFIP didn't return the voucher number",
+            accion: "Set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued: AFIP answered, but without the CAE, and without a CAE there is no voucher.",
+            detalle: "If it fails three times in a row, wait 15 minutes and try again.",
+            soporte: "If it is still the same after an hour,",
             title: "AFIP didn't return the voucher number",
             detail: 'AFIP answered, but without the CAE. <b>Nothing was issued</b>: without a CAE there is no voucher.',
             solucion: 'Set the status that starts the issuing again. If it fails three times in a row, wait 15 minutes and try again. If it is still the same after an hour, write to us at <b>arca@theautomationpartner.com</b>.',
@@ -1046,6 +1232,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Check whether the item is still on the board (look in monday's recycle bin too). If it is, check that the company is set up in the app → <b>Tax Details</b>, with its certificate in <b>ARCA Certificates</b>.",
         },
         'AFIP no contestó sobre ese documento': {
+            title: "AFIP didn't answer about that document",
+            accion: "Wait a few minutes and set ${columna_estado} back to \"${estado_disparo}\" without touching anything on the item.",
+            estado: "Nothing was issued. <b>This is not a problem with the number you entered.</b>",
+            soporte: "If it is still the same after half an hour,",
             title: "AFIP didn't answer about that document",
             detail: "The app asked AFIP for the client's details and got no response. <b>This is not a problem with the number you entered.</b>",
             solucion: 'Wait a few minutes and set the status that starts the issuing again, without touching anything on the item. If it is still the same after half an hour, write to us.',
@@ -1066,19 +1256,34 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Don't touch anything and don't retry: we've already been alerted and we're looking at it. If you need to issue today, write to us at <b>arca@theautomationpartner.com</b>.",
         },
         'Error de autenticación con Monday': {
+            title: "monday authentication error",
+            accion: "Close the app's view and open it again.",
+            estado: "Nothing was issued.",
+            detalle: "If the error persists, uninstall the app from the board and reinstall it from the monday Marketplace.",
             title: 'monday authentication error',
             detail: "The app couldn't access the board data.",
             solucion: "Close the app's view and reopen it. If the error persists, uninstall the app from the board and reinstall it from the monday Marketplace.",
         },
         'Fechas de servicio obligatorias': {
+            title: "Service dates required",
+            accion: "Fill in the <b>Service Date From</b> and <b>Service Date To</b> columns on the item and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "They are required when the subitems include services.",
             title: 'Service dates required',
             solucion: 'Fill in the <b>Service Date From</b> and <b>Service Date To</b> columns in the item. They are required when the subitems include services.',
         },
         'El comprobante C no lleva IVA': {
             title: "C voucher doesn't carry VAT",
+            accion: "Set ${columna_alicuota} to <b>0</b> on every subitem and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "C vouchers do not break out VAT because the issuer is Monotributo or Exempt.",
+            title: "C voucher doesn't carry VAT",
             solucion: "C vouchers (Invoice or Credit Note) don't break out VAT because the issuer is Monotributo or Exempt. Open the item's subitems and set the <b>VAT Rate %</b> column to <b>0</b> on all of them. Then retry.",
         },
         'Alícuota IVA inválida': {
+            title: "Invalid VAT rate",
+            accion: "Set the <b>same</b> VAT rate on every subitem and set ${columna_estado} back to \"${estado_disparo}\".",
+            detalle: "The values AFIP accepts are 0, 2.5, 5, 10.5, 21 and 27. A voucher cannot mix rates.",
             title: 'Invalid VAT rate',
             detail: subitemDetails.length > 0
                 ? 'The subitems have different VAT rates:<br/>' +
@@ -1094,21 +1299,41 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         },
         'No se pudo identificar la factura a anular': {
             title: "Couldn't identify the invoice to cancel",
+            accion: "Paste the 14-digit <b>CAE</b> of the invoice you want to cancel into the CAE column and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "You get it from that invoice's PDF or from the comment the app left when it was issued.",
+            title: "Couldn't identify the invoice to cancel",
             solucion: "In the Credit Note item, paste the 14-digit <b>CAE</b> of the invoice you want to cancel into the CAE column. You get it from that invoice's PDF or from the comment the app left when it was issued.",
         },
         'La Nota de Crédito no tiene líneas para acreditar': {
+            title: "The Credit Note has no lines to credit",
+            accion: "Add what you want to credit as <b>subitems</b> of the item, each line with Description, Quantity and Price and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "The Credit Note is issued for the sum of those subitems.",
             title: 'The Credit Note has no lines to credit',
             solucion: 'Add what you want to credit as <b>subitems</b> of the item — each line with Description, Quantity and Price. The Credit Note is issued for the sum of those subitems.',
         },
         'La Nota de Crédito supera el saldo de la factura': {
+            title: "The Credit Note exceeds the invoice balance",
+            accion: "Lower the subitem amounts so the total does not exceed the available balance and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "You cannot credit more than what was invoiced. The balance you have left is shown below.",
             title: 'The Credit Note exceeds the invoice balance',
             solucion: "You can't credit more than what was invoiced. Lower the subitem amounts so the total doesn't exceed the <b>available balance</b> shown above.",
         },
         'La alícuota IVA de la Nota de Crédito no coincide con la factura': {
             title: "The Credit Note's VAT rate doesn't match the invoice",
+            accion: "Adjust ${columna_alicuota} on the subitems to match the original invoice and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "The Credit Note is credited with the same VAT that was invoiced.",
+            title: "The Credit Note's VAT rate doesn't match the invoice",
             solucion: 'The Credit Note is credited with the same VAT that was invoiced. Adjust the <b>VAT Rate %</b> column of the subitems to match the original invoice.',
         },
         'Ya se emitió un comprobante para este item': {
+            title: "A voucher was already issued for this item",
+            accion: "Create a <b>new item</b> on the board and set ${columna_estado} to \"${estado_disparo}\" there.",
+            estado: "Another one was not issued, on purpose: each item corresponds to a single voucher.",
+            detalle: "That is what avoids duplicating vouchers in AFIP.",
             title: 'A voucher was already issued for this item',
             solucion: 'Each board item corresponds to <b>a single voucher</b>. To issue another, <b>create a new item</b> on the board and start it from there. This avoids duplicating vouchers in AFIP.',
         },
@@ -1214,6 +1439,26 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         // fijarse.
         html += `<br/><br/>${V(known.estado || (isEn ? 'Nothing was issued.' : 'No se emitió nada.'))}`;
         if (known.detalle) html += `<br/><br/>${V(known.detalle)}`;
+
+        // Lo que dijo el sistema, si no se mostró ya.
+        //
+        // La forma vieja tenía `detail: mainMsg` en muchas reglas, así que el texto
+        // crudo —el código de AFIP, el saldo disponible, la alícuota que no coincide—
+        // se veía siempre. Al pasarlas a la forma nueva ese texto se perdió en 11
+        // reglas, y varias siguen diciendo "corregí lo que menciona AFIP acá abajo"
+        // con nada abajo. Una instrucción que apunta al vacío es peor que no decir
+        // nada: la persona lo lee tres veces buscando dónde está.
+        //
+        // Va acá y no regla por regla porque acordarse en cada una es exactamente lo
+        // que ya falló. Se muestra solo si NO está ya en el mensaje.
+        const yaEstaElDetalle = (t) => !t || html.includes(t.trim()) || t.trim().length < 4;
+        const bullets = subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).filter(l => !yaEstaElDetalle(l));
+        if (bullets.length) {
+            html += '<br/><br/>' + bullets.map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>');
+        } else if (!yaEstaElDetalle(mainMsg) && known.detail === mainMsg) {
+            html += `<br/><br/><i>${isEn ? 'What the system said' : 'Lo que dijo el sistema'}:</i><br/>` +
+                `&nbsp;&nbsp;${mainMsg}`;
+        }
         // El soporte va SOLO donde está declarado. Ofrecerlo cuando la persona
         // puede resolverlo sola le da permiso para no intentarlo.
         if (known.soporte) {

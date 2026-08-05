@@ -84,8 +84,9 @@ const causaDe = (html) => {
 const corpus = JSON.parse(fs.readFileSync(CORPUS, 'utf8'));
 const t0 = Date.now();
 
-let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0;
+let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0, datoPerdido = 0;
 const detalleHuecos = [];
+const detalleDato = [];
 
 // Los datos que el handler pasa cuando pudo leer el tablero. Los nombres van a
 // propósito DISTINTOS de los de la plantilla: si el código asumiera el nombre por
@@ -120,6 +121,30 @@ for (const c of corpus) {
     if (CULPA_AFIP.test(html) && !INFRA_LEGITIMA.test(msg)) {
         culpaMal++;
         detalleCulpaMal.push({ origen: c.origen, msg: msg.slice(0, 74) });
+    }
+
+    // ¿Sobrevive el dato que trae el error?
+    //
+    // Muchos mensajes mandan a mirar algo concreto: "corregí lo que menciona AFIP
+    // acá abajo", "el saldo disponible está más abajo". Si ese dato no se muestra,
+    // la instrucción apunta al vacío y la persona lo lee tres veces buscándolo.
+    // Pasó de verdad: al pasar 31 reglas a la forma nueva, 11 se comieron el texto
+    // del error y este test no lo veía, porque solo miraba la línea de identidad.
+    // Se detecta metiendo una marca en el mensaje y viendo si sale del otro lado.
+    // Solo se exige cuando el mensaje PROMETE mostrar algo. Los errores de sistema
+    // esconden el detalle técnico a propósito ("es un problema nuestro, no toques
+    // nada"): ahí mostrar "Cannot read properties of null" sería justo lo contrario
+    // de lo que queremos. La regla es simple: si lo prometés, mostralo.
+    const PROMETE = /ac[aá] abajo|m[aá]s abajo|menciona AFIP|dijo AFIP|marcado con ❌|mentions below|marked with ❌|said:|dijo el sistema/i;
+    if (!c.mensaje.includes('…')) {
+        const conMarca = msg.replace(/(\w{6,})/, 'ZQMARCA$1');
+        if (conMarca !== msg) {
+            const h = buildErrorComment(new Error(conMarca), 'Factura', idioma, META_COMPLETA);
+            if (PROMETE.test(h) && !h.includes('ZQMARCA')) {
+                datoPerdido++;
+                detalleDato.push({ origen: c.origen, causa: causaDe(h) });
+            }
+        }
     }
 
     // La forma nueva escribe el nombre real de la columna adentro de la frase. Si
@@ -204,6 +229,7 @@ console.log(`    caen al genérico ......... ${sinReglaEn}`);
 console.log(`    con español escapado ..... ${espanolEnIngles}`);
 console.log('');
 console.log(`  huecos sin rellenar a la vista ... ${huecos}`);
+console.log(`  se comen el dato del error ....... ${datoPerdido}`);
 
 if (detalleSinRegla.length) {
     console.log('\n  LOS QUE CAEN AL GENÉRICO (el usuario lee "revisá los datos" sin saber cuáles):');
@@ -235,6 +261,14 @@ if (culpaMal > 0) {
 if (detalleHuecos.length) {
     console.log('\n  MENSAJES CON UN HUECO A LA VISTA DEL USUARIO:');
     detalleHuecos.forEach(d => console.log(`     [${d.nombre}] ${d.origen.padEnd(30)} "...${d.trozo}..."`));
+}
+if (detalleDato.length) {
+    console.log("\n  SE COMEN EL DATO QUE TRAE EL ERROR (la instrucción apunta al vacío):");
+    detalleDato.slice(0, 20).forEach(d => console.log(`     ${d.origen.padEnd(30)} ${d.causa.slice(0, 62)}`));
+}
+if (datoPerdido > 0) {
+    console.log(`FALLA: ${datoPerdido} mensaje(s) se comen el dato que trae el error.`);
+    process.exit(1);
 }
 if (huecos > 0) {
     console.log(`FALLA: ${huecos} mensaje(s) le dejan un hueco sin rellenar a la vista del usuario.`);
