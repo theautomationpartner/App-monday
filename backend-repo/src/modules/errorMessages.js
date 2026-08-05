@@ -532,7 +532,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             title: 'Falta la alícuota IVA en algún subítem',
             accion: 'Revisá que TODOS los subítems tengan cargada ${columna_alicuota}. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
             estado: 'No se emitió nada.',
-            detalle: 'Alcanza con que uno solo quede vacío para que AFIP rechace el comprobante entero.',
+            // La causa concreta salió de provocar el [10070] de verdad en
+            // homologación: pasa cuando el emisor es Responsable Inscripto y la
+            // alícuota está en 0. La factura sale A o B, que obligan a discriminar
+            // IVA, y AFIP la rechaza. Antes el mensaje decía "revisá que estén
+            // cargadas" — y estaban cargadas, en 0, que es justo el problema.
+            detalle: 'Si sos <b>Responsable Inscripto</b>, la alícuota no puede ser 0: tus facturas son A o B y AFIP exige que discriminen IVA. Poné la que corresponda (21, 10.5, 27…).<br/><br/>' +
+                'Y alcanza con que un solo subítem quede vacío para que AFIP rechace el comprobante entero.',
             soporte: 'Si todos ya la tienen cargada, es un problema nuestro:',
             detail: 'AFIP no aceptó el comprobante porque el detalle de IVA venía incompleto.',
             solucion: 'Revisá que todos los subítems tengan cargada la columna de alícuota IVA.',
@@ -1464,7 +1470,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             title: "A subitem is missing its VAT rate",
             accion: "Check that ALL subitems have ${columna_alicuota} filled in. Then set ${columna_estado} back to \"${estado_disparo}\".",
             estado: "Nothing was issued.",
-            detalle: "One empty cell is enough for AFIP to reject the whole voucher.",
+            detalle: "If you are <b>Responsable Inscripto</b>, the rate cannot be 0: your invoices are A or B and AFIP requires them to break out VAT. Set the one that applies (21, 10.5, 27…).<br/><br/>" +
+                "And one empty cell is enough for AFIP to reject the whole voucher.",
             soporte: "If they all have it filled in already, it's on us:",
         },
         "Ese punto de venta no está dado de alta en AFIP": {
