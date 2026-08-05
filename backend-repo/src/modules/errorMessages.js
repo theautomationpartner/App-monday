@@ -309,6 +309,21 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación → Servicio → AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>. En "Representante" elegí el mismo certificado que ya usás para las facturas comunes. Confirmá y volvé a intentar.',
         },
         {
+            // Falta la configuración de exportación en Datos Fiscales. Son tres
+            // faltantes distintos (el toggle, el punto de venta de exportación y la
+            // forma de pago) y los tres se arreglan en la misma pantalla, así que
+            // van juntos: lo que cambia es cuál falta, y eso lo dice el propio
+            // mensaje. Apareció corriendo los 35 casos — no tenía regla y lo salvaba
+            // el partidor del fallback, que lo mostraba bien pero con la forma vieja.
+            match: /no tiene habilitada la facturaci[oó]n de exportaci[oó]n|Falta configurar (el punto de venta|la forma de pago) de exportaci[oó]n|doesn.t have export invoicing enabled|The export (point of sale|payment method) is not configured/i,
+            title: 'Falta configurar la exportación en Datos Fiscales',
+            accion: 'Abrí la app → <b>Datos Fiscales</b>, completá lo de exportación y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Ahí van las tres cosas que AFIP pide para las Facturas E: tildar que emitís exportación, el punto de venta de exportación (es uno propio, distinto del de mercado interno) y la forma de pago.',
+            detail: mainMsg,
+            solucion: 'Abrí la app → <b>Datos Fiscales</b> y completá los datos de exportación.',
+        },
+        {
             // Sin `falta.*crt|falta.*key`: ese comodin se comia "Falta PADRON_CRT en
             // variables de entorno", que es una env var NUESTRA que falta en el
             // servidor. Al usuario le decia que subiera su certificado — algo que no
@@ -1385,6 +1400,12 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: "To invoice something else, create a new item and set ${columna_estado} to \"${estado_disparo}\" there.",
         },
 
+        'Falta configurar la exportación en Datos Fiscales': {
+            title: "Export settings are missing in Tax Details",
+            accion: 'Open the app → <b>Tax Details</b>, complete the export settings and set  back to "".',
+            estado: "Nothing was issued.",
+            detalle: "That is where the three things AFIP requires for Factura E live: ticking that you issue exports, the export point of sale (a separate one from the domestic one) and the payment method.",
+        },
     };
 
 

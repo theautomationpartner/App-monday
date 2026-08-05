@@ -405,19 +405,19 @@
  {
   "origen": "server.js:8921",
   "mensaje": "Esta empresa no tiene habilitada la facturación de exportación. Abrí la app → Datos Fiscales, tildá \"Emito Facturas E (exportación)\" y completá el punto de venta de exportación antes de emitir.",
-  "esperado": "Esta empresa no tiene habilitada la facturación de exportación.",
+  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8932",
   "mensaje": "Falta configurar el punto de venta de exportación. Abrí la app → Datos Fiscales y elegí tu punto de venta de exportación (AFIP exige un punto de venta del tipo \"Comprobantes de Exportación - Web Services\", distinto del de mercado interno).",
-  "esperado": "Falta configurar el punto de venta de exportación.",
+  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8946",
   "mensaje": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E. Cargala en la app → Datos Fiscales (ej: \"Transferencia bancaria\").",
-  "esperado": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E.",
+  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -760,19 +760,19 @@
   "origen": "server.js:9127",
   "mensaje": "This company doesn't have export invoicing enabled.\nOpen the app → Tax Details, tick \"I issue Factura E (exports)\" and complete the export point of sale before issuing.",
   "idioma": "en",
-  "esperado": "This company doesn't have export invoicing enabled."
+  "esperado": "❌ Open the app → Tax Details, complete the export settings and set  back to \"\"."
  },
  {
   "origen": "server.js:9138",
   "mensaje": "The export point of sale is not configured.\nOpen the app → Tax Details and pick your export point of sale (AFIP requires a point of sale of type \"Comprobantes de Exportación - Web Services\", different from the local one).",
   "idioma": "en",
-  "esperado": "The export point of sale is not configured."
+  "esperado": "❌ Open the app → Tax Details, complete the export settings and set  back to \"\"."
  },
  {
   "origen": "server.js:9152",
   "mensaje": "The export payment method is not configured.\nAFIP requires it on every Factura E. Set it in the app → Tax Details (e.g. \"Transferencia bancaria\").",
   "idioma": "en",
-  "esperado": "The export payment method is not configured.\nAFIP requires it on every Factura E."
+  "esperado": "❌ Open the app → Tax Details, complete the export settings and set  back to \"\"."
  },
  {
   "origen": "server.js:9179",
