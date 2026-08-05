@@ -6222,7 +6222,7 @@ async function comprobanteHandler(req, res) {
                 } else if (r.status === 'processing') {
                     throw new Error(isEnPrev
                         ? `This item is currently issuing a ${docPrevio}. Wait a few seconds for it to ` +
-                          `finish — do NOT trigger the recipe again.`
+                          `finish — do NOT set the status again.`
                         : `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
                           `segundos a que termine — NO vuelvas a ponerlo en el estado que dispara la emisión.`
                     );
@@ -6458,7 +6458,7 @@ async function comprobanteHandler(req, res) {
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
                     body: readiness?.boardConfig?.language === 'en'
-                        ? "⏳ An invoice is already being issued for this item. Wait for it to finish — don't trigger the recipe again."
+                        ? "⏳ An invoice is already being issued for this item. Wait for it to finish — don't set the status again."
                         : '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a ponerlo en el estado que dispara la emisión.',
                 }).catch(() => {});
                 return;
@@ -8151,7 +8151,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
                     body: ncLanguage === 'en'
-                        ? `⏳ A ${esND ? 'Debit Note' : 'Credit Note'} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`
+                        ? `⏳ A ${esND ? 'Debit Note' : 'Credit Note'} is already being issued for this item. Wait for it to finish — don't set the status again.`
                         : `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a ponerlo en el estado que dispara la emisión.`,
                 }).catch(() => {});
                 return;
@@ -9484,7 +9484,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 } else if (r.status === 'processing') {
                     throw new Error(L(
                         `This item is issuing a ${docPrev} right now. Wait a few seconds for it to ` +
-                        `finish — do NOT trigger the recipe again.`,
+                        `finish — do NOT set the status again.`,
                         `Este item está emitiendo una ${docPrev} en este momento. Esperá unos segundos ` +
                         `a que termine — NO vuelvas a ponerlo en el estado que dispara la emisión.`
                     ));
@@ -9960,7 +9960,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                 await postMondayUpdate({
                     apiToken: mondayToken, itemId,
                     body: L(
-                        `⏳ A ${docLabel} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`,
+                        `⏳ A ${docLabel} is already being issued for this item. Wait for it to finish — don't set the status again.`,
                         `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a ponerlo en el estado que dispara la emisión.`
                     ),
                 }).catch(() => {});
@@ -12793,11 +12793,11 @@ async function reconcileSingleEmission(row) {
     // 12. Postear update aclaratorio en el item
     try {
         const body =
-            `<b>🛠 Recuperacion automatica</b><br/><br/>` +
-            `La emision anterior tuvo un timeout de red, pero el comprobante SI fue emitido correctamente en AFIP.<br/>` +
-            `El sistema lo recupero automaticamente:<br/><br/>` +
+            `<b>🛠 Recuperación automática</b><br/><br/>` +
+            `La emisión anterior se cortó por un problema de red, pero el comprobante <b>sí se emitió</b> en AFIP.<br/>` +
+            `La app lo recuperó sola, no hay nada que hacer:<br/><br/>` +
             `<b>Tipo:</b> ${docNombre} ${letraDoc}<br/>` +
-            `<b>Nº de comprobante:</b> ${recovered.cbte_nro}<br/>` +
+            `<b>N° de comprobante:</b> ${recovered.cbte_nro}<br/>` +
             `<b>CAE:</b> ${recovered.cae}<br/>` +
             `<b>Vto CAE:</b> ${recovered.cae_vencimiento || '—'}<br/>` +
             `<b>Importe:</b> $${recovered.imp_total}`;
