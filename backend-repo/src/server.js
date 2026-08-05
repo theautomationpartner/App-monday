@@ -1385,7 +1385,7 @@ function assertStagingNotBlocked(company) {
         throw new Error(
             'Esta es la instancia de PRUEBA (staging) y no puede emitir comprobantes ' +
             'fiscales para este cliente. Eliminá la versión Draft del app en monday ' +
-            '(Centro de Desarrollo) y volvé a disparar la receta desde la versión Live.'
+            '(Centro de Desarrollo) y volvé a poner el estado que dispara la emisión.'
         );
     }
 }
@@ -6005,7 +6005,7 @@ async function comprobanteHandler(req, res) {
     }
     if (!accountId || !itemId) {
         console.error('[emit] FAIL: faltan datos. accountId:', accountId, 'itemId:', itemId);
-        return res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+        return res.status(400).json({ error: 'itemId es obligatorio. Revisá la configuración de la automatización en monday.' });
     }
 
     // Responder inmediatamente (acción asíncrona de monday)
@@ -6224,7 +6224,7 @@ async function comprobanteHandler(req, res) {
                         ? `This item is currently issuing a ${docPrevio}. Wait a few seconds for it to ` +
                           `finish — do NOT trigger the recipe again.`
                         : `Este item está emitiendo una ${docPrevio} en este momento. Esperá unos ` +
-                          `segundos a que termine — NO vuelvas a disparar la receta.`
+                          `segundos a que termine — NO vuelvas a ponerlo en el estado que dispara la emisión.`
                     );
                 } else {
                     throw new Error(isEnPrev
@@ -6459,7 +6459,7 @@ async function comprobanteHandler(req, res) {
                     apiToken: mondayToken, itemId,
                     body: readiness?.boardConfig?.language === 'en'
                         ? "⏳ An invoice is already being issued for this item. Wait for it to finish — don't trigger the recipe again."
-                        : '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.',
+                        : '⏳ Ya hay una emisión en curso para este item. Esperá a que termine — no vuelvas a ponerlo en el estado que dispara la emisión.',
                 }).catch(() => {});
                 return;
             }
@@ -7590,7 +7590,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
         console.error('[nc] FAIL: faltan datos. accountId:', accountId, 'itemId:', itemId,
             '| body:', JSON.stringify(req.body || {}).slice(0, 1500));
         if (!res.headersSent) {
-            res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+            res.status(400).json({ error: 'itemId es obligatorio. Revisá la configuración de la automatización en monday.' });
         }
         return;
     }
@@ -7751,7 +7751,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                         ? `The item is marked as "${tipoCompRaw}" in the Voucher Type column, ` +
                           `not as a ${esND ? 'Debit Note' : 'Credit Note'}. Make sure you're triggering the recipe on the right item.`
                         : `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                          `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
+                          `no como ${docLabel}. Verificá que sea el item correcto.`
                     );
                 }
             }
@@ -7942,7 +7942,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 } else if (r.status === 'processing') {
                     throw new Error(
                         `Este item está emitiendo una ${docPrev} en este momento. Esperá unos ` +
-                        `segundos a que termine — NO vuelvas a disparar la receta.`
+                        `segundos a que termine — NO vuelvas a ponerlo en el estado que dispara la emisión.`
                     );
                 } else {
                     throw new Error(
@@ -8152,7 +8152,7 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                     apiToken: mondayToken, itemId,
                     body: ncLanguage === 'en'
                         ? `⏳ A ${esND ? 'Debit Note' : 'Credit Note'} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`
-                        : `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`,
+                        : `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a ponerlo en el estado que dispara la emisión.`,
                 }).catch(() => {});
                 return;
             }
@@ -9036,7 +9036,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
         console.error('[fe] FAIL: faltan datos. accountId:', accountId, 'itemId:', itemId,
             '| body:', JSON.stringify(req.body || {}).slice(0, 1500));
         if (!res.headersSent) {
-            res.status(400).json({ error: 'itemId es obligatorio. Verificá la configuración de la receta en Monday.' });
+            res.status(400).json({ error: 'itemId es obligatorio. Revisá la configuración de la automatización en monday.' });
         }
         return;
     }
@@ -9227,7 +9227,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                         `The item is marked as "${tipoCompRaw}" in the Voucher Type column, not as ` +
                         `${docLabel}. Make sure you're triggering the recipe on the right item.`,
                         `El item está marcado como "${tipoCompRaw}" en la columna Tipo de Comprobante, ` +
-                        `no como ${docLabel}. Verificá que estés disparando la receta sobre el item correcto.`
+                        `no como ${docLabel}. Verificá que sea el item correcto.`
                     ));
                 }
             }
@@ -9486,7 +9486,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                         `This item is issuing a ${docPrev} right now. Wait a few seconds for it to ` +
                         `finish — do NOT trigger the recipe again.`,
                         `Este item está emitiendo una ${docPrev} en este momento. Esperá unos segundos ` +
-                        `a que termine — NO vuelvas a disparar la receta.`
+                        `a que termine — NO vuelvas a ponerlo en el estado que dispara la emisión.`
                     ));
                 } else {
                     throw new Error(L(
@@ -9961,7 +9961,7 @@ async function emitFacturaEHandler(req, res, clase = 'FACTURA') {
                     apiToken: mondayToken, itemId,
                     body: L(
                         `⏳ A ${docLabel} is already being issued for this item. Wait for it to finish — don't trigger the recipe again.`,
-                        `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a disparar la receta.`
+                        `⏳ Ya hay una ${docLabel} en curso para este item. Esperá a que termine — no vuelvas a ponerlo en el estado que dispara la emisión.`
                     ),
                 }).catch(() => {});
                 return;

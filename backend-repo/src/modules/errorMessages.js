@@ -211,7 +211,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
                 : 'Hay campos obligatorios sin completar en el item o en sus subitems.<br/><br/>No se emitió nada.',
             detalle: 'Si alguna de esas columnas no te aparece en el item, revisá el <b>Mapeo Visual</b> en la vista de la app.',
             detail: subitemDetails.length > 0
-                ? 'Completá estas columnas (vacías o con datos inválidos) y volvé a disparar la receta:<br/><br/>' +
+                ? 'Completá estas columnas (vacías o con datos inválidos) y volvé a poner el estado que dispara la emisión:<br/><br/>' +
                   subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
                 : 'Hay campos obligatorios sin completar en el item o en sus subitems.',
             solucion: 'Abrí el item, completá las columnas marcadas con ❌ y reintentá. Si una columna no aparece, revisá el <b>Mapeo Visual</b> en la vista de configuración de la app.',
@@ -279,7 +279,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: 'Es el mismo trámite de la primera vez, y el paso a paso está en esa pantalla.',
             soporte: 'Si te trabás con el trámite en ARCA,',
             detail: 'El certificado que tenés cargado ya venció, y ARCA no acepta comprobantes firmados con un certificado vencido.',
-            solucion: 'Hay que sacar uno nuevo: es el mismo trámite que hiciste la primera vez, y el paso a paso está en la vista de la app → <b>Certificados ARCA</b>. Cuando lo termines de subir, volvé a disparar la receta. Hasta entonces reintentar no sirve.',
+            solucion: 'Hay que sacar uno nuevo: es el mismo trámite que hiciste la primera vez, y el paso a paso está en la vista de la app → <b>Certificados ARCA</b>. Cuando lo termines de subir, volvé a poner el estado que dispara la emisión. Hasta entonces reintentar no sirve.',
         },
         {
             // Errores crudos de la libreria de criptografia cuando el .crt o la .key
@@ -446,7 +446,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             estado: 'No se emitió nada, así que no hay riesgo de duplicado.',
             detalle: 'Si sigue fallando, esperá unos minutos y probá de nuevo.',
             detail: 'Fue un corte de red, no un problema de tus datos. El comprobante <b>no se emitió</b> (no hay duplicado).',
-            solucion: 'Volvé a disparar la receta. Si sigue fallando, esperá unos minutos y reintentá.',
+            solucion: 'Volvé a poner el estado que dispara la emisión. Si sigue fallando, esperá unos minutos y reintentá.',
         },
         {
             // AFIP CONTESTÓ y rechazó el comprobante de exportación por una
@@ -471,7 +471,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detail: 'AFIP respondió, pero no aceptó el comprobante. <b>No se emitió</b> (no hay número quemado).<br/><br/>' +
                 'Lo que dijo AFIP:<br/>' +
                 `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^\[wsfex:\w+\]\s*/, '')}`,
-            solucion: 'Si el mensaje menciona un dato del item (país de destino, fecha de pago, domicilio del cliente), corregilo y volvé a disparar la receta. Si no le encontrás sentido, pasale este mensaje al soporte de la app.',
+            solucion: 'Si el mensaje menciona un dato del item (país de destino, fecha de pago, domicilio del cliente), corregilo y volvé a poner el estado que dispara la emisión. Si no le encontrás sentido, pasale este mensaje al soporte de la app.',
         },
         {
             // AFIP contesta "Computador no autorizado a acceder al servicio" cuando el
@@ -492,7 +492,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: 'No toques ${columna_cuit}: el dato del cliente está bien, el que no contesta es AFIP.',
             soporte: 'Si a la media hora sigue sin salir,',
             detail: 'La app le preguntó a AFIP por los datos del cliente y AFIP no respondió. <b>No es un problema del dato que cargaste</b>: el número está bien formado, el que no contesta es AFIP.',
-            solucion: 'Esperá unos minutos y volvé a disparar la receta sin tocar nada del item. Si a la media hora sigue igual, avisá al soporte de la app.',
+            solucion: 'Esperá unos minutos y volvé a poner el estado que dispara la emisión, sin tocar nada del item. Si a la media hora sigue igual, avisá al soporte de la app.',
         },
         {
             match: /no autorizado a acceder al servicio|computador no autorizado/i,
@@ -509,7 +509,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             estado: 'No se emitió nada.',
             detalle: 'Si tu certificado no aparece en esa lista de AFIP, revisá con qué CUIT lo generaste. Tiene que ser el ${cuit_emisor}.',
             detail: 'AFIP reconoce tu certificado, pero todavía no le diste permiso para emitir comprobantes. <b>No es una caída de AFIP: esperar no lo arregla.</b> Es un trámite de una sola vez.',
-            solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. En "Servicio" seguí este camino: AFIP → WebServices → <b>Facturación Electrónica</b> (está escrito así, mitad en inglés, porque es el nombre que le puso AFIP). En "Representante" elegí el certificado que ya cargaste en la app. Confirmá y volvé a disparar la receta.',
+            solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. En "Servicio" seguí este camino: AFIP → WebServices → <b>Facturación Electrónica</b> (está escrito así, mitad en inglés, porque es el nombre que le puso AFIP). En "Representante" elegí el certificado que ya cargaste en la app. Confirmá y volvé a poner el estado que dispara la emisión.',
         },
         {
             // AFIP [10070]: falta la alicuota IVA en algun subitem. Va antes de la
@@ -670,7 +670,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             estado: "No se emitió nada.",
             detalle: "Para anular una Factura E, la app necesita saber en qué columna está el CAE de la factura que se ajusta.",
             detail: 'Para anular una Factura E, la app necesita saber en qué columna del tablero está el CAE de la factura que se ajusta.',
-            solucion: 'Abrí la vista de la app → <b>Mapeo Visual</b> → en <b>Factura de referencia</b> elegí la columna donde ponés el CAE, y guardá. Después volvé al item y disparalo de nuevo.',
+            solucion: 'Abrí la vista de la app → <b>Mapeo Visual</b> → en <b>Factura de referencia</b> elegí la columna donde ponés el CAE, y guardá. Después volvé al item y poné de nuevo el estado que dispara la emisión.',
         },
         {
             match: /AFIP no tiene un "?CUIT pa[ií]s"?|AFIP has no "?country CUIT"?/i,
@@ -904,7 +904,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             accion: 'En ${columna_tipo} poné <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>, y volvé a poner ${columna_estado} en "${estado_disparo}".',
             estado: 'No se emitió nada.',
             detail: mainMsg,
-            solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Corregí el valor y volvé a disparar la receta.',
+            solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Corregí el valor y volvé a poner el estado que dispara la emisión.',
         },
         {
             // Errores de la columna del CAE de referencia (Nota de Crédito).
@@ -1650,9 +1650,15 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         const comoSe = completo.slice(corte).trim();
         // Solo si las dos partes tienen sustancia; si no, se muestra entero.
         if (causa.length > 12 && comoSe.length > 12) {
-            return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
-                `<b>${A.cause}</b> ${causa}<br/><br/>` +
-                `<b>${A.fix}</b> ${comoSe}`;
+            // La MISMA forma que las reglas: acción primero, después el estado del
+            // comprobante, y al final el por qué. Antes esto salía con la forma
+            // vieja, así que 31 errores —casi todos de Factura E— se leían distinto
+            // del resto sin ninguna razón: son los que no tienen regla propia, pero
+            // eso es un detalle nuestro, no algo que la persona tenga por qué notar.
+            const inicial = comoSe.replace(/^(\p{Ll})/u, (c) => c.toUpperCase());
+            return `<b>❌ ${inicial}</b><br/><br/>` +
+                `${isEn ? 'Nothing was issued.' : 'No se emitió nada.'}<br/><br/>` +
+                `${causa}`;
         }
     }
 

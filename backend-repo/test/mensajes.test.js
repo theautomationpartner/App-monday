@@ -27,6 +27,10 @@ const actualizar = process.argv.includes('--actualizar');
 // El texto genérico: lo que se muestra cuando NINGUNA regla matcheó. Cada error
 // que cae acá es un usuario leyendo "revisá los datos" sin saber cuáles.
 const GENERICO = /Revisá los datos del item y reintentá|Review the item data and retry/;
+// "Receta" es palabra de monday, no del usuario: hay que decirle QUE COLUMNA y
+// QUE ESTADO tocar. Se colaba por los throw del codigo, que el partidor muestra
+// tal cual — 13 lugares.
+const JERGA_MONDAY = /receta/i;
 const CULPA_AFIP = /AFIP no está respondiendo correctamente/;
 
 // Los tableros en inglés usan las MISMAS reglas (los errores llegan en español)
@@ -84,7 +88,8 @@ const causaDe = (html) => {
 const corpus = JSON.parse(fs.readFileSync(CORPUS, 'utf8'));
 const t0 = Date.now();
 
-let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0, datoPerdido = 0;
+let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0, datoPerdido = 0, jerga = 0;
+const detalleJerga = [];
 const detalleHuecos = [];
 const detalleDato = [];
 
@@ -118,6 +123,7 @@ for (const c of corpus) {
         sinRegla++;
         detalleSinRegla.push({ origen: c.origen, msg: msg.slice(0, 74) });
     }
+    if (JERGA_MONDAY.test(html)) { jerga++; detalleJerga.push({ origen: c.origen, trozo: (html.match(/.{0,34}receta.{0,24}/i)||[""])[0].replace(/<[^>]*>/g,"") }); }
     if (CULPA_AFIP.test(html) && !INFRA_LEGITIMA.test(msg)) {
         culpaMal++;
         detalleCulpaMal.push({ origen: c.origen, msg: msg.slice(0, 74) });
@@ -230,6 +236,7 @@ console.log(`    con español escapado ..... ${espanolEnIngles}`);
 console.log('');
 console.log(`  huecos sin rellenar a la vista ... ${huecos}`);
 console.log(`  se comen el dato del error ....... ${datoPerdido}`);
+console.log(`  dicen "receta" (jerga de monday) ... ${jerga}`);
 
 if (detalleSinRegla.length) {
     console.log('\n  LOS QUE CAEN AL GENÉRICO (el usuario lee "revisá los datos" sin saber cuáles):');
@@ -266,6 +273,11 @@ if (detalleDato.length) {
     console.log("\n  SE COMEN EL DATO QUE TRAE EL ERROR (la instrucción apunta al vacío):");
     detalleDato.slice(0, 20).forEach(d => console.log(`     ${d.origen.padEnd(30)} ${d.causa.slice(0, 62)}`));
 }
+if (detalleJerga.length) {
+    console.log('\n  DICEN «RECETA» (el usuario no sabe qué es):');
+    detalleJerga.slice(0,10).forEach(d => console.log(`     ${d.origen.padEnd(28)} ...${d.trozo}...`));
+}
+if (jerga > 0) { console.log(`FALLA: ${jerga} mensaje(s) usan jerga de monday.`); process.exit(1); }
 if (datoPerdido > 0) {
     console.log(`FALLA: ${datoPerdido} mensaje(s) se comen el dato que trae el error.`);
     process.exit(1);
