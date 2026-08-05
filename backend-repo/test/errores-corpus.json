@@ -2,17 +2,17 @@
  {
   "origen": "server.js:62",
   "mensaje": "La empresa no tiene CUIT configurado",
-  "esperado": "La empresa no tiene CUIT configurado"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:163",
   "mensaje": "Documento inválido para consultar padrón: \"…\"",
-  "esperado": "Documento inválido para consultar padrón: \"12345\""
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:1124",
   "mensaje": "No hay secretos configurados (MONDAY_CLIENT_SECRET / MONDAY_SIGNING_SECRET)",
-  "esperado": "No hay secretos configurados (MONDAY_CLIENT_SECRET / MONDAY_SIGNING_SECRET)"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:1353",
@@ -22,12 +22,12 @@
  {
   "origen": "server.js:1462",
   "mensaje": "FECompUltimoAutorizado HTTP …: …",
-  "esperado": "FECompUltimoAutorizado HTTP 12345: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1468",
   "mensaje": "No se pudo obtener último comprobante: …",
-  "esperado": "No se pudo obtener último comprobante: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1541",
@@ -37,12 +37,12 @@
  {
   "origen": "server.js:1545",
   "mensaje": "FECompConsultar HTTP …: …",
-  "esperado": "FECompConsultar HTTP 12345: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1561",
   "mensaje": "FECompConsultar error AFIP: …",
-  "esperado": "FECompConsultar error AFIP: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1679",
@@ -52,37 +52,37 @@
  {
   "origen": "server.js:1683",
   "mensaje": "FEParamGetCotizacion HTTP …: …",
-  "esperado": "FEParamGetCotizacion HTTP 12345: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1693",
   "mensaje": "AFIP rechazo cotizacion …: …",
-  "esperado": "AFIP rechazo cotizacion 12345: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1700",
   "mensaje": "FEParamGetCotizacion devolvio cotizacion invalida para …: \"…\"",
-  "esperado": "FEParamGetCotizacion devolvio cotizacion invalida para 12345: \"12345\""
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:1749",
   "mensaje": "No se pudo serializar la emisión (serie …): otra emisión de la misma serie sigue en curso o el lock quedó trabado (…). Reintentá en unos segundos.",
-  "esperado": "No se pudo serializar la emisión (serie 12345): otra emisión de la misma serie sigue en curso o el lock quedó trabado (12345)."
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:1800",
   "mensaje": "Tipo de factura no soportado: …",
-  "esperado": "Tipo de factura no soportado: 12345"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:1812",
   "mensaje": "Tipo de … no soportado: …",
-  "esperado": "Tipo de 12345 no soportado: 12345"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:1932",
   "mensaje": "[RESERVA_FALLIDA] No se pudo reservar el número de comprobante (cbteNro=…, PV=…, tipo=…) en la base antes de emitir: …. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP. Reintentá en unos segundos.",
-  "esperado": "[RESERVA_FALLIDA] No se pudo reservar el número de comprobante (cbteNro=12345, PV=12345, tipo=12345) en la base antes de emitir: 12345. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP."
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:2099",
@@ -92,7 +92,7 @@
  {
   "origen": "server.js:2152",
   "mensaje": "FECAESolicitar HTTP …: …",
-  "esperado": "FECAESolicitar HTTP 12345: 12345"
+  "esperado": "AFIP no está respondiendo correctamente"
  },
  {
   "origen": "server.js:2196",
@@ -132,7 +132,7 @@
  {
   "origen": "server.js:5991",
   "mensaje": "No se pudo resolver boardId para item …",
-  "esperado": "No se pudo resolver boardId para item 12345"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:6001",
@@ -242,7 +242,7 @@
  {
   "origen": "server.js:6805",
   "mensaje": "reserva de cbteNro no impactó la fila esperada (rowCount=…)",
-  "esperado": "reserva de cbteNro no impactó la fila esperada (rowCount=12345)"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:7563",
@@ -332,7 +332,7 @@
  {
   "origen": "server.js:8073",
   "mensaje": "reserva de cbteNro (NC/ND) no impactó la fila esperada (rowCount=…)",
-  "esperado": "reserva de cbteNro (NC/ND) no impactó la fila esperada (rowCount=12345)"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:8092",
@@ -347,7 +347,7 @@
  {
   "origen": "server.js:8493",
   "mensaje": "El país de destino \"…\" no está en la lista de países de AFIP. Escribilo como lo nombra AFIP….",
-  "esperado": "El país de destino \"12345\" no está en la lista de países de AFIP. Escribilo como lo nombra AFIP12345."
+  "esperado": "El país de destino \"12345\" no está en la lista de países de AFIP."
  },
  {
   "origen": "server.js:8520",
@@ -382,7 +382,7 @@
  {
   "origen": "server.js:8946",
   "mensaje": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E. Cargala en la app → Datos Fiscales (ej: \"Transferencia bancaria\").",
-  "esperado": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E. Cargala en la app → Datos Fiscales (ej: \"Transferencia bancaria\")."
+  "esperado": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E."
  },
  {
   "origen": "server.js:8973",
@@ -392,7 +392,7 @@
  {
   "origen": "server.js:9010",
   "mensaje": "El tablero no tiene mapeadas las columnas de exportación: …. Configuralas en el Mapeo Visual de la app, sección \"Exportación (Factura E)\".",
-  "esperado": "El tablero no tiene mapeadas las columnas de exportación: 12345. Configuralas en el Mapeo Visual de la app, sección \"Exportación (Factura E)\"."
+  "esperado": "El tablero no tiene mapeadas las columnas de exportación: 12345."
  },
  {
   "origen": "server.js:9036",
@@ -437,7 +437,7 @@
  {
   "origen": "server.js:9204",
   "mensaje": "Seleccionaste el Punto de Venta …, pero las Facturas E se emiten siempre desde el punto de venta de exportación (…) configurado en Datos Fiscales — AFIP exige un punto de venta propio para exportación. Cambialo a … o dejá esa columna vacía.",
-  "esperado": "Seleccionaste el Punto de Venta 12345, pero las Facturas E se emiten siempre desde el punto de venta de exportación (12345) configurado en Datos Fiscales — AFIP exige un punto de venta propio para exportación. Cambialo a 12345 o dejá esa columna vacía."
+  "esperado": "Seleccionaste el Punto de Venta 12345, pero las Facturas E se emiten siempre desde el punto de venta de exportación (12345) configurado en Datos Fiscales — AFIP exige un punto de venta propio para exportación."
  },
  {
   "origen": "server.js:9243",
@@ -477,7 +477,7 @@
  {
   "origen": "server.js:9497",
   "mensaje": "No se pudo consultar la cotización de AFIP para … (…). Cargala a mano en la columna de tipo de cambio del item y reintentá. Importante: la exportación exige la cotización ADUANA de AFIP, no la financiera/bancaria — la financiera la rechaza con el error 2053. (Detalle: …)",
-  "esperado": "No se pudo consultar la cotización de AFIP para 12345 (12345). Cargala a mano en la columna de tipo de cambio del item y reintentá. Importante: la exportación exige la cotización ADUANA de AFIP, no la financiera/bancaria — la financiera la rechaza con el error 2053. (Detalle: 12345)"
+  "esperado": "No se pudo consultar la cotización de AFIP para 12345 (12345)."
  },
  {
   "origen": "server.js:9518",
@@ -497,22 +497,22 @@
  {
   "origen": "server.js:9744",
   "mensaje": "reserva del Id WSFEX no impactó la fila esperada (rowCount=…)",
-  "esperado": "reserva del Id WSFEX no impactó la fila esperada (rowCount=12345)"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:9757",
   "mensaje": "reserva de cbteNro (…) no impactó la fila esperada (rowCount=…)",
-  "esperado": "reserva de cbteNro (12345) no impactó la fila esperada (rowCount=12345)"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:9771",
   "mensaje": "[RESERVA_FALLIDA] No se pudo reservar … en la base antes de emitir: …. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP. Reintentá en unos segundos.",
-  "esperado": "[RESERVA_FALLIDA] No se pudo reservar 12345 en la base antes de emitir: 12345. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP."
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:9792",
   "mensaje": "[RECOVERY_MISMATCH] cbteNro=… (PV …, tipo …) ya existe en AFIP con CAE=… pero su importe (…) no coincide con el de esta emisión (…). Probable número pisado por otra emisión — NO se reutiliza, se aborta para revisión manual.",
-  "esperado": "[RECOVERY_MISMATCH] cbteNro=12345 (PV 12345, tipo 12345) ya existe en AFIP con CAE=12345 pero su importe (12345) no coincide con el de esta emisión (12345). Probable número pisado por otra emisión — NO se reutiliza, se aborta para revisión manual."
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "server.js:10726",

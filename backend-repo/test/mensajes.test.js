@@ -30,7 +30,11 @@ const GENERICO = /Revisá los datos del item y reintentá|Review the item data a
 const CULPA_AFIP = /AFIP no está respondiendo correctamente/;
 
 // Errores que SÍ son caídas de infraestructura: acá "AFIP no responde" es correcto.
-const INFRA_LEGITIMA = /^WSAA|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|HTTP\s+5\d\d|loginCms|FEDummy|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timeout tras|SOAP fault/i;
+// Incluye los nombres de los métodos SOAP de AFIP (FECompUltimoAutorizado y
+// compañía): cuando fallan, el mensaje arranca con el nombre del método. Revisé los
+// 8 uno por uno el 2026-08-05 — son HTTP 5xx o errores que devuelve AFIP, ninguno
+// depende de un dato que haya cargado el usuario.
+const INFRA_LEGITIMA = /^WSAA|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|^(FECompUltimoAutorizado|FECompConsultar|FEParamGet\w+|FECAESolicitar)\b|^No se pudo obtener [uú]ltimo comprobante|^AFIP rechazo cotizacion|HTTP\s+5\d\d|loginCms|FEDummy|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timeout tras|SOAP fault/i;
 
 const causaDe = (html) => {
     const m = html.match(/Causa:<\/b>\s*([^<]*)/) || html.match(/Cause:<\/b>\s*([^<]*)/);

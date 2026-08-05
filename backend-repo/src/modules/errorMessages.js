@@ -251,10 +251,24 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             //   loginCms / FEDummy         → nombres propios de AFIP, inconfundibles
             //   ETIMEDOUT y compañía       → códigos de red de Node
             //   "timeout tras Nms"         → el formato que arma afipWsfex
-            match: /^WSAA\b|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|\bHTTP\s+5\d\d\b|\bloginCms\b|\bFEDummy\b|\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|\btimeout tras \d+\s*ms\b|\bSOAP fault\b/i,
+            // Se suman los nombres de los metodos SOAP de AFIP: cuando fallan, el
+            // mensaje arranca con el nombre del metodo y no matcheaba ninguna de las
+            // otras alternativas.
+            match: /^WSAA\b|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|^(FECompUltimoAutorizado|FECompConsultar|FEParamGetCotizacion|FECAESolicitar|FEParamGet\w+)\b|^No se pudo obtener [uú]ltimo comprobante|^AFIP rechazo cotizacion|\bHTTP\s+5\d\d\b|\bloginCms\b|\bFEDummy\b|\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|\btimeout tras \d+\s*ms\b|\bSOAP fault\b/i,
             title: 'AFIP no está respondiendo correctamente',
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
             solucion: 'Esperá unos minutos y volvé a intentarlo. AFIP suele tener cortes breves o mantenimientos. Si después de 30 minutos sigue fallando, avisá al soporte de la app.',
+        },
+        {
+            // Bugs o estados raros NUESTROS. La persona no puede hacer nada con el
+            // detalle tecnico ("rowCount=0", "no hay secretos configurados"): solo la
+            // asusta. Le decimos que es nuestro y que no toque nada. El detalle va al
+            // log, que es donde sirve.
+            // VA DESPUES de las reglas especificas: es una red, no un atajo.
+            match: /rowCount|no impact[oó] la fila|no se pudo serializar|RESERVA_FALLIDA|lock qued[oó]|secretos configurados|MONDAY_CLIENT_SECRET|no se pudo resolver boardId|La empresa no tiene CUIT configurado|Documento inv[aá]lido para consultar padr[oó]n|Tipo de (factura )?\w* ?no soportado|devolvio cotizacion invalida|respuesta sin \w+ legible|sin FEXResultAuth|RECOVERY_MISMATCH/i,
+            title: 'Es un problema nuestro',
+            detail: 'La app se trabó por algo de nuestro lado. <b>No es un dato que hayas cargado mal</b>, así que revisar el item no lo va a resolver.',
+            solucion: 'No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo. Si necesitás emitir hoy, escribinos a <b>arca@theautomationpartner.com</b>.',
         },
         {
             match: /token.*monday|no hay token|sessionToken/i,
@@ -556,9 +570,12 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
     // "Abrí " no tiene frontera de palabra entre la "í" y el espacio, porque \w es
     // solo [A-Za-z0-9_] y la í queda afuera. Por eso se usa (?=\s) — el verbo tiene
     // que venir seguido de un espacio, que es lo que pasa siempre en una instrucción.
+    // El sufijo (l[oa]s?|le|nos)? cubre los enclíticos del imperativo rioplatense:
+    // "Escribilo", "Cargala", "Configuralas", "Corregilo", "Pedile". Sin eso, media
+    // docena de mensajes que YA traían su instrucción seguían cayendo al genérico.
     const IMPERATIVO = isEn
         ? /\b(Open|Go to|Check|Fix|Set|Enter|Write|Upload|Complete|Retry|Choose|Make sure)(?=\s)/
-        : /(^|[\s.—–-])(Abr[ií]|And[aá]|Revis[aá]|Correg[ií]|Pon[eé]|Escrib[ií]|Sub[ií]|Complet[aá]|Reintent[aá]|Eleg[ií]|Carg[aá]|Fijate|Verific[aá]|Cambi[aá]|Dale de alta|Consult[aá]|Ped[ií]le|Volv[eé] a|Asegurate|Tild[aá]|Us[aá]|Copi[aá]|Borr[aá]|Cre[aá])(?=\s)/;
+        : /(^|[\s.—–-])(Abr[ií]|And[aá]|Revis[aá]|Correg[ií]|Pon[eé]|Escrib[ií]|Sub[ií]|Complet[aá]|Reintent[aá]|Eleg[ií]|Carg[aá]|Fijate|Verific[aá]|Cambi[aá]|Dale de alta|Consult[aá]|Ped[ií]|Volv[eé] a|Asegurate|Tild[aá]|Us[aá]|Copi[aá]|Borr[aá]|Cre[aá]|Configur[aá]|Sac[aá]|Dej[aá]|Mir[aá]|Segu[ií])(l[oa]s?|le|nos)?(?=[\s,.])/;
 
     // El mensaje completo, no solo la primera línea: la instrucción suele venir
     // después del punto o en la línea siguiente.
