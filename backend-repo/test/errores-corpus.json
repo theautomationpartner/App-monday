@@ -17,7 +17,7 @@
  {
   "origen": "server.js:1353",
   "mensaje": "Esta es la instancia de PRUEBA (staging) y no puede emitir comprobantes fiscales para este cliente. Eliminá la versión Draft del app en monday (Centro de Desarrollo) y volvé a disparar la receta desde la versión Live.",
-  "esperado": "Esta es la instancia de PRUEBA (staging) y no puede emitir comprobantes fiscales para este cliente. Eliminá la versión Draft del app en monday (Centro de Desarrollo) y volvé a disparar la receta desde la versión Live."
+  "esperado": "Es un problema nuestro de configuración"
  },
  {
   "origen": "server.js:1462",
@@ -97,7 +97,7 @@
  {
   "origen": "server.js:2196",
   "mensaje": "AFIP rechazó la factura: …",
-  "esperado": "AFIP rechazó la factura: 12345"
+  "esperado": "AFIP rechazó el comprobante"
  },
  {
   "origen": "server.js:2386",
@@ -137,7 +137,7 @@
  {
   "origen": "server.js:6001",
   "mensaje": "TEST forzado: error sistema simulado desde item make-errores-",
-  "esperado": "TEST forzado: error sistema simulado desde item make-errores-"
+  "esperado": "Ese nombre de item está reservado"
  },
  {
   "origen": "server.js:6028",
@@ -177,7 +177,7 @@
  {
   "origen": "server.js:6193",
   "mensaje": "El Punto de Venta \"…\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).",
-  "esperado": "El Punto de Venta \"12345\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005)."
+  "esperado": "No pudimos leer el punto de venta"
  },
  {
   "origen": "server.js:6308",
@@ -247,7 +247,7 @@
  {
   "origen": "server.js:7563",
   "mensaje": "No se puede emitir …: • …",
-  "esperado": "No se puede emitir 12345: • 12345"
+  "esperado": "Faltan datos para este comprobante"
  },
  {
   "origen": "server.js:7581",
@@ -282,17 +282,17 @@
  {
   "origen": "server.js:7693",
   "mensaje": "La factura de este item no tiene los datos completos (CAE / número / tipo / punto de venta) para poder referenciarla en una ….",
-  "esperado": "La factura de este item no tiene los datos completos (CAE / número / tipo / punto de venta) para poder referenciarla en una 12345."
+  "esperado": "A la factura referenciada le faltan datos"
  },
  {
   "origen": "server.js:7702",
   "mensaje": "No se pudo determinar la letra de la factura original (tipo='…').",
-  "esperado": "No se pudo determinar la letra de la factura original (tipo='12345')."
+  "esperado": "A la factura referenciada le faltan datos"
  },
  {
   "origen": "server.js:7723",
   "mensaje": "Seleccionaste el Punto de Venta …, pero esta … anula la Factura … N° …-…, que es del Punto de Venta …. La … se emite desde el MISMO punto de venta que la factura — cambiá el Punto de Venta a … o dejá esa columna vacía.",
-  "esperado": "Seleccionaste el Punto de Venta 12345, pero esta 12345 anula la Factura 12345 N° 12345-12345, que es del Punto de Venta 12345. La 12345 se emite desde el MISMO punto de venta que la factura — cambiá el Punto de Venta a 12345 o dejá esa columna vacía."
+  "esperado": "La nota tiene que salir del mismo punto de venta que la factura"
  },
  {
   "origen": "server.js:7767",
@@ -337,7 +337,7 @@
  {
   "origen": "server.js:8092",
   "mensaje": "AFIP no devolvió CAE para la …",
-  "esperado": "AFIP no devolvió CAE para la 12345"
+  "esperado": "AFIP no devolvió el número del comprobante"
  },
  {
   "origen": "server.js:8480",
@@ -367,7 +367,7 @@
  {
   "origen": "server.js:8599",
   "mensaje": "La unidad de medida \"…\" no es una de las de AFIP. Ojo: en la Factura A/B/C esta columna es texto libre (solo se imprime en el PDF), pero la Factura E se la manda a AFIP, así que tiene que ser una de las suyas. Para servicios usá: …. Parecidas: …. Para bienes: …. AFIP no tiene una unidad \"hora\" — las horas se facturan como \"unidades\".",
-  "esperado": "La unidad de medida \"12345\" no es una de las de AFIP. Ojo: en la Factura A/B/C esta columna es texto libre (solo se imprime en el PDF), pero la Factura E se la manda a AFIP, así que tiene que ser una de las suyas. Para servicios usá: 12345. Parecidas: 12345. Para bienes: 12345. AFIP no tiene una unidad \"hora\" — las horas se facturan como \"unidades\"."
+  "esperado": "Esa unidad de medida no existe en AFIP"
  },
  {
   "origen": "server.js:8921",
@@ -387,7 +387,7 @@
  {
   "origen": "server.js:8973",
   "mensaje": "No se puede emitir la Factura E: • …",
-  "esperado": "No se puede emitir la Factura E: • 12345"
+  "esperado": "Faltan datos para este comprobante"
  },
  {
   "origen": "server.js:9010",
@@ -397,7 +397,7 @@
  {
   "origen": "server.js:9036",
   "mensaje": "Para emitir una … hay que mapear la columna que tiene el CAE de la factura de exportación que se ajusta (Mapeo Visual → \"Factura de referencia\").",
-  "esperado": "Para emitir una 12345 hay que mapear la columna que tiene el CAE de la factura de exportación que se ajusta (Mapeo Visual → \"Factura de referencia\")."
+  "esperado": "Falta emparejar la columna del CAE"
  },
  {
   "origen": "server.js:9046",
@@ -412,27 +412,27 @@
  {
   "origen": "server.js:9081",
   "mensaje": "Una Nota de Débito E solo puede referenciar una Factura E, no otra nota.",
-  "esperado": "Una Nota de Débito E solo puede referenciar una Factura E, no otra nota."
+  "esperado": "Esa nota no puede referenciar ese comprobante"
  },
  {
   "origen": "server.js:9088",
   "mensaje": "El comprobante referenciado no es una exportación de servicios — AFIP exige que el comprobante asociado sea del mismo tipo de exportación.",
-  "esperado": "El comprobante referenciado no es una exportación de servicios — AFIP exige que el comprobante asociado sea del mismo tipo de exportación."
+  "esperado": "Esa nota no puede referenciar ese comprobante"
  },
  {
   "origen": "server.js:9096",
   "mensaje": "Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se puede vincular. Contactá al soporte de la app.",
-  "esperado": "Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se puede vincular. Contactá al soporte de la app."
+  "esperado": "A la factura referenciada le faltan datos"
  },
  {
   "origen": "server.js:9170",
   "mensaje": "No se pudo leer la Fecha de Pago (\"…\"). Tiene que ser una columna de fecha con una fecha válida — AFIP la exige en toda Factura E de servicios.",
-  "esperado": "No se pudo leer la Fecha de Pago (\"12345\"). Tiene que ser una columna de fecha con una fecha válida — AFIP la exige en toda Factura E de servicios."
+  "esperado": "Revisá la Fecha de Pago"
  },
  {
   "origen": "server.js:9181",
   "mensaje": "La Fecha de Pago (…) es anterior a la fecha de emisión (…). AFIP rechaza la Factura E con fecha de pago pasada — ponela de hoy en adelante.",
-  "esperado": "La Fecha de Pago (12345) es anterior a la fecha de emisión (12345). AFIP rechaza la Factura E con fecha de pago pasada — ponela de hoy en adelante."
+  "esperado": "Revisá la Fecha de Pago"
  },
  {
   "origen": "server.js:9204",
@@ -467,7 +467,7 @@
  {
   "origen": "server.js:9397",
   "mensaje": "AFIP no tiene un \"CUIT país\" para … con tipo de cliente \"…\" (es lo que pasa con las zonas francas). En ese caso AFIP exige el ID impositivo del cliente: completá la columna \"ID impositivo del cliente\" en el item (y mapeala en el Mapeo Visual si no lo está).",
-  "esperado": "AFIP no tiene un \"CUIT país\" para 12345 con tipo de cliente \"12345\" (es lo que pasa con las zonas francas). En ese caso AFIP exige el ID impositivo del cliente: completá la columna \"ID impositivo del cliente\" en el item (y mapeala en el Mapeo Visual si no lo está)."
+  "esperado": "AFIP no tiene CUIT para ese país"
  },
  {
   "origen": "server.js:9435",
@@ -487,7 +487,7 @@
  {
   "origen": "server.js:9608",
   "mensaje": "La fecha de la … (…) es anterior a la de la factura referenciada (…). AFIP exige que sea igual o posterior.",
-  "esperado": "La fecha de la 12345 (12345) es anterior a la de la factura referenciada (12345). AFIP exige que sea igual o posterior."
+  "esperado": "La nota no puede tener fecha anterior a la factura"
  },
  {
   "origen": "server.js:9670",
@@ -517,17 +517,17 @@
  {
   "origen": "server.js:10726",
   "mensaje": "Item … no encontrado en Monday",
-  "esperado": "Item 12345 no encontrado en Monday"
+  "esperado": "No encontramos el item o la empresa"
  },
  {
   "origen": "server.js:12145",
   "mensaje": "company no encontrada",
-  "esperado": "company no encontrada"
+  "esperado": "No encontramos el item o la empresa"
  },
  {
   "origen": "server.js:12151",
   "mensaje": "certs AFIP faltantes",
-  "esperado": "certs AFIP faltantes"
+  "esperado": "No encontramos el item o la empresa"
  },
  {
   "origen": "modules/afipAuth.js:136",
@@ -567,12 +567,12 @@
  {
   "origen": "modules/afipPadron.js:377",
   "mensaje": "Padrón HTTP …: …",
-  "esperado": "Padrón HTTP 12345: 12345"
+  "esperado": "AFIP no contestó sobre ese documento"
  },
  {
   "origen": "modules/afipPadron.js:467",
   "mensaje": "No se pudo consultar el padrón para el DNI …: …",
-  "esperado": "No se pudo consultar el padrón para el DNI 12345: 12345"
+  "esperado": "AFIP no contestó sobre ese documento"
  },
  {
   "origen": "modules/afipWsfex.js:103",
@@ -627,6 +627,6 @@
  {
   "origen": "modules/invoiceRules.js:134",
   "mensaje": "Tipo de comprobante inválido: …",
-  "esperado": "Tipo de comprobante inválido: 12345"
+  "esperado": "No reconocemos ese tipo de comprobante"
  }
 ]

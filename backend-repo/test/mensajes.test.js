@@ -36,6 +36,19 @@ const CULPA_AFIP = /AFIP no está respondiendo correctamente/;
 // depende de un dato que haya cargado el usuario.
 const INFRA_LEGITIMA = /^WSAA|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|^(FECompUltimoAutorizado|FECompConsultar|FEParamGet\w+|FECAESolicitar)\b|^No se pudo obtener [uú]ltimo comprobante|^AFIP rechazo cotizacion|HTTP\s+5\d\d|loginCms|FEDummy|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|timeout tras|SOAP fault/i;
 
+// Los mensajes del corpus traen "…" donde el código pone una variable. Para
+// probarlos hay que rellenarlo con algo. "12345" alcanza casi siempre, pero en
+// unos pocos produce un mensaje que en la vida real no existe — por ejemplo
+// "AFIP rechazó la factura: 12345", cuando AFIP siempre manda el código entre
+// corchetes. Ahí se usa un ejemplo de verdad, si no el test mide una ficción.
+const REALISTA = [
+    [/^AFIP rechaz[oó] la factura: …$/, 'AFIP rechazó la factura: [10016] El numero o fecha del comprobante no se corresponde con el siguiente a registrar'],
+];
+const rellenar = (texto) => {
+    for (const [re, real] of REALISTA) if (re.test(texto)) return real;
+    return texto.replace(/…/g, '12345');
+};
+
 const causaDe = (html) => {
     const m = html.match(/Causa:<\/b>\s*([^<]*)/) || html.match(/Cause:<\/b>\s*([^<]*)/);
     if (m) return m[1].trim();
@@ -50,7 +63,7 @@ let regresiones = 0, sinRegla = 0, culpaMal = 0;
 const detalleRegresion = [], detalleSinRegla = [], detalleCulpaMal = [];
 
 for (const c of corpus) {
-    const msg = c.mensaje.replace(/…/g, '12345');
+    const msg = rellenar(c.mensaje);
     const html = buildErrorComment(new Error(msg), 'Factura', 'es');
     const causa = causaDe(html);
 

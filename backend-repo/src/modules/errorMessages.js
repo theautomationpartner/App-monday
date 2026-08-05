@@ -259,6 +259,108 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
             solucion: 'Esperá unos minutos y volvé a intentarlo. AFIP suele tener cortes breves o mantenimientos. Si después de 30 minutos sigue fallando, avisá al soporte de la app.',
         },
+        // ── Ultima tanda: los que quedaban sin mensaje propio ────────────────
+        {
+            match: /^No se pudo leer la Fecha de Pago|^La Fecha de Pago .* es anterior/i,
+            title: 'Revisá la Fecha de Pago',
+            detail: mainMsg,
+            solucion: 'Esa columna tiene que ser de tipo Fecha y llevar una fecha de hoy en adelante: es la fecha en la que esperás cobrar, no la de la venta. AFIP la exige en toda Factura E de servicios y no acepta una fecha pasada.',
+        },
+        {
+            match: /^La fecha de la .* es anterior a la de la factura referenciada/i,
+            title: 'La nota no puede tener fecha anterior a la factura',
+            detail: mainMsg,
+            solucion: 'Cambiá la Fecha de Emisión del item para que sea igual o posterior a la de la factura que estás anulando. AFIP no acepta una nota fechada antes que su factura.',
+        },
+        {
+            match: /^La unidad de medida ".*" no es una de las de AFIP/i,
+            title: 'Esa unidad de medida no existe en AFIP',
+            detail: mainMsg,
+            solucion: 'En la Factura E la unidad tiene que ser una de la lista de AFIP: <b>unidades</b>, <b>kilogramos</b>, <b>metros</b>, <b>litros</b>, <b>horas</b>, <b>docenas</b>, <b>toneladas</b>. En las facturas A, B y C esta columna es texto libre y solo se imprime en el PDF, por eso ahí no molesta.',
+        },
+        {
+            match: /hay que mapear la columna que tiene el CAE de la factura de exportaci[oó]n/i,
+            title: 'Falta emparejar la columna del CAE',
+            detail: 'Para anular una Factura E, la app necesita saber en qué columna del tablero está el CAE de la factura que se ajusta.',
+            solucion: 'Abrí la vista de la app → <b>Mapeo Visual</b> → en <b>Factura de referencia</b> elegí la columna donde ponés el CAE, y guardá. Después volvé al item y disparalo de nuevo.',
+        },
+        {
+            match: /AFIP no tiene un "?CUIT pa[ií]s"?/i,
+            title: 'AFIP no tiene CUIT para ese país',
+            detail: mainMsg,
+            solucion: 'Completá la columna <b>ID impositivo del cliente</b> del item con el número de identificación fiscal que use tu cliente en su país. Cuando AFIP no tiene un CUIT genérico para ese destino, ese dato pasa a ser obligatorio.',
+        },
+        {
+            match: /^Esta es la instancia de PRUEBA \(staging\)/i,
+            title: 'Es un problema nuestro de configuración',
+            detail: 'La emisión entró por una copia de la app que no emite comprobantes fiscales.',
+            solucion: 'Ya nos llegó el aviso y lo destrabamos en el momento. Hasta que te confirmemos no vuelvas a intentarlo: va a dar el mismo error. Si necesitás emitir hoy, escribinos a <b>arca@theautomationpartner.com</b>.',
+        },
+        {
+            match: /^TEST forzado: error sistema simulado/i,
+            title: 'Ese nombre de item está reservado',
+            detail: 'El item se llama igual que el nombre que usamos internamente para probar los avisos de error, así que la app cortó a propósito.',
+            solucion: 'Cambiale el nombre al item por cualquier otro y volvé a poner el estado que dispara la emisión.',
+        },
+        {
+            match: /^El Punto de Venta ".*" no es v[aá]lido|punto de venta habilitado en AFIP para web/i,
+            title: 'No pudimos leer el punto de venta',
+            detail: mainMsg,
+            solucion: 'En esa columna va solamente el número del punto de venta (1, 5, 0005). Si querés seguir viendo el nombre del local en el tablero, dejá el número ahí y usá otra columna aparte para el nombre.',
+        },
+        {
+            // La NC/ND tiene que salir del MISMO punto de venta que la factura que
+            // anula: AFIP lleva la numeracion por punto de venta.
+            match: /pero esta .* anula la Factura .* que es del Punto de Venta|se emite desde el MISMO/i,
+            title: 'La nota tiene que salir del mismo punto de venta que la factura',
+            detail: mainMsg,
+            solucion: 'Cambiá el punto de venta del item para que coincida con el de la factura que estás anulando, o dejá esa columna vacía y la app usa el correcto sola.',
+        },
+        {
+            match: /no tiene los datos completos \(CAE|no se pudo determinar la letra de la factura original|le faltan tipo \/ punto de venta \/ n[uú]mero/i,
+            title: 'A la factura referenciada le faltan datos',
+            detail: 'La factura que estás anulando quedó guardada sin todos los datos que AFIP pide para vincularla (CAE, número, tipo o punto de venta).',
+            solucion: 'Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero. Si es la correcta y aun así falla, escribinos a <b>arca@theautomationpartner.com</b>: lo tenemos que destrabar nosotros.',
+        },
+        {
+            match: /Una Nota de D[eé]bito E solo puede referenciar|no es una exportaci[oó]n de servicios/i,
+            title: 'Esa nota no puede referenciar ese comprobante',
+            detail: mainMsg,
+            solucion: 'Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios, no el de otra nota ni el de una exportación de bienes.',
+        },
+        {
+            match: /^No se puede emitir(?: la Factura E)?[^:]*:\s*•/i,
+            title: 'Faltan datos para este comprobante',
+            detail: subitemDetails.length > 0
+                ? 'Completá esto y volvé a intentar:<br/><br/>' +
+                  subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>')
+                : mainMsg,
+            solucion: 'Corregí en el item lo que está marcado con ❌ y volvé a poner el estado que dispara la emisión.',
+        },
+        {
+            match: /AFIP no devolvi[oó] CAE para/i,
+            title: 'AFIP no devolvió el número del comprobante',
+            detail: 'AFIP contestó, pero sin el CAE. <b>No se emitió nada</b>: sin CAE no hay comprobante.',
+            solucion: 'Volvé a poner el estado que dispara la emisión. Si falla tres veces seguidas, esperá 15 minutos y probá otra vez. Si a la hora sigue igual, escribinos a <b>arca@theautomationpartner.com</b>.',
+        },
+        {
+            match: /^Item \d+ no encontrado en Monday|^company no encontrada|^certs AFIP faltantes/i,
+            title: 'No encontramos el item o la empresa',
+            detail: 'La app no pudo leer el item, o la empresa que factura no está cargada.',
+            solucion: 'Fijate si el item sigue en el tablero (mirá también la papelera de monday). Si está, revisá que la empresa esté cargada en la app → <b>Datos Fiscales</b>, con su certificado en <b>Certificados ARCA</b>.',
+        },
+        {
+            match: /^Padr[oó]n HTTP|^No se pudo consultar el padr[oó]n para el DNI/i,
+            title: 'AFIP no contestó sobre ese documento',
+            detail: 'La app le preguntó a AFIP por los datos del cliente y no obtuvo respuesta. <b>No es un problema del número que cargaste.</b>',
+            solucion: 'Esperá unos minutos y volvé a poner el estado que dispara la emisión, sin tocar nada del item. Si a la media hora sigue igual, escribinos.',
+        },
+        {
+            match: /^Tipo de comprobante inv[aá]lido/i,
+            title: 'No reconocemos ese tipo de comprobante',
+            detail: mainMsg,
+            solucion: 'En la columna Tipo de Comprobante dejá exactamente uno de estos, con el nombre completo: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E o Nota de Débito E. Las abreviaturas (NC, ND, Fact) no las tomamos.',
+        },
         {
             // Bugs o estados raros NUESTROS. La persona no puede hacer nada con el
             // detalle tecnico ("rowCount=0", "no hay secretos configurados"): solo la
