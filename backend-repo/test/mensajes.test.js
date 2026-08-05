@@ -54,6 +54,10 @@ const INFRA_LEGITIMA = /^WSAA|^Error autenticando en WSAA|^WSFE \w+ falló tras|
 // corchetes. Ahí se usa un ejemplo de verdad, si no el test mide una ficción.
 const REALISTA = [
     [/^AFIP rechaz[oó] la factura: …$/, 'AFIP rechazó la factura: [10016] El numero o fecha del comprobante no se corresponde con el siguiente a registrar'],
+    // El extractor no llegó a aplanar la concatenación del template y dejó el
+    // código JS crudo en el texto. En la app real el mensaje son los bullets.
+    [/^Can't issue the Export Invoice:/, "Can't issue the Export Invoice:\n• Destination Country is empty"],
+    [/^No se puede emitir la Factura E:/, 'No se puede emitir la Factura E:\n• Falta el País de Destino'],
 ];
 const rellenar = (texto) => {
     for (const [re, real] of REALISTA) if (re.test(texto)) return real;
@@ -76,7 +80,11 @@ const detalleSinReglaEn = [], detalleEspanol = [];
 
 for (const c of corpus) {
     const msg = rellenar(c.mensaje);
-    const html = buildErrorComment(new Error(msg), 'Factura', 'es');
+    // Cada entrada se rinde en SU idioma. Las marcadas 'en' son el texto que el
+    // código tira de verdad en un tablero en inglés — no la traducción del
+    // español. Es la diferencia entre medir la app y medir una hipótesis.
+    const idioma = c.idioma || 'es';
+    const html = buildErrorComment(new Error(msg), 'Factura', idioma);
     const causa = causaDe(html);
 
     if (actualizar) { c.esperado = causa; continue; }
@@ -94,8 +102,11 @@ for (const c of corpus) {
         detalleCulpaMal.push({ origen: c.origen, msg: msg.slice(0, 74) });
     }
 
-    // El mismo error, pero pedido como lo pediría un tablero en inglés.
-    const htmlEn = buildErrorComment(new Error(msg), 'Factura', 'en');
+    // Los mensajes en español TAMBIÉN llegan a tableros en inglés: solo 42 de los
+    // ~126 throws pasan por el helper de traducción, el resto tira español sin
+    // importar el idioma del board. Así que un board en inglés ve las dos cosas y
+    // hay que probar las dos.
+    const htmlEn = idioma === 'en' ? html : buildErrorComment(new Error(msg), 'Factura', 'en');
     if (GENERICO_EN.test(htmlEn)) {
         sinReglaEn++;
         detalleSinReglaEn.push({ origen: c.origen, msg: msg.slice(0, 74) });

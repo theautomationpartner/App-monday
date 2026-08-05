@@ -47,7 +47,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         {
             // Item incompleto = validateItemDataCompleteness (o el ruteo) falló.
             // El detalle de QUÉ columnas faltan viene en los bullets del mensaje.
-            match: /Item incompleto/i,
+            match: /Item incompleto|Item incomplete/i,
             title: 'Faltan datos en el item',
             detail: subitemDetails.length > 0
                 ? 'Completá estas columnas (vacías o con datos inválidos) y volvé a disparar la receta:<br/><br/>' +
@@ -62,7 +62,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Abrí la vista de la app → sección <b>Mapeo Visual</b> → seleccioná las columnas y guardá.',
         },
         {
-            match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0/i,
+            match: /no hay.*subitems|no hay líneas|sin.*subitems|validLines.*0|no valid lines in the subitems/i,
             title: 'Subitems incompletos o faltantes',
             detail: subitemDetails.length > 0
                 ? 'Los siguientes subitems tienen campos vacíos o inválidos:<br/>' +
@@ -75,7 +75,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // Sin esta entrada el comentario cae al fallback, que muestra SOLO la
             // primera línea del mensaje y se come el detalle — que es justamente
             // lo único que le sirve al usuario para saber dónde tocar.
-            match: /importes de bonificaci[oó]n/i,
+            match: /importes de bonificaci[oó]n|discount amounts/i,
             title: 'Problemas con la bonificación de los subitems',
             detail: subitemDetails.length > 0
                 ? 'Revisá estos subitems:<br/><br/>' +
@@ -84,7 +84,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'La bonificación es un <b>importe</b> (no un porcentaje), se aplica al <b>total de la línea</b> (cantidad × precio) y va en la <b>misma moneda que el precio unitario</b>. No puede ser negativa ni superar el total de la línea.',
         },
         {
-            match: /bonificaciones se comieron/i,
+            match: /bonificaciones se comieron|discounts consumed the entire/i,
             title: 'El comprobante quedó en cero',
             detail: mainMsg,
             solucion: 'Bajá los importes de bonificación para que el total sea mayor a cero — AFIP rechaza los comprobantes con total cero o negativo.',
@@ -124,7 +124,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // no, esa le dice "subi el certificado" y el usuario lo sube de nuevo
             // veinte veces sin que cambie nada, porque el certificado nunca fue el
             // problema.
-            match: /acceso al web service de exportaci[oó]n|no est[aá] delegado a ese servicio/i,
+            match: /acceso al web service de exportaci[oó]n|no est[aá] delegado a ese servicio|access to the export web service|not delegated to that service/i,
             title: 'Falta habilitar la facturación de exportación en AFIP',
             detail: 'AFIP reconoce tu certificado para las facturas comunes, pero la <b>exportación es un permiso aparte</b> que todavía no está dado. <b>No hace falta subir el certificado de nuevo</b>: es el mismo, le falta el permiso.',
             solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación → Servicio → AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>. En "Representante" elegí el mismo certificado que ya usás para las facturas comunes. Confirmá y volvé a intentar.',
@@ -140,7 +140,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → subí el certificado (.crt) y la clave (.key). Si todavía no los sacaste, el paso a paso está en esa misma pantalla: se hace una sola vez y dura dos años.',
         },
         {
-            match: /Configuración incompleta/i,
+            match: /Configuración incompleta|incomplete configuration/i,
             title: 'Falta terminar de configurar la app',
             detail: mainMsg,
             solucion: 'Abrí la vista de la app → completá los pasos pendientes en <b>Mapeo Visual</b>. Asegurate de mapear todas las columnas obligatorias.',
@@ -160,7 +160,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // que dispara la guardia cross-tipo (factura sobre item con NC/ND
             // y viceversa): "ya emitió", "está emitiendo" (concurrente), y
             // "tiene una ... con número reservado en AFIP pero sin confirmar".
-            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)/i,
+            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)|this item (already issued|is issuing|has a .{0,20}with a number reserved)/i,
             title: 'Este item ya tiene un comprobante',
             detail: mainMsg,
             solucion: 'Cada item corresponde a <b>un solo comprobante</b>. Para emitir otro — o la Nota de Crédito de esta factura — creá un <b>item nuevo</b> en el tablero. La NC referencia la factura por su CAE.',
@@ -289,31 +289,31 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
         },
         // ── Ultima tanda: los que quedaban sin mensaje propio ────────────────
         {
-            match: /^No se pudo leer la Fecha de Pago|^La Fecha de Pago .* es anterior/i,
+            match: /^No se pudo leer la Fecha de Pago|^La Fecha de Pago .* es anterior|^Couldn.t read the Payment Date|^The Payment Date .* is earlier/i,
             title: 'Revisá la Fecha de Pago',
             detail: mainMsg,
             solucion: 'Esa columna tiene que ser de tipo Fecha y llevar una fecha de hoy en adelante: es la fecha en la que esperás cobrar, no la de la venta. AFIP la exige en toda Factura E de servicios y no acepta una fecha pasada.',
         },
         {
-            match: /^La fecha de la .* es anterior a la de la factura referenciada/i,
+            match: /^La fecha de la .* es anterior a la de la factura referenciada|^The .{0,24} date .* is earlier than the referenced invoice/i,
             title: 'La nota no puede tener fecha anterior a la factura',
             detail: mainMsg,
             solucion: 'Cambiá la Fecha de Emisión del item para que sea igual o posterior a la de la factura que estás anulando. AFIP no acepta una nota fechada antes que su factura.',
         },
         {
-            match: /^La unidad de medida ".*" no es una de las de AFIP/i,
+            match: /^La unidad de medida ".*" no es una de las de AFIP|^The unit of measure ".*" is not one of AFIP/i,
             title: 'Esa unidad de medida no existe en AFIP',
             detail: mainMsg,
             solucion: 'En la Factura E la unidad tiene que ser una de la lista de AFIP: <b>unidades</b>, <b>kilogramos</b>, <b>metros</b>, <b>litros</b>, <b>horas</b>, <b>docenas</b>, <b>toneladas</b>. En las facturas A, B y C esta columna es texto libre y solo se imprime en el PDF, por eso ahí no molesta.',
         },
         {
-            match: /hay que mapear la columna que tiene el CAE de la factura de exportaci[oó]n/i,
+            match: /hay que mapear la columna que tiene el CAE de la factura de exportaci[oó]n|you must map the column that holds the CAE/i,
             title: 'Falta emparejar la columna del CAE',
             detail: 'Para anular una Factura E, la app necesita saber en qué columna del tablero está el CAE de la factura que se ajusta.',
             solucion: 'Abrí la vista de la app → <b>Mapeo Visual</b> → en <b>Factura de referencia</b> elegí la columna donde ponés el CAE, y guardá. Después volvé al item y disparalo de nuevo.',
         },
         {
-            match: /AFIP no tiene un "?CUIT pa[ií]s"?/i,
+            match: /AFIP no tiene un "?CUIT pa[ií]s"?|AFIP has no "?country CUIT"?/i,
             title: 'AFIP no tiene CUIT para ese país',
             detail: mainMsg,
             solucion: 'Completá la columna <b>ID impositivo del cliente</b> del item con el número de identificación fiscal que use tu cliente en su país. Cuando AFIP no tiene un CUIT genérico para ese destino, ese dato pasa a ser obligatorio.',
@@ -345,19 +345,19 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Cambiá el punto de venta del item para que coincida con el de la factura que estás anulando, o dejá esa columna vacía y la app usa el correcto sola.',
         },
         {
-            match: /no tiene los datos completos \(CAE|no se pudo determinar la letra de la factura original|le faltan tipo \/ punto de venta \/ n[uú]mero/i,
+            match: /no tiene los datos completos \(CAE|no se pudo determinar la letra de la factura original|le faltan tipo \/ punto de venta \/ n[uú]mero|is missing its type \/ point of sale \/ number/i,
             title: 'A la factura referenciada le faltan datos',
             detail: 'La factura que estás anulando quedó guardada sin todos los datos que AFIP pide para vincularla (CAE, número, tipo o punto de venta).',
             solucion: 'Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero. Si es la correcta y aun así falla, escribinos a <b>arca@theautomationpartner.com</b>: lo tenemos que destrabar nosotros.',
         },
         {
-            match: /Una Nota de D[eé]bito E solo puede referenciar|no es una exportaci[oó]n de servicios/i,
+            match: /Una Nota de D[eé]bito E solo puede referenciar|no es una exportaci[oó]n de servicios|An Export Debit Note can only reference|is not a services export/i,
             title: 'Esa nota no puede referenciar ese comprobante',
             detail: mainMsg,
             solucion: 'Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios, no el de otra nota ni el de una exportación de bienes.',
         },
         {
-            match: /^No se puede emitir(?: la Factura E)?[^:]*:\s*•/i,
+            match: /^No se puede emitir(?: la Factura E)?[^:]*:\s*•|^Can.t issue(?: the Export Invoice)?[^:]*:\s*•/i,
             title: 'Faltan datos para este comprobante',
             detail: subitemDetails.length > 0
                 ? 'Completá esto y volvé a intentar:<br/><br/>' +
@@ -407,19 +407,19 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Cerrá la vista de la app y volvé a abrirla. Si el error sigue, desinstalá la app desde el tablero y volvé a instalarla desde el Marketplace de Monday.',
         },
         {
-            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta/i,
+            match: /fechas de servicio obligatorias|fecha servicio desde|fecha servicio hasta|missing required service dates/i,
             title: 'Fechas de servicio obligatorias',
             detail: mainMsg,
             solucion: 'Completá las columnas <b>Fecha Servicio Desde</b> y <b>Fecha Servicio Hasta</b> en el item. Son obligatorias cuando los subitems incluyen servicios.',
         },
         {
-            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva/i,
+            match: /alícuota iva incompatible con factura c|nota de crédito c no lleva iva|vat rate incompatible with invoice c/i,
             title: 'El comprobante C no lleva IVA',
             detail: mainMsg,
             solucion: 'Los comprobantes C (Factura o Nota de Crédito) no discriminan IVA porque el emisor es Monotributista o Exento. Abrí los subítems del item y poné la columna <b>Alícuota IVA %</b> en <b>0</b> en todos. Después reintentá.',
         },
         {
-            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida/i,
+            match: /alícuotas? iva diferentes|alícuotas? iva faltante|alícuota iva no válida|different vat rates|missing vat rate|invalid vat rate/i,
             title: 'Alícuota IVA inválida',
             detail: subitemDetails.length > 0
                 ? 'Los subitems tienen alícuotas IVA diferentes:<br/>' +
@@ -428,32 +428,32 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Todos los subitems de una factura deben tener la <b>misma alícuota IVA</b>. Revisá la columna Alícuota IVA % y asegurate de que todos los subitems tengan el mismo valor (0, 2.5, 5, 10.5, 21 o 27).',
         },
         {
-            match: /tipo de comprobante no reconocido/i,
+            match: /tipo de comprobante no reconocido|voucher type not recognized/i,
             title: 'Tipo de Comprobante no reconocido',
             detail: mainMsg,
             solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Corregí el valor y volvé a disparar la receta.',
         },
         {
             // Errores de la columna del CAE de referencia (Nota de Crédito).
-            match: /cae de referencia|columna del cae|no se encontró ninguna factura/i,
+            match: /cae de referencia|columna del cae|no se encontró ninguna factura|reference CAE (column )?is (empty|missing)|no invoice.{0,20}found with cae/i,
             title: 'No se pudo identificar la factura a anular',
             detail: mainMsg,
             solucion: 'En el item de la Nota de Crédito, pegá en la columna del <b>CAE</b> el código de 14 dígitos de la factura que querés anular. Lo sacás del PDF de esa factura o del comentario que dejó la app cuando se emitió.',
         },
         {
-            match: /item de nota de (cr[eé]dito|d[eé]bito) no tiene sub[ií]tems/i,
+            match: /item de nota de (cr[eé]dito|d[eé]bito) no tiene sub[ií]tems|(credit|debit) note item has no subitems/i,
             title: 'La Nota de Crédito no tiene líneas para acreditar',
             detail: mainMsg,
             solucion: 'Agregá como <b>subítems</b> del item lo que querés acreditar — cada línea con Concepto, Cantidad y Precio. La Nota de Crédito se emite por la suma de esos subítems.',
         },
         {
-            match: /supera el saldo disponible de la factura/i,
+            match: /supera el saldo disponible de la factura|exceeds the (invoice.{0,3}s )?available (invoice )?balance/i,
             title: 'La Nota de Crédito supera el saldo de la factura',
             detail: mainMsg,
             solucion: 'No se puede acreditar más de lo que se facturó. Bajá los importes de los subítems para que el total no supere el <b>saldo disponible</b> indicado arriba.',
         },
         {
-            match: /alícuota iva de la nota de crédito.*no coincide/i,
+            match: /alícuota iva de la nota de crédito.*no coincide|vat rate.{0,20}doesn.t match the invoice/i,
             title: 'La alícuota IVA de la Nota de Crédito no coincide con la factura',
             detail: mainMsg,
             solucion: 'La Nota de Crédito se acredita con el mismo IVA que se facturó. Ajustá la columna <b>Alícuota IVA %</b> de los subítems para que coincida con la de la factura original.',
@@ -780,7 +780,12 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
     // "Escribilo", "Cargala", "Configuralas", "Corregilo", "Pedile". Sin eso, media
     // docena de mensajes que YA traían su instrucción seguían cayendo al genérico.
     const IMPERATIVO_ES = /(^|[\s.—–-])(Abr[ií]|And[aá]|Revis[aá]|Correg[ií]|Pon[eé]|Escrib[ií]|Sub[ií]|Complet[aá]|Reintent[aá]|Eleg[ií]|Carg[aá]|Fijate|Verific[aá]|Cambi[aá]|Dale de alta|Consult[aá]|Ped[ií]|Volv[eé] a|Asegurate|Tild[aá]|Us[aá]|Copi[aá]|Borr[aá]|Cre[aá]|Configur[aá]|Sac[aá]|Dej[aá]|Mir[aá]|Segu[ií])(l[oa]s?|le|nos)?(?=[\s,.])/;
-    const IMPERATIVO_EN = /\b(Open|Go to|Check|Fix|Set|Enter|Write|Upload|Complete|Retry|Choose|Make sure)(?=\s)/;
+    // La lista corta de antes (Open|Go to|Check|Fix|Set|Enter|Write|Upload|Complete|
+    // Retry|Choose|Make sure) dejaba afuera los verbos con los que arrancan la mitad
+    // de nuestras instrucciones en inglés: Add, Paste, Try again, Wait, Lower, Adjust.
+    // Un mensaje que decía "Add the services you're exporting as subitems" caía al
+    // genérico igual que si no dijera nada.
+    const IMPERATIVO_EN = /\b(Open|Go to|Check|Fix|Set|Enter|Write|Upload|Complete|Retry|Try again|Choose|Make sure|Add|Paste|Wait|Lower|Adjust|Change|Pick|Rename|Contact|Copy|Create|Leave|Look|Fill|Use|Configure|Remove|Review|Trigger|Ask)(?=\s)/;
 
     // El mensaje completo, no solo la primera línea: la instrucción suele venir
     // después del punto o en la línea siguiente.

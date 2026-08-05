@@ -628,5 +628,239 @@
   "origen": "modules/invoiceRules.js:134",
   "mensaje": "Tipo de comprobante inválido: …",
   "esperado": "No reconocemos ese tipo de comprobante"
+ },
+ {
+  "origen": "server.js:2424",
+  "mensaje": "No valid lines in the subitems.",
+  "idioma": "en",
+  "esperado": "Incomplete or missing subitems"
+ },
+ {
+  "origen": "server.js:2439",
+  "mensaje": "Missing VAT rate in subitems: …\"`).join(', ')}.",
+  "idioma": "en",
+  "esperado": "Incomplete or missing subitems"
+ },
+ {
+  "origen": "server.js:2448",
+  "mensaje": "Different VAT rates across subitems.",
+  "idioma": "en",
+  "esperado": "Invalid VAT rate"
+ },
+ {
+  "origen": "server.js:2458",
+  "mensaje": "Invalid VAT rate: …%.",
+  "idioma": "en",
+  "esperado": "Invalid VAT rate"
+ },
+ {
+  "origen": "server.js:2485",
+  "mensaje": "Problems with the discount amounts:",
+  "idioma": "en",
+  "esperado": "Problems with the subitem discounts"
+ },
+ {
+  "origen": "server.js:2514",
+  "mensaje": "The voucher total is …. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.",
+  "idioma": "en",
+  "esperado": "The voucher total came out as zero"
+ },
+ {
+  "origen": "server.js:8637",
+  "mensaje": "The destination country \"…\" is ambiguous — it matches several AFIP entries: …\"`).join(', ')}. Write the exact name of the one you need in the column.",
+  "idioma": "en",
+  "esperado": "The destination country \"12345\" is ambiguous — it matches several AFIP entries: 12345\"`).join(', ')}."
+ },
+ {
+  "origen": "server.js:8650",
+  "mensaje": "The destination country \"…\" is not in AFIP's country list.\nUse the country's name in English (e.g. \"Brazil\", \"United States\") or exactly as AFIP names it…` : ''}.",
+  "idioma": "en",
+  "esperado": "The destination country \"12345\" is not in AFIP's country list."
+ },
+ {
+  "origen": "server.js:8677",
+  "mensaje": "AFIP's currency table doesn't include Argentine pesos (\"PES\"). Try again in a few minutes.",
+  "idioma": "en",
+  "esperado": "AFIP's currency table doesn't include Argentine pesos (\"PES\")."
+ },
+ {
+  "origen": "server.js:8703",
+  "mensaje": "The currency \"…\" is ambiguous — it matches several AFIP entries: …\" (…)`).join(', ')}. Write the exact name or AFIP's code in the column.",
+  "idioma": "en",
+  "esperado": "The currency \"12345\" is ambiguous — it matches several AFIP entries: 12345\" (12345)`).join(', ')}."
+ },
+ {
+  "origen": "server.js:8714",
+  "mensaje": "The currency \"…\" is not in AFIP's currency list.\nCareful: AFIP's codes are NOT the ISO ones (the euro is not \"EUR\"). Write the name as AFIP publishes it, or its code.",
+  "idioma": "en",
+  "esperado": "The currency \"12345\" is not in AFIP's currency list.\nCareful: AFIP's codes are NOT the ISO ones (the euro is not \"EUR\")."
+ },
+ {
+  "origen": "server.js:8756",
+  "mensaje": "The unit of measure \"…\" is not one of AFIP's units.\nHeads up: in Factura A/B/C this column is free text (it only shows on the PDF), but Factura E sends it to AFIP, so it has to be one of theirs.\nFor services use: ….` +\n            (parecidas.length ? `\nSimilar ones: ….` : '') +\n            (comunes.length ? `\nFor goods: ….` : '') +\n            `\nAFIP has no \"hour\" unit — bill hours as \"unidades\".",
+  "idioma": "en",
+  "esperado": "That unit of measure doesn't exist in AFIP"
+ },
+ {
+  "origen": "server.js:9127",
+  "mensaje": "This company doesn't have export invoicing enabled.\nOpen the app → Tax Details, tick \"I issue Factura E (exports)\" and complete the export point of sale before issuing.",
+  "idioma": "en",
+  "esperado": "This company doesn't have export invoicing enabled."
+ },
+ {
+  "origen": "server.js:9138",
+  "mensaje": "The export point of sale is not configured.\nOpen the app → Tax Details and pick your export point of sale (AFIP requires a point of sale of type \"Comprobantes de Exportación - Web Services\", different from the local one).",
+  "idioma": "en",
+  "esperado": "The export point of sale is not configured."
+ },
+ {
+  "origen": "server.js:9152",
+  "mensaje": "The export payment method is not configured.\nAFIP requires it on every Factura E. Set it in the app → Tax Details (e.g. \"Transferencia bancaria\").",
+  "idioma": "en",
+  "esperado": "The export payment method is not configured.\nAFIP requires it on every Factura E."
+ },
+ {
+  "origen": "server.js:9179",
+  "mensaje": "Can't issue the Export Invoice:\n` + feReceptorErrors.map((e) => `• …`).join('\n')",
+  "idioma": "en",
+  "esperado": "Missing data for this voucher"
+ },
+ {
+  "origen": "server.js:9199",
+  "mensaje": "The item is marked as \"…\" in the Voucher Type column, not as …. Make sure you're triggering the recipe on the right item.",
+  "idioma": "en",
+  "esperado": "The item is marked as \"12345\" in the Voucher Type column, not as 12345."
+ },
+ {
+  "origen": "server.js:9216",
+  "mensaje": "The board doesn't have the export columns mapped: ….\nConfigure them in the app's Visual Mapping, \"Exports (Factura E)\" section.",
+  "idioma": "en",
+  "esperado": "The board doesn't have the export columns mapped: 12345."
+ },
+ {
+  "origen": "server.js:9242",
+  "mensaje": "To issue an … you must map the column that holds the CAE of the export invoice being adjusted (Visual Mapping → \"Invoice reference\").",
+  "idioma": "en",
+  "esperado": "The CAE column has not been mapped"
+ },
+ {
+  "origen": "server.js:9252",
+  "mensaje": "The reference CAE is missing or invalid…\")` : ''}. An AFIP CAE has 14 digits — copy it exactly from the export invoice PDF.",
+  "idioma": "en",
+  "esperado": "Couldn't identify the invoice to cancel"
+ },
+ {
+  "origen": "server.js:9272",
+  "mensaje": "No export voucher issued by the app was found with CAE …. Check the CAE and that the invoice was issued from this same board.",
+  "idioma": "en",
+  "esperado": "No export voucher issued by the app was found with CAE 12345."
+ },
+ {
+  "origen": "server.js:9287",
+  "mensaje": "An Export Debit Note can only reference an Export Invoice, not another note.",
+  "idioma": "en",
+  "esperado": "That note can't reference that voucher"
+ },
+ {
+  "origen": "server.js:9294",
+  "mensaje": "The referenced voucher is not a services export — AFIP requires the associated voucher to be of the same export type.",
+  "idioma": "en",
+  "esperado": "That note can't reference that voucher"
+ },
+ {
+  "origen": "server.js:9302",
+  "mensaje": "The referenced voucher is missing its type / point of sale / number, so it can't be linked. Contact the app's support.",
+  "idioma": "en",
+  "esperado": "The referenced invoice is missing data"
+ },
+ {
+  "origen": "server.js:9361",
+  "mensaje": "Item incomplete — fix the following before issuing:",
+  "idioma": "en",
+  "esperado": "Missing item data"
+ },
+ {
+  "origen": "server.js:9376",
+  "mensaje": "Couldn't read the Payment Date (\"…\"). It must be a date column with a valid date — AFIP requires it on every Factura E for services.",
+  "idioma": "en",
+  "esperado": "Check the Payment Date"
+ },
+ {
+  "origen": "server.js:9387",
+  "mensaje": "The Payment Date (…) is earlier than the issue date (…). AFIP rejects Factura E with a payment date in the past — set it to today or later.",
+  "idioma": "en",
+  "esperado": "Check the Payment Date"
+ },
+ {
+  "origen": "server.js:9410",
+  "mensaje": "You selected Point of Sale …, but Export Invoices are always issued from the export point of sale (…) configured in Tax Details — AFIP requires a dedicated point of sale for exports. Change it to … or leave that column empty.",
+  "idioma": "en",
+  "esperado": "You selected Point of Sale 12345, but Export Invoices are always issued from the export point of sale (12345) configured in Tax Details — AFIP requires a dedicated point of sale for exports."
+ },
+ {
+  "origen": "server.js:9449",
+  "mensaje": "This item already issued a voucher (… No. …, CAE …). The Export Invoice must go on a NEW item — each item corresponds to a single voucher.",
+  "idioma": "en",
+  "esperado": "This item already has a voucher"
+ },
+ {
+  "origen": "server.js:9458",
+  "mensaje": "This item is issuing a … right now. Wait a few seconds for it to finish — do NOT trigger the recipe again.",
+  "idioma": "en",
+  "esperado": "This item already has a voucher"
+ },
+ {
+  "origen": "server.js:9465",
+  "mensaje": "This item has a … with a number reserved at AFIP but unconfirmed (likely a timeout). Wait a few minutes and retry — issuing an Export Invoice now could create two live vouchers for the same item.",
+  "idioma": "en",
+  "esperado": "This item already has a voucher"
+ },
+ {
+  "origen": "server.js:9529",
+  "mensaje": "AFIP rejected access to the export web service (wsfex).\nYour certificate is not delegated to that service yet. In AFIP: \"Administrador de Relaciones\" → Nueva Relación → Servicio → AFIP → WebServices → \"ws - Facturación Electrónica de Exportación\", and pick the same certificate alias you already use. The app's Tax Details screen has the step by step.\n(AFIP said: …)",
+  "idioma": "en",
+  "esperado": "Export invoicing is not enabled in AFIP yet"
+ },
+ {
+  "origen": "server.js:9578",
+  "mensaje": "The destination country of the … (… - …) doesn't match the referenced invoice (…). AFIP requires both to be the same. Fix the country column on the item, or leave it empty to inherit it.",
+  "idioma": "en",
+  "esperado": "The destination country of the 12345 (12345 - 12345) doesn't match the referenced invoice (12345). AFIP requires both to be the same."
+ },
+ {
+  "origen": "server.js:9603",
+  "mensaje": "AFIP has no \"country CUIT\" for … with client type \"…\" (typical of free-trade zones).\nIn that case AFIP requires the client's tax ID: fill in the \"Client's tax ID\" column on the item (map it in Visual Mapping if it isn't yet).",
+  "idioma": "en",
+  "esperado": "AFIP has no CUIT for that country"
+ },
+ {
+  "origen": "server.js:9641",
+  "mensaje": "The … currency (…) doesn't match the referenced invoice (…). AFIP only accepts the same currency as the associated voucher, or PESOS. Fix the currency column on the item, or leave it empty to inherit the invoice's.",
+  "idioma": "en",
+  "esperado": "The 12345 currency (12345) doesn't match the referenced invoice (12345). AFIP only accepts the same currency as the associated voucher, or PESOS."
+ },
+ {
+  "origen": "server.js:9714",
+  "mensaje": "Couldn't fetch AFIP's exchange rate for … (…).\nEnter it manually in the item's exchange-rate column and retry. Important: export invoices require AFIP's CUSTOMS rate (\"cotización aduana\"), not the bank/financial one — the financial rate is rejected with error 2053.\n(Detail: …)",
+  "idioma": "en",
+  "esperado": "Couldn't fetch AFIP's exchange rate for 12345 (12345)."
+ },
+ {
+  "origen": "server.js:9735",
+  "mensaje": "The Export Invoice item has no subitems. Add the services you're exporting as subitems (description, quantity and price).",
+  "idioma": "en",
+  "esperado": "The Export Invoice item has no subitems."
+ },
+ {
+  "origen": "server.js:9830",
+  "mensaje": "The … date (…) is earlier than the referenced invoice's (…). AFIP requires it to be the same or later.",
+  "idioma": "en",
+  "esperado": "The note can't be dated before the invoice"
+ },
+ {
+  "origen": "server.js:9892",
+  "mensaje": "The Credit Note exceeds the invoice's available balance.\nInvoice: … · already credited: … · available: … · this note: ….\nLower the subitem amounts so the total fits within the available balance.",
+  "idioma": "en",
+  "esperado": "The Credit Note exceeds the invoice balance"
  }
 ]
