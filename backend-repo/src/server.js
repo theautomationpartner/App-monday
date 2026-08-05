@@ -1655,7 +1655,7 @@ function deriveCbteTipoFromLetra(letra, clase = 'Factura') {
 
 // Los mensajes de error que ve el usuario viven en su propio modulo, para
 // poder probarlos sin levantar el servidor. Ver modules/errorMessages.js
-const { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN } = require('./modules/errorMessages');
+const { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN, INTERNAL_ERROR_PATTERN } = require('./modules/errorMessages');
 
 // ─── Cotizacion de monedas (FEParamGetCotizacion) ─────────────────────────
 // Consulta la cotizacion oficial de AFIP para una moneda extranjera.
@@ -10920,6 +10920,13 @@ const AUDIT_CONCEPTO = { 1: 'Productos', 2: 'Servicios', 3: 'Productos y Servici
 // Clasifica el error en uno de los 3 buckets de Estado para el log central.
 function classifyAuditError(err) {
     const msg = String(err?.message || '');
+    // 0) Bugs o estados rotos NUESTROS. Va PRIMERO, antes del filtro de AFIP: si no,
+    //    "Documento inválido para consultar padrón" y "reserva del Id WSFEX no
+    //    impactó la fila" caían en el filtro de abajo por las palabras "padrón" y
+    //    "WSFEX", quedaban archivados como caída de AFIP y no despertaban a nadie.
+    //    Comparte la lista con el mensaje que le mostramos al usuario — es el mismo
+    //    que le promete "ya nos llegó el aviso", así que tienen que estar de acuerdo.
+    if (INTERNAL_ERROR_PATTERN.test(msg)) return AUDIT_ESTADO.error_sistema;
     // 1) AFIP / infra del web service (auth WSAA, SOAP, padrón, HTTP/timeout de
     //    AFIP). Incluye los nombres de los métodos WSFE (FECAESolicitar,
     //    FECompUltimoAutorizado, FEParamGetCotizacion, etc.), que es como los
@@ -11052,11 +11059,20 @@ async function notifySlackCondicionIvaSinMapear({ documento, nombre, ivaSinMapea
     }
 }
 
+// Errores de staging que SÍ tienen que sonar en Slack, aunque el resto se calle.
+// Hoy hay uno solo: staging le rebotó la emisión a un cliente real. Es justo el
+// caso que el proxy de ruteo (regla 8 del CLAUDE.md) existe para que no pase, así
+// que si pasa alguien tiene que enterarse — y encima el comentario que lee el
+// cliente le promete que ya nos avisaron. Sin esto, esa promesa era mentira: el
+// skip de abajo se comía la alerta y el cliente quedaba esperando una respuesta
+// que nadie sabía que tenía que dar.
+const STAGING_ALERTA_IGUAL = /^Esta es la instancia de PRUEBA \(staging\)/i;
+
 async function notifySlackSystemError({ accountId, clientItemName, errorMessage, auditItemId }) {
     // Las alertas de Slack son SOLO para prod: los errores en staging son ruido
     // para el equipo de TAP. (A diferencia del audit board, que SÍ registra
     // staging — logEmissionToAuditBoard ya no skipea por APP_ENV.)
-    if (process.env.APP_ENV === 'staging') {
+    if (process.env.APP_ENV === 'staging' && !STAGING_ALERTA_IGUAL.test(String(errorMessage || ''))) {
         console.log('[slack] APP_ENV=staging — skip alerta a Slack (canal solo para prod)');
         return;
     }

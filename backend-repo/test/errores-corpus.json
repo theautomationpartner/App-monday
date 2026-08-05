@@ -457,7 +457,7 @@
  {
   "origen": "server.js:9323",
   "mensaje": "AFIP rechazó el acceso al web service de exportación (wsfex). Tu certificado todavía no está delegado a ese servicio. En AFIP: \"Administrador de Relaciones\" → Nueva Relación → Servicio → AFIP → WebServices → \"ws - Facturación Electrónica de Exportación\", y elegí el mismo alias de certificado que ya usás. El paso a paso está en la pantalla de Datos Fiscales de la app. (AFIP dijo: …)",
-  "esperado": "Falta subir el certificado de ARCA"
+  "esperado": "Falta habilitar la facturación de exportación en AFIP"
  },
  {
   "origen": "server.js:9372",
@@ -547,12 +547,12 @@
  {
   "origen": "modules/afipPadron.js:53",
   "mensaje": "Falta PADRON_CRT en variables de entorno. Cargá el contenido del .crt de Martín en el Developer Center de Monday Code.",
-  "esperado": "Falta subir el certificado de ARCA"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "modules/afipPadron.js:59",
   "mensaje": "Falta PADRON_KEY en secrets. Cargá el contenido del .key de Martín como secret en el Developer Center de Monday Code.",
-  "esperado": "Falta subir el certificado de ARCA"
+  "esperado": "Es un problema nuestro"
  },
  {
   "origen": "modules/afipPadron.js:323",

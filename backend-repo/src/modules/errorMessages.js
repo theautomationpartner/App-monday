@@ -22,6 +22,18 @@
 // — si AFIP cambia el mensaje, se actualiza acá y aplica en los 3 lugares.
 const AFIP_IDEMPOTENT_ERROR_PATTERN = /idempotencia|ya\s+emitida|ya\s+completa|ya\s+se\s+emiti[oó]/i;
 
+// Bugs o estados rotos NUESTROS: la persona del otro lado no puede hacer nada.
+//
+// UNA sola fuente de verdad, usada en los DOS lados de la misma promesa:
+//   - buildErrorComment      → le dice al usuario "es nuestro, ya nos llegó el aviso"
+//   - classifyAuditError     → es quien realmente dispara ese aviso a Slack
+//
+// Estaban separadas y habían derivado: 12 errores le decían al usuario que ya
+// nos habíamos enterado cuando Slack no sonaba. El usuario esperaba sentado y
+// nosotros ni sabíamos que existía el problema. Si agregás un error interno,
+// agregalo acá y los dos lados quedan de acuerdo solos.
+const INTERNAL_ERROR_PATTERN = /rowCount|no impact[oó] la fila|no se pudo serializar|RESERVA_FALLIDA|lock qued[oó]|secretos configurados|MONDAY_CLIENT_SECRET|Falta PADRON_(CRT|KEY)|no se pudo resolver boardId|La empresa no tiene CUIT configurado|Documento inv[aá]lido para consultar padr[oó]n|Tipo de (factura )?\w* ?no soportado|devolvio cotizacion invalida|respuesta sin \w+ legible|sin FEXResultAuth|RECOVERY_MISMATCH|instancia de PRUEBA \(staging\)/i;
+
 function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
     const msg = err?.message || 'Error desconocido';
     const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
@@ -106,7 +118,23 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Volvé a subir el par completo en la vista de la app → <b>Certificados ARCA</b>. Tienen que ser los dos archivos que se generaron juntos: la clave (.key) y el certificado que te descargó ARCA (.crt) — uno de un trámite y otro de otro no funciona. Si no los encontrás, sacá un certificado nuevo y subí los dos.',
         },
         {
-            match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip|falta.*crt|falta.*key/i,
+            // El certificado esta cargado y AFIP lo reconoce, pero no esta delegado
+            // al servicio de EXPORTACION (wsfex), que es un tramite aparte del de
+            // facturacion comun. Tiene que ir ANTES de la regla del certificado: si
+            // no, esa le dice "subi el certificado" y el usuario lo sube de nuevo
+            // veinte veces sin que cambie nada, porque el certificado nunca fue el
+            // problema.
+            match: /acceso al web service de exportaci[oó]n|no est[aá] delegado a ese servicio/i,
+            title: 'Falta habilitar la facturación de exportación en AFIP',
+            detail: 'AFIP reconoce tu certificado para las facturas comunes, pero la <b>exportación es un permiso aparte</b> que todavía no está dado. <b>No hace falta subir el certificado de nuevo</b>: es el mismo, le falta el permiso.',
+            solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación → Servicio → AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>. En "Representante" elegí el mismo certificado que ya usás para las facturas comunes. Confirmá y volvé a intentar.',
+        },
+        {
+            // Sin `falta.*crt|falta.*key`: ese comodin se comia "Falta PADRON_CRT en
+            // variables de entorno", que es una env var NUESTRA que falta en el
+            // servidor. Al usuario le decia que subiera su certificado — algo que no
+            // podia arreglar y que ademas no era lo que estaba roto.
+            match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip/i,
             title: 'Falta subir el certificado de ARCA',
             detail: 'No hay ningún certificado cargado para esta empresa, y sin él la app no se puede identificar ante ARCA.',
             solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → subí el certificado (.crt) y la clave (.key). Si todavía no los sacaste, el paso a paso está en esa misma pantalla: se hace una sola vez y dura dos años.',
@@ -367,7 +395,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // asusta. Le decimos que es nuestro y que no toque nada. El detalle va al
             // log, que es donde sirve.
             // VA DESPUES de las reglas especificas: es una red, no un atajo.
-            match: /rowCount|no impact[oó] la fila|no se pudo serializar|RESERVA_FALLIDA|lock qued[oó]|secretos configurados|MONDAY_CLIENT_SECRET|no se pudo resolver boardId|La empresa no tiene CUIT configurado|Documento inv[aá]lido para consultar padr[oó]n|Tipo de (factura )?\w* ?no soportado|devolvio cotizacion invalida|respuesta sin \w+ legible|sin FEXResultAuth|RECOVERY_MISMATCH/i,
+            match: INTERNAL_ERROR_PATTERN,
             title: 'Es un problema nuestro',
             detail: 'La app se trabó por algo de nuestro lado. <b>No es un dato que hayas cargado mal</b>, así que revisar el item no lo va a resolver.',
             solucion: 'No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo. Si necesitás emitir hoy, escribinos a <b>arca@theautomationpartner.com</b>.',
@@ -711,4 +739,4 @@ function kindArticle(kind, language = 'es') {
     return `el ${k}`;
 }
 
-module.exports = { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN };
+module.exports = { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN, INTERNAL_ERROR_PATTERN };
