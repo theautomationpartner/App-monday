@@ -34,6 +34,25 @@ const AFIP_IDEMPOTENT_ERROR_PATTERN = /idempotencia|ya\s+emitida|ya\s+completa|y
 // agregalo acá y los dos lados quedan de acuerdo solos.
 const INTERNAL_ERROR_PATTERN = /rowCount|no impact[oó] la fila|no se pudo serializar|RESERVA_FALLIDA|lock qued[oó]|secretos configurados|MONDAY_CLIENT_SECRET|Falta PADRON_(CRT|KEY)|no se pudo resolver boardId|La empresa no tiene CUIT configurado|Documento inv[aá]lido para consultar padr[oó]n|Tipo de (factura )?\w* ?no soportado|devolvio cotizacion invalida|respuesta sin \w+ legible|sin FEXResultAuth|RECOVERY_MISMATCH|instancia de PRUEBA \(staging\)/i;
 
+// Crashes crudos de JavaScript. NO son throws nuestros: son bugs que revientan en
+// runtime, y por eso no tienen mensaje escrito por nadie — le llega al usuario el
+// texto del motor tal cual. Medido el 2026-08-05 en staging: un item de Nota de
+// Crédito devolvió, en el comentario, textualmente
+//
+//     Causa: Cannot read properties of null (reading 'id')
+//     Cómo solucionarlo: Revisá los datos del item y reintentá.
+//
+// Dos mentiras en tres líneas: no hay ningún dato del item que arregle eso, y
+// reintentar da lo mismo. Esta clase entera se le habia escapado al banco de
+// pruebas porque el corpus se armó buscando `throw new Error('texto')` — un crash
+// no tiene texto que buscar.
+const RUNTIME_CRASH_PATTERN = /cannot read propert|reading '|of undefined|of null|is not a function|is not defined|is not iterable|TypeError|ReferenceError|SyntaxError|RangeError|unexpected token|in JSON at position|JSON\.parse|Maximum call stack|Converting circular|Assignment to constant|Invalid array length/i;
+
+// La red final: los estados rotos que sí declaramos + los crashes que no.
+// Las dos cosas terminan en el mismo mensaje, porque para la persona del otro
+// lado son lo mismo: algo se rompió acá y no hay nada que pueda hacer.
+const NUESTRO_PATTERN = new RegExp(`${INTERNAL_ERROR_PATTERN.source}|${RUNTIME_CRASH_PATTERN.source}`, 'i');
+
 function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
     const msg = err?.message || 'Error desconocido';
     const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
@@ -395,7 +414,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // asusta. Le decimos que es nuestro y que no toque nada. El detalle va al
             // log, que es donde sirve.
             // VA DESPUES de las reglas especificas: es una red, no un atajo.
-            match: INTERNAL_ERROR_PATTERN,
+            match: NUESTRO_PATTERN,
             title: 'Es un problema nuestro',
             detail: 'La app se trabó por algo de nuestro lado. <b>No es un dato que hayas cargado mal</b>, así que revisar el item no lo va a resolver.',
             solucion: 'No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo. Si necesitás emitir hoy, escribinos a <b>arca@theautomationpartner.com</b>.',
@@ -830,4 +849,4 @@ function kindArticle(kind, language = 'es') {
     return `el ${k}`;
 }
 
-module.exports = { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN, INTERNAL_ERROR_PATTERN };
+module.exports = { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN, INTERNAL_ERROR_PATTERN, RUNTIME_CRASH_PATTERN };

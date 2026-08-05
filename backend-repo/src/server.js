@@ -1655,7 +1655,7 @@ function deriveCbteTipoFromLetra(letra, clase = 'Factura') {
 
 // Los mensajes de error que ve el usuario viven en su propio modulo, para
 // poder probarlos sin levantar el servidor. Ver modules/errorMessages.js
-const { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN, INTERNAL_ERROR_PATTERN } = require('./modules/errorMessages');
+const { buildErrorComment, kindArticle, AFIP_IDEMPOTENT_ERROR_PATTERN, INTERNAL_ERROR_PATTERN, RUNTIME_CRASH_PATTERN } = require('./modules/errorMessages');
 
 // ─── Cotizacion de monedas (FEParamGetCotizacion) ─────────────────────────
 // Consulta la cotizacion oficial de AFIP para una moneda extranjera.
@@ -10942,7 +10942,13 @@ function classifyAuditError(err) {
     //    por los throw deliberados de la app, que llevan mensaje en español al
     //    usuario. El item de test "make-errores-" entra acá a propósito.
     // Firmas técnicas en inglés — runtime/JS, red, monday API, Postgres.
-    const reRuntime  = /cannot read|reading '|of undefined|of null|is not a function|is not defined|is not iterable|TypeError|ReferenceError|SyntaxError|RangeError|unexpected token|in JSON|JSON\.parse|prototype|fetch failed|Maximum call stack/i;
+    // Las firmas de crash comparten fuente con el mensaje que ve el usuario: es el
+    // mismo que le promete "ya nos llegó el aviso", así que si una lista conoce un
+    // crash y la otra no, la promesa es falsa. Pasó con "Converting circular
+    // structure to JSON": el comentario decía que ya sabíamos y Slack no sonaba.
+    // `fetch failed` y `prototype` quedan sueltos acá porque no son crashes de
+    // lógica: el primero es un corte de red (tiene su propio mensaje, mejor).
+    const reRuntime  = new RegExp(`${RUNTIME_CRASH_PATTERN.source}|prototype|fetch failed`, 'i');
     const reNetwork  = /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|ECONNRESET|EPIPE|ENETUNREACH|EHOSTUNREACH|socket hang up/i;
     const reMonday   = /monday\.com|graphql.*error|Internal server error/i;
     const rePostgres = /relation.*does not exist|column.*does not exist|duplicate key|deadlock|connection terminated|database.*unavailable/i;

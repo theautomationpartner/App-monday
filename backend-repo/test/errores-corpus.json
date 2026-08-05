@@ -922,5 +922,59 @@
   "mensaje": "The invoice total is …. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.",
   "idioma": "en",
   "esperado": "The voucher total came out as zero"
+ },
+ {
+  "origen": "runtime — crash real medido en staging 2026-08-05",
+  "mensaje": "Cannot read properties of null (reading 'id')",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime — crash",
+  "mensaje": "Cannot read properties of undefined (reading 'text')",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime — crash",
+  "mensaje": "columnValues.map is not a function",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime — crash",
+  "mensaje": "resolverColumna is not defined",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime — crash: AFIP devolvio HTML",
+  "mensaje": "Unexpected token < in JSON at position 0",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime — crash",
+  "mensaje": "Maximum call stack size exceeded",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime — crash",
+  "mensaje": "Converting circular structure to JSON",
+  "idioma": "es",
+  "esperado": "Es un problema nuestro"
+ },
+ {
+  "origen": "runtime en — crash real medido en staging 2026-08-05",
+  "mensaje": "Cannot read properties of null (reading 'id')",
+  "idioma": "en",
+  "esperado": "This one's on us"
+ },
+ {
+  "origen": "runtime en — crash",
+  "mensaje": "Cannot read properties of undefined (reading 'text')",
+  "idioma": "en",
+  "esperado": "This one's on us"
  }
 ]
