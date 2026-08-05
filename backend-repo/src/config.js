@@ -34,10 +34,34 @@ const AFIP_ENDPOINTS = {
     },
 };
 
+/**
+ * Simular que AFIP está caído, para poder probar esos mensajes.
+ *
+ * Los errores de "AFIP no responde" son de los más frecuentes en producción y
+ * eran los únicos que NO se podían probar: no hay dato que uno cargue en un item
+ * que tire abajo a AFIP. Quedaban verificados solo por el banco de pruebas.
+ *
+ * Con `AFIP_HOST_OVERRIDE` se apuntan los cuatro endpoints a otro host. Poniendo
+ * uno que no existe, la app se comporta exactamente como con AFIP caído: falla la
+ * conexión, y el usuario recibe el mensaje real que recibiría ese día.
+ *
+ * Es una puerta que solo se abre si alguien la abre: sin la variable, el
+ * comportamiento es idéntico al de siempre. Producción no la tiene seteada.
+ */
+function conOverride(endpoints) {
+    const host = (process.env.AFIP_HOST_OVERRIDE || '').trim();
+    if (!host) return endpoints;
+    const cambiado = {};
+    for (const [k, url] of Object.entries(endpoints)) {
+        cambiado[k] = url.replace(/^https:\/\/[^/]+/, `https://${host}`);
+    }
+    return cambiado;
+}
+
 module.exports = {
     /** 'production' | 'homologation' */
     get afipEnv()      { return getEnv(); },
-    get endpoints()    { return AFIP_ENDPOINTS[getEnv()]; },
+    get endpoints()    { return conOverride(AFIP_ENDPOINTS[getEnv()]); },
 
     /** CUIT habilitado para consultar el padrón (certificado de Martín) */
     get padronCuit()   { return process.env.PADRON_CUIT || '20327446348'; },
