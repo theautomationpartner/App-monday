@@ -10504,23 +10504,33 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             detail: mainMsg,
             solucion: 'Bajá los importes de bonificación para que el total sea mayor a cero — AFIP rechaza los comprobantes con total cero o negativo.',
         },
+        // ── ORDEN IMPORTANTE ────────────────────────────────────────────────
+        // Estas tres reglas se pisan: "Configuración incompleta. Falta: Certificados
+        // AFIP vencidos" matchea las tres. Antes ganaba la genérica y le decía al
+        // usuario "completá el Mapeo Visual" cuando su problema era el certificado
+        // — una pantalla donde el certificado ni siquiera está.
+        // Van de la MÁS específica a la más general: vencido → falta → genérica.
         {
-            match: /Configuración incompleta/i,
-            title: 'Configuración incompleta',
-            detail: mainMsg,
-            solucion: 'Abrí la vista de la app → completá los pasos pendientes en <b>Mapeo Visual</b>. Asegurate de mapear todas las columnas obligatorias.',
+            // El comodín va ACOTADO: .{0,30} no cruza de una oración a otra (y el .
+            // no matchea saltos de línea). Antes era /certificados.*expirados|expir/i:
+            // el "expir" suelto se robaba "el token expiró", "el CAE expiró" y "fecha
+            // de expiración", y encima NO agarraba el mensaje real. Estaba al revés.
+            match: /certificados?.{0,30}(vencid|expirad|expir[oó])|certificate.{0,20}expired/i,
+            title: 'Se te venció el certificado de ARCA',
+            detail: 'El certificado que tenés cargado ya venció, y ARCA no acepta comprobantes firmados con un certificado vencido.',
+            solucion: 'Hay que sacar uno nuevo: es el mismo trámite que hiciste la primera vez, y el paso a paso está en la vista de la app → <b>Certificados ARCA</b>. Cuando lo termines de subir, volvé a disparar la receta. Hasta entonces reintentar no sirve.',
         },
         {
             match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip|falta.*crt|falta.*key/i,
-            title: 'Faltan los certificados AFIP',
-            detail: 'No se encontraron certificados digitales para autenticar con AFIP.',
-            solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → cargá el archivo .crt y la clave privada (.key).',
+            title: 'Falta subir el certificado de ARCA',
+            detail: 'No hay ningún certificado cargado para esta empresa, y sin él la app no se puede identificar ante ARCA.',
+            solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → subí el certificado (.crt) y la clave (.key). Si todavía no los sacaste, el paso a paso está en esa misma pantalla: se hace una sola vez y dura dos años.',
         },
         {
-            match: /certificados.*expirados|expir/i,
-            title: 'Certificados AFIP expirados',
-            detail: 'Los certificados digitales están vencidos y AFIP rechaza la autenticación.',
-            solucion: 'Generá nuevos certificados en AFIP/ARCA y subílos en la vista de la app → sección <b>Certificados ARCA</b>.',
+            match: /Configuración incompleta/i,
+            title: 'Falta terminar de configurar la app',
+            detail: mainMsg,
+            solucion: 'Abrí la vista de la app → completá los pasos pendientes en <b>Mapeo Visual</b>. Asegurate de mapear todas las columnas obligatorias.',
         },
         {
             // Solo el mensaje real de resolveInvoiceType ("Tipo de factura
@@ -10593,7 +10603,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             // "[wsfex:...]" lo contiene → si no, esto sale como "AFIP no está
             // respondiendo", que es mentira y manda al usuario a esperar 30
             // minutos al pedo en vez de mirar el dato que está mal.
-            match: /\[wsfex:\w+\]\s*\[\d+\]/i,
+            // Dos formatos de rechazo de exportacion, y antes solo se cubria el primero:
+            //   [wsfex:FEXAuthorize] [2053] Cotizacion informada no valida
+            //   [wsfex:FEXAuthorize] AFIP rechazó el comprobante (Resultado=R, Motivos: ...)
+            // El segundo no trae codigo entre corchetes, asi que caia en el comodin y
+            // le decia al usuario "AFIP no esta respondiendo, espera 30 minutos" — cuando
+            // AFIP habia contestado perfecto y con los motivos del rechazo.
+            match: /\[wsfex:\w+\]\s*\[\d+\]|\[wsfex:\w+\]\s*AFIP rechaz[oó]/i,
             title: 'AFIP rechazó la Factura E',
             detail: 'AFIP respondió, pero no aceptó el comprobante. <b>No se emitió</b> (no hay número quemado).<br/><br/>' +
                 'Lo que dijo AFIP:<br/>' +
@@ -10601,7 +10617,56 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Si el mensaje menciona un dato del item (país de destino, fecha de pago, domicilio del cliente), corregilo y volvé a disparar la receta. Si no le encontrás sentido, pasale este mensaje al soporte de la app.',
         },
         {
-            match: /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i,
+            // AFIP contesta "Computador no autorizado a acceder al servicio" cuando el
+            // certificado NO está asociado al servicio de facturación en Administrador
+            // de Relaciones. Es un trámite del cliente, de una sola vez, y esperar no
+            // lo arregla NUNCA. Pasó 13 veces en producción cayendo en el comodín de
+            // abajo, que le decía "esperá 30 minutos y reintentá".
+            // VA ANTES del comodín: gana la primera regla que matchea.
+            // El padrón no contestó (caída real de AFIP). Distinto del CUIT que no
+            // existe, que ya tiene su propia regla arriba. Antes caía en el comodín
+            // solo si el CUIT del cliente tenía un "500" adentro; si no, al texto
+            // crudo. Ahora los dos casos van al mismo lugar, que es lo correcto.
+            match: /^No se pudo consultar el padr[oó]n de AFIP para el (receptor|emisor) \(/i,
+            title: 'AFIP no contestó sobre ese CUIT',
+            detail: 'La app le preguntó a AFIP por los datos del cliente y AFIP no respondió. <b>No es un problema del dato que cargaste</b>: el número está bien formado, el que no contesta es AFIP.',
+            solucion: 'Esperá unos minutos y volvé a disparar la receta sin tocar nada del item. Si a la media hora sigue igual, avisá al soporte de la app.',
+        },
+        {
+            match: /no autorizado a acceder al servicio|computador no autorizado/i,
+            title: 'Falta habilitar la facturación en AFIP',
+            detail: 'AFIP reconoce tu certificado, pero todavía no le diste permiso para emitir comprobantes. <b>No es una caída de AFIP: esperar no lo arregla.</b> Es un trámite de una sola vez.',
+            solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. En "Servicio" seguí este camino: AFIP → WebServices → <b>Facturación Electrónica</b> (está escrito así, mitad en inglés, porque es el nombre que le puso AFIP). En "Representante" elegí el certificado que ya cargaste en la app. Confirmá y volvé a disparar la receta.',
+        },
+        {
+            // AFIP rechazó el comprobante y dijo por qué, con un código entre corchetes.
+            // Antes esto caía al fallback y mostraba el texto crudo de AFIP en mayúsculas
+            // + "Revisá los datos del item", que no dice qué revisar.
+            // Ojo: también va ANTES del comodín, porque el texto de AFIP suele traer
+            // importes y CUITs con un "500" adentro que disparaban el /afip.*500/.
+            match: /AFIP rechaz[oó] (la factura|el comprobante|la Nota).*\[\d{4,5}\]/i,
+            title: 'AFIP rechazó el comprobante',
+            detail: 'AFIP contestó y no lo aceptó. <b>No se emitió nada</b> y no se gastó ningún número.<br/><br/>Lo que dijo AFIP:<br/>' +
+                `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^AFIP rechaz[oó] [^:]*:\s*/i, '')}`,
+            solucion: 'Esto no es una caída de AFIP: es una regla suya. Si el mensaje menciona el punto de venta, revisá que esté dado de alta en AFIP para facturación electrónica. Si menciona el CUIT, revisá qué comprobantes tenés habilitados en afip.gob.ar → Comprobantes en línea. Si menciona IVA o importes, revisá los subítems. Reintentar sin cambiar nada va a dar lo mismo.',
+        },
+        {
+            // COMODÍN, ahora acotado. La versión vieja era
+            //   /wsfe|wsaa|soap|afip.*http|loginCms|afip.*500|afip.*timeout/i
+            // y tenía dos defectos graves, los dos medidos:
+            //   1. Los .* cruzaban oraciones enteras: "afip.*500" matcheaba el "500" que
+            //      venía DENTRO de un importe ($1500) o de un CUIT (20215005962). O sea,
+            //      el MISMO error caía en reglas distintas según los dígitos del cliente.
+            //   2. "wsfe", "wsaa" y "soap" sueltos agarraban cualquier mensaje que los
+            //      mencionara, incluidos los que ya tenían su propio mensaje bueno.
+            // Ahora se exige el formato REAL con el que llegan las fallas de infra.
+            // Cada alternativa exige adyacencia real, sin .* que crucen oraciones:
+            //   ^WSAA HTTP nnn (service=   → el formato exacto de una falla de WSAA
+            //   HTTP 5xx pegado            → un 5xx de verdad, no un "500" suelto
+            //   loginCms / FEDummy         → nombres propios de AFIP, inconfundibles
+            //   ETIMEDOUT y compañía       → códigos de red de Node
+            //   "timeout tras Nms"         → el formato que arma afipWsfex
+            match: /^WSAA\b|^Error autenticando en WSAA|^WSFE \w+ falló tras|^\[wsfex:|\bHTTP\s+5\d\d\b|\bloginCms\b|\bFEDummy\b|\b(ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|\btimeout tras \d+\s*ms\b|\bSOAP fault\b/i,
             title: 'AFIP no está respondiendo correctamente',
             detail: 'Los servidores de AFIP no respondieron a tiempo o devolvieron un error. <b>Esto no es un problema de tu configuración</b>, es del lado de AFIP.',
             solucion: 'Esperá unos minutos y volvé a intentarlo. AFIP suele tener cortes breves o mantenimientos. Si después de 30 minutos sigue fallando, avisá al soporte de la app.',
@@ -10733,7 +10798,14 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the .crt file and the private key (.key).",
         },
         {
-            match: /certificados.*expirados|expir/i,
+            // OJO: antes era /certificados.*expirados|expir/i. El "expir" suelto se
+            // robaba "el token expiró", "el CAE expiró" y "fecha de expiración" — y
+            // encima NO agarraba el mensaje real, que dice "Certificados AFIP vencidos".
+            // Estaba al revés. Ahora se exige la palabra certificado cerca.
+            // El comodín va ACOTADO: .{0,30} no puede cruzar de una oración a otra
+            // (y el . no matchea saltos de línea). Es la diferencia entre "cerca de
+            // la palabra certificado" y "en cualquier parte del mensaje".
+            match: /certificados?.{0,30}(vencid|expirad|expir[oó])|certificate.{0,20}expired/i,
             title: 'AFIP certificates expired',
             detail: 'The digital certificates are expired and AFIP rejects the authentication.',
             solucion: "Generate new certificates in AFIP/ARCA and upload them in the app's view → <b>ARCA Certificates</b> section.",
