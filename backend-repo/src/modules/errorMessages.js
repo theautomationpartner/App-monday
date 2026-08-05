@@ -356,7 +356,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // podia arreglar y que ademas no era lo que estaba roto.
             match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip/i,
             title: 'Falta subir el certificado de ARCA',
-            accion: 'Subí el certificado (.crt) y la clave (.key) en la app → <b>Certificados ARCA</b>,. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
+            accion: 'Subí el certificado (.crt) y la clave (.key) en la app → <b>Certificados ARCA</b>. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
             estado: 'No se emitió nada.',
             detalle: 'No hay ningún certificado cargado para esta empresa. El paso a paso para sacarlos está en esa misma pantalla: se hace una sola vez y dura dos años.',
             detail: 'No hay ningún certificado cargado para esta empresa, y sin él la app no se puede identificar ante ARCA.',
@@ -443,7 +443,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /empresa no encontrada|no encontrada.*cuenta/i,
             title: 'Empresa no configurada',
-            accion: 'Cargá tu empresa en la app → <b>Datos Fiscales</b>, subí el certificado en <b>Certificados ARCA</b>,. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
+            accion: 'Cargá tu empresa en la app → <b>Datos Fiscales</b>, subí el certificado en <b>Certificados ARCA</b>. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
             estado: 'No se emitió nada.',
             detail: 'No se encontraron los datos fiscales de la empresa emisora.',
             solucion: 'Abrí la vista de la app → sección <b>Datos Fiscales</b> → completá Razón Social, CUIT, Punto de Venta y guardá.',
@@ -632,7 +632,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // Antes decia "escribilo como lo nombra AFIP" sin decir en que columna.
             match: /pa[ií]s de destino "[^"]*" (no est[aá] en la lista|es ambiguo)|destination country "[^"]*" is (not in|ambiguous)/i,
             title: "Ese país no está en la lista de AFIP",
-            accion: "En la columna <b>País de Destino</b> del item escribí el país como lo nombra AFIP,. Después volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            accion: "En la columna <b>País de Destino</b> del item escribí el país como lo nombra AFIP. Después volvé a poner ${columna_estado} en \"${estado_disparo}\".",
             estado: "No se emitió nada.",
             detalle: "AFIP tiene su propia lista de nombres y no acepta variantes. Abajo está lo que contestó — si te ofrece opciones parecidas, copiá una tal cual.",
             detail: mainMsg,
@@ -643,7 +643,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // codigos de AFIP NO son los ISO — el euro no es "EUR".
             match: /moneda "[^"]*" (no est[aá] en la lista|es ambigua)|currency "[^"]*" is (not in|ambiguous)|tabla de monedas de AFIP no trae|currency table doesn.t include/i,
             title: "Esa moneda no está en la lista de AFIP",
-            accion: "En la columna <b>Moneda</b> del item escribí la moneda como la publica AFIP,. Después volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            accion: "En la columna <b>Moneda</b> del item escribí la moneda como la publica AFIP. Después volvé a poner ${columna_estado} en \"${estado_disparo}\".",
             estado: "No se emitió nada.",
             detalle: "Ojo: los códigos de AFIP <b>no son los ISO</b> — el euro no es \"EUR\". Abajo está lo que contestó AFIP; si te ofrece opciones, copiá una tal cual.",
             detail: mainMsg,
@@ -943,7 +943,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /tipo de comprobante no reconocido|voucher type not recognized/i,
             title: 'Tipo de Comprobante no reconocido',
-            accion: 'En ${columna_tipo} poné <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>,. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
+            accion: 'En ${columna_tipo} poné <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
             estado: 'No se emitió nada.',
             detail: mainMsg,
             solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Corregí el valor y volvé a poner el estado que dispara la emisión.',
@@ -1039,7 +1039,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Open the item, fill in the columns marked with ❌ and set the status that starts the issuing again. If a column is missing, check the <b>Visual Mapping</b> in the app's configuration view.",
         },
         'Falta configurar el mapeo de columnas': {
-            accion: 'Open the app from this board → <b>Visual Mapping</b>, match each field to your column, save,. Then set ${columna_estado} back to "${estado_disparo}".',
+            accion: 'Open the app from this board → <b>Visual Mapping</b>, match each field to your column, save. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: 'Nothing was issued.',
             detalle: 'If you built the board from the Factura ARCA template, the mapping fills itself in: open it anyway, check everything is green and save.',
             title: 'Column mapping not configured',
@@ -1110,7 +1110,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Go to afip.gob.ar with your tax key → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación → Servicio → AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>. Under "Representante" pick the same certificate you already use for regular invoices. Confirm and try again.',
         },
         'Falta subir el certificado de ARCA': {
-            accion: 'Upload the certificate (.crt) and the key (.key) in the app → <b>ARCA Certificates</b>,. Then set ${columna_estado} back to "${estado_disparo}".',
+            accion: 'Upload the certificate (.crt) and the key (.key) in the app → <b>ARCA Certificates</b>. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: 'Nothing was issued.',
             detalle: 'There is no certificate loaded for this company. The step by step to get them is on that same screen: it is done once and lasts two years.',
             title: 'The ARCA certificate has not been uploaded',
@@ -1171,7 +1171,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "If the message above points to a specific problem with the CUIT (inactive, pending requirements, etc.), the owner of that CUIT has to resolve it directly with AFIP — retrying won't help. If it doesn't give more detail, it may be a temporary AFIP outage: wait a few minutes and retry.",
         },
         'Empresa no configurada': {
-            accion: 'Set up your company in the app → <b>Tax Details</b>, upload the certificate in <b>ARCA Certificates</b>,. Then set ${columna_estado} back to "${estado_disparo}".',
+            accion: 'Set up your company in the app → <b>Tax Details</b>, upload the certificate in <b>ARCA Certificates</b>. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: 'Nothing was issued.',
             title: 'Company not configured',
             detail: 'The tax data of the issuing company was not found.',
@@ -1421,7 +1421,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'All subitems of an invoice must have the <b>same VAT rate</b>. Check the VAT Rate % column and make sure all subitems have the same value (0, 2.5, 5, 10.5, 21 or 27).',
         },
         'Tipo de Comprobante no reconocido': {
-            accion: 'In ${columna_tipo} put <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>,. Then set ${columna_estado} back to "${estado_disparo}".',
+            accion: 'In ${columna_tipo} put <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: 'Nothing was issued.',
             title: 'Voucher Type not recognized',
             solucion: "The item's <b>Voucher Type</b> column must say <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Fix the value and start the issuing again.",
@@ -1517,7 +1517,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
 
         'Falta configurar la exportación en Datos Fiscales': {
             title: "Export settings are missing in Tax Details",
-            accion: 'Open the app → <b>Tax Details</b>, complete the export settings and set  back to "".',
+            accion: 'Open the app → <b>Tax Details</b> and complete the export settings. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: "Nothing was issued.",
             detalle: "That is where the three things AFIP requires for Factura E live: ticking that you issue exports, the export point of sale (a separate one from the domestic one) and the payment method.",
         },
@@ -1554,13 +1554,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
 
         "Ese país no está en la lista de AFIP": {
             title: "That country is not in AFIP list",
-            accion: 'In the item’s <b>Destination Country</b> column write the country the way AFIP names it,. Then set ${columna_estado} back to "${estado_disparo}".',
+            accion: 'In the item’s <b>Destination Country</b> column write the country the way AFIP names it. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: "Nothing was issued.",
             detalle: "AFIP has its own list of names and does not accept variants. Below is what it answered — if it offers similar options, copy one exactly.",
         },
         "Esa moneda no está en la lista de AFIP": {
             title: "That currency is not in AFIP list",
-            accion: 'In the item’s <b>Currency</b> column write the currency the way AFIP publishes it,. Then set ${columna_estado} back to "${estado_disparo}".',
+            accion: 'In the item’s <b>Currency</b> column write the currency the way AFIP publishes it. Then set ${columna_estado} back to "${estado_disparo}".',
             estado: "Nothing was issued.",
             detalle: 'Careful: AFIP codes are <b>not</b> the ISO ones — the euro is not "EUR". Below is what AFIP answered; if it offers options, copy one exactly.',
         },

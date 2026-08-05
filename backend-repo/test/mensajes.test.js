@@ -31,6 +31,13 @@ const GENERICO = /Revisá los datos del item y reintentá|Review the item data a
 // QUE ESTADO tocar. Se colaba por los throw del codigo, que el partidor muestra
 // tal cual — 13 lugares.
 const JERGA_MONDAY = /receta/i;
+
+// Puntuación rota. Aparece cuando se edita un mensaje en masa y el texto que ya
+// terminaba en coma se junta con el punto de la frase siguiente:
+//     "...en la app → Certificados ARCA,. Después volvé a poner..."
+// Lo agarró la corrida en vivo leyendo lo que publicó la app, no el test. Doce
+// mensajes salieron así antes de que alguien lo viera.
+const PUNTUACION_ROTA = /[,;:]\.\s|\.\.\s(?!\.)|\s[,.;]\s|\s{2,}\S/;
 const CULPA_AFIP = /AFIP no está respondiendo correctamente/;
 
 // Los tableros en inglés usan las MISMAS reglas (los errores llegan en español)
@@ -88,7 +95,8 @@ const causaDe = (html) => {
 const corpus = JSON.parse(fs.readFileSync(CORPUS, 'utf8'));
 const t0 = Date.now();
 
-let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0, datoPerdido = 0, jerga = 0;
+let regresiones = 0, sinRegla = 0, culpaMal = 0, sinReglaEn = 0, espanolEnIngles = 0, huecos = 0, datoPerdido = 0, jerga = 0, puntuacion = 0;
+const detallePunt = [];
 const detalleJerga = [];
 const detalleHuecos = [];
 const detalleDato = [];
@@ -123,6 +131,8 @@ for (const c of corpus) {
         sinRegla++;
         detalleSinRegla.push({ origen: c.origen, msg: msg.slice(0, 74) });
     }
+    { const enc = html.split("<br/>")[0].replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ");
+      if (PUNTUACION_ROTA.test(enc)) { puntuacion++; detallePunt.push({ origen: c.origen, enc: enc.slice(0, 80) }); } }
     if (JERGA_MONDAY.test(html)) { jerga++; detalleJerga.push({ origen: c.origen, trozo: (html.match(/.{0,34}receta.{0,24}/i)||[""])[0].replace(/<[^>]*>/g,"") }); }
     if (CULPA_AFIP.test(html) && !INFRA_LEGITIMA.test(msg)) {
         culpaMal++;
@@ -237,6 +247,7 @@ console.log('');
 console.log(`  huecos sin rellenar a la vista ... ${huecos}`);
 console.log(`  se comen el dato del error ....... ${datoPerdido}`);
 console.log(`  dicen "receta" (jerga de monday) ... ${jerga}`);
+console.log(`  con puntuación rota ............. ${puntuacion}`);
 
 if (detalleSinRegla.length) {
     console.log('\n  LOS QUE CAEN AL GENÉRICO (el usuario lee "revisá los datos" sin saber cuáles):');
@@ -277,6 +288,8 @@ if (detalleJerga.length) {
     console.log('\n  DICEN «RECETA» (el usuario no sabe qué es):');
     detalleJerga.slice(0,10).forEach(d => console.log(`     ${d.origen.padEnd(28)} ...${d.trozo}...`));
 }
+if (detallePunt.length) { console.log("\n  CON PUNTUACIÓN ROTA:"); detallePunt.slice(0,10).forEach(d => console.log(`     ${d.origen.padEnd(28)} ${d.enc}`)); }
+if (puntuacion > 0) { console.log(`FALLA: ${puntuacion} mensaje(s) con puntuación rota.`); process.exit(1); }
 if (jerga > 0) { console.log(`FALLA: ${jerga} mensaje(s) usan jerga de monday.`); process.exit(1); }
 if (datoPerdido > 0) {
     console.log(`FALLA: ${datoPerdido} mensaje(s) se comen el dato que trae el error.`);

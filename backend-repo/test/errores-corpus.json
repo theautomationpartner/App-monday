@@ -127,7 +127,7 @@
  {
   "origen": "server.js:5986",
   "mensaje": "Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.",
-  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:5991",
@@ -148,7 +148,7 @@
  {
   "origen": "server.js:6082",
   "mensaje": "Tipo de Comprobante no reconocido: \"…\". Tiene que ser \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" o \"Factura E\"/\"Export Invoice\".",
-  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -194,7 +194,7 @@
  {
   "origen": "server.js:6383",
   "mensaje": "Faltan certificados AFIP para este emisor",
-  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6393",
@@ -369,31 +369,31 @@
  {
   "origen": "server.js:8480",
   "mensaje": "El país de destino \"…\" es ambiguo — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto del que necesitás.",
-  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8493",
   "mensaje": "El país de destino \"…\" no está en la lista de países de AFIP. Escribilo como lo nombra AFIP….",
-  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8520",
   "mensaje": "La tabla de monedas de AFIP no trae pesos argentinos (\"PES\"). Reintentá en unos minutos.",
-  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8546",
   "mensaje": "La moneda \"…\" es ambigua — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto o el código de AFIP.",
-  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8557",
   "mensaje": "La moneda \"…\" no está en la lista de monedas de AFIP. Ojo: los códigos de AFIP NO son los ISO (el euro no es \"EUR\"). Escribí el nombre como lo publica AFIP, o su código.",
-  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -724,31 +724,31 @@
   "origen": "server.js:8637",
   "mensaje": "The destination country \"…\" is ambiguous — it matches several AFIP entries: …\"`).join(', ')}. Write the exact name of the one you need in the column.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it,. Then set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8650",
   "mensaje": "The destination country \"…\" is not in AFIP's country list.\nUse the country's name in English (e.g. \"Brazil\", \"United States\") or exactly as AFIP names it…` : ''}.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it,. Then set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8677",
   "mensaje": "AFIP's currency table doesn't include Argentine pesos (\"PES\"). Try again in a few minutes.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it,. Then set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8703",
   "mensaje": "The currency \"…\" is ambiguous — it matches several AFIP entries: …\" (…)`).join(', ')}. Write the exact name or AFIP's code in the column.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it,. Then set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8714",
   "mensaje": "The currency \"…\" is not in AFIP's currency list.\nCareful: AFIP's codes are NOT the ISO ones (the euro is not \"EUR\"). Write the name as AFIP publishes it, or its code.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it,. Then set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8756",
@@ -760,19 +760,19 @@
   "origen": "server.js:9127",
   "mensaje": "This company doesn't have export invoicing enabled.\nOpen the app → Tax Details, tick \"I issue Factura E (exports)\" and complete the export point of sale before issuing.",
   "idioma": "en",
-  "esperado": "❌ Open the app → Tax Details, complete the export settings and set  back to \"\"."
+  "esperado": "❌ Open the app → Tax Details and complete the export settings. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9138",
   "mensaje": "The export point of sale is not configured.\nOpen the app → Tax Details and pick your export point of sale (AFIP requires a point of sale of type \"Comprobantes de Exportación - Web Services\", different from the local one).",
   "idioma": "en",
-  "esperado": "❌ Open the app → Tax Details, complete the export settings and set  back to \"\"."
+  "esperado": "❌ Open the app → Tax Details and complete the export settings. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9152",
   "mensaje": "The export payment method is not configured.\nAFIP requires it on every Factura E. Set it in the app → Tax Details (e.g. \"Transferencia bancaria\").",
   "idioma": "en",
-  "esperado": "❌ Open the app → Tax Details, complete the export settings and set  back to \"\"."
+  "esperado": "❌ Open the app → Tax Details and complete the export settings. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9179",
@@ -922,7 +922,7 @@
   "origen": "server.js:6164",
   "mensaje": "Voucher Type not recognized: \"…\". It must be \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" or \"Factura E\"/\"Export Invoice\".",
   "idioma": "en",
-  "esperado": "❌ In the Voucher Type column put Invoice, Credit Note or Debit Note,. Then set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the Voucher Type column put Invoice, Credit Note or Debit Note. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6275",
@@ -1043,7 +1043,7 @@
   "origen": "catalogo — tipo-comprobante-no-reconocido",
   "mensaje": "Tipo de Comprobante no reconocido: \"NC\".",
   "idioma": "es",
-  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — punto-venta-invalido",
@@ -1091,13 +1091,13 @@
   "origen": "catalogo — empresa-no-cargada",
   "mensaje": "Empresa no encontrada para la cuenta monday.",
   "idioma": "es",
-  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — certificados-faltantes",
   "mensaje": "Faltan certificados AFIP para esta empresa.",
   "idioma": "es",
-  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — mapeo-sin-configurar",
