@@ -862,5 +862,65 @@
   "mensaje": "The Credit Note exceeds the invoice's available balance.\nInvoice: … · already credited: … · available: … · this note: ….\nLower the subitem amounts so the total fits within the available balance.",
   "idioma": "en",
   "esperado": "The Credit Note exceeds the invoice balance"
+ },
+ {
+  "origen": "server.js:6164",
+  "mensaje": "Voucher Type not recognized: \"…\". It must be \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" or \"Factura E\"/\"Export Invoice\".",
+  "idioma": "en",
+  "esperado": "Voucher Type not recognized"
+ },
+ {
+  "origen": "server.js:6275",
+  "mensaje": "The Point of Sale \"…\" is not valid. It must be a point-of-sale number enabled in AFIP for web services (e.g. 1, 5, 0005).",
+  "idioma": "en",
+  "esperado": "We couldn't read the point of sale"
+ },
+ {
+  "origen": "server.js:6653",
+  "mensaje": "No valid lines in the subitems to issue the invoice.\n…`}",
+  "idioma": "en",
+  "esperado": "Incomplete or missing subitems"
+ },
+ {
+  "origen": "server.js:6683",
+  "mensaje": "Missing required service dates: ….\nWhen the product/service type includes services (AFIP Concept: …), AFIP requires the billing-period dates and the payment due date.",
+  "idioma": "en",
+  "esperado": "Service dates required"
+ },
+ {
+  "origen": "server.js:6714",
+  "mensaje": "Missing VAT rate in subitems: ….\nAll subitems must have a VAT rate assigned (0, 2.5, 5, 10.5, 21 or 27).",
+  "idioma": "en",
+  "esperado": "Incomplete or missing subitems"
+ },
+ {
+  "origen": "server.js:6728",
+  "mensaje": "Different VAT rates across subitems.\nAll subitems must have the same VAT rate. Rates found:\n…",
+  "idioma": "en",
+  "esperado": "Invalid VAT rate"
+ },
+ {
+  "origen": "server.js:6740",
+  "mensaje": "Invalid VAT rate: …%.\nAllowed rates are: 0%, 2.5%, 5%, 10.5%, 21%, 27%.",
+  "idioma": "en",
+  "esperado": "Invalid VAT rate"
+ },
+ {
+  "origen": "server.js:6751",
+  "mensaje": "VAT rate incompatible with Invoice C.\nYou set …% but Invoice C doesn't carry VAT (issuer …).\nChange the subitem rates to 0% before issuing.",
+  "idioma": "en",
+  "esperado": "C voucher doesn't carry VAT"
+ },
+ {
+  "origen": "server.js:6782",
+  "mensaje": "Problems with the discount amounts:\n…\nThe discount is an amount in the same currency as the unit price, and applies to the whole line (quantity × price) — not per unit.",
+  "idioma": "en",
+  "esperado": "Problems with the subitem discounts"
+ },
+ {
+  "origen": "server.js:6814",
+  "mensaje": "The invoice total is …. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.",
+  "idioma": "en",
+  "esperado": "The voucher total came out as zero"
  }
 ]

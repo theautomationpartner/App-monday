@@ -331,7 +331,7 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             solucion: 'Cambiale el nombre al item por cualquier otro y volvé a poner el estado que dispara la emisión.',
         },
         {
-            match: /^El Punto de Venta ".*" no es v[aá]lido|punto de venta habilitado en AFIP para web/i,
+            match: /^El Punto de Venta ".*" no es v[aá]lido|punto de venta habilitado en AFIP para web|^The Point of Sale ".*" is not valid|point-of-sale number enabled in AFIP/i,
             title: 'No pudimos leer el punto de venta',
             detail: mainMsg,
             solucion: 'En esa columna va solamente el número del punto de venta (1, 5, 0005). Si querés seguir viendo el nombre del local en el tablero, dejá el número ahí y usá otra columna aparte para el nombre.',
