@@ -536,6 +536,45 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es') {
             `<b>${A.fix}</b> ${known.solucion}`;
     }
 
+    // ── Fallback ────────────────────────────────────────────────────────────
+    // Antes esto pegaba SIEMPRE "Revisá los datos del item y reintentá", incluso
+    // cuando el mensaje ya traía su propia instrucción. Quedaban comentarios que
+    // se contradecían a sí mismos:
+    //
+    //   Causa: Esta empresa no tiene habilitada la facturación de exportación.
+    //          Abrí la app → Datos Fiscales, tildá "Emite Factura E" y guardá.
+    //   Cómo solucionarlo: Revisá los datos del item y reintentá.
+    //
+    // Dos instrucciones distintas, y la de abajo manda al lugar equivocado.
+    // Muchos de los throw del código ya vienen con la solución escrita adentro;
+    // el problema era que ninguna regla los agarraba y el genérico se los pisaba.
+    //
+    // Ahora: si el mensaje trae una instrucción (un verbo en imperativo), se parte
+    // en causa + instrucción y se muestra la propia. Si no trae, recién ahí va el
+    // genérico. Es lo que convierte 66 mensajes mudos en 66 que dicen algo.
+    // OJO con el \b final: en JavaScript NO funciona después de una vocal acentuada.
+    // "Abrí " no tiene frontera de palabra entre la "í" y el espacio, porque \w es
+    // solo [A-Za-z0-9_] y la í queda afuera. Por eso se usa (?=\s) — el verbo tiene
+    // que venir seguido de un espacio, que es lo que pasa siempre en una instrucción.
+    const IMPERATIVO = isEn
+        ? /\b(Open|Go to|Check|Fix|Set|Enter|Write|Upload|Complete|Retry|Choose|Make sure)(?=\s)/
+        : /(^|[\s.—–-])(Abr[ií]|And[aá]|Revis[aá]|Correg[ií]|Pon[eé]|Escrib[ií]|Sub[ií]|Complet[aá]|Reintent[aá]|Eleg[ií]|Carg[aá]|Fijate|Verific[aá]|Cambi[aá]|Dale de alta|Consult[aá]|Ped[ií]le|Volv[eé] a|Asegurate|Tild[aá]|Us[aá]|Copi[aá]|Borr[aá]|Cre[aá])(?=\s)/;
+
+    // El mensaje completo, no solo la primera línea: la instrucción suele venir
+    // después del punto o en la línea siguiente.
+    const completo = String(msg).trim();
+    const corte = completo.search(IMPERATIVO);
+    if (corte > 0) {
+        const causa = completo.slice(0, corte).trim().replace(/[\s—–-]+$/, '');
+        const comoSe = completo.slice(corte).trim();
+        // Solo si las dos partes tienen sustancia; si no, se muestra entero.
+        if (causa.length > 12 && comoSe.length > 12) {
+            return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
+                `<b>${A.cause}</b> ${causa}<br/><br/>` +
+                `<b>${A.fix}</b> ${comoSe}`;
+        }
+    }
+
     return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
         `<b>${A.cause}</b> ${mainMsg}<br/><br/>` +
         `<b>${A.fix}</b> ${A.fallback}`;
