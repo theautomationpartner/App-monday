@@ -22,12 +22,12 @@
  {
   "origen": "server.js:1462",
   "mensaje": "FECompUltimoAutorizado HTTP …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1468",
   "mensaje": "No se pudo obtener último comprobante: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1541",
@@ -37,12 +37,12 @@
  {
   "origen": "server.js:1545",
   "mensaje": "FECompConsultar HTTP …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1561",
   "mensaje": "FECompConsultar error AFIP: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1679",
@@ -52,17 +52,17 @@
  {
   "origen": "server.js:1683",
   "mensaje": "FEParamGetCotizacion HTTP …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1693",
   "mensaje": "AFIP rechazo cotizacion …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1700",
   "mensaje": "FEParamGetCotizacion devolvio cotizacion invalida para …: \"…\"",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:1749",
@@ -87,12 +87,12 @@
  {
   "origen": "server.js:2099",
   "mensaje": "WSFE FECAESolicitar falló tras 2 intentos: ……",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2152",
   "mensaje": "FECAESolicitar HTTP …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2196",
@@ -102,22 +102,22 @@
  {
   "origen": "server.js:2386",
   "mensaje": "No hay líneas válidas en los subítems. The item has no subitems created.El item no tiene subítems creados.Subitems with problems: …Subítems con problemas: …",
-  "esperado": "❌ Completá en cada subítem el Concepto, la Cantidad y el Precio Unitario y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá en cada subítem el Concepto, la Cantidad y el Precio Unitario. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2401",
   "mensaje": "Alícuota IVA faltante en subítems: …. All subitems must have a VAT rate (0, 2.5, 5, 10.5, 21 or 27).Todos los subítems deben tener una alícuota IVA (0, 2.5, 5, 10.5, 21 o 27).",
-  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2410",
   "mensaje": "Alícuotas IVA diferentes entre subítems. All subitems must have the same VAT rate. Found: Todos los subítems deben tener la misma alícuota IVA. Encontradas: • \"…\": …%",
-  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2420",
   "mensaje": "Alícuota IVA no válida: …%. Allowed: 0%, 2.5%, 5%, 10.5%, 21%, 27%.Las permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.",
-  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:5963",
@@ -127,7 +127,7 @@
  {
   "origen": "server.js:5986",
   "mensaje": "Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.",
-  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:5991",
@@ -137,18 +137,18 @@
  {
   "origen": "server.js:6001",
   "mensaje": "TEST forzado: error sistema simulado desde item make-errores-",
-  "esperado": "❌ Cambiale el nombre al item y volvé a poner la columna de estado en \"Crear Comprobante\". Ese nombre lo usamos internamente para probar."
+  "esperado": "❌ Cambiale el nombre al item. Después volvé a poner la columna de estado en \"Crear Comprobante\". Ese nombre lo usamos internamente para probar."
  },
  {
   "origen": "server.js:6028",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: en• Choose a value in the … column: Invoice, Credit Note or Debit Note• Elegí un valor en la columna …: Factura, Nota de Crédito o Nota de Débito",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6082",
   "mensaje": "Tipo de Comprobante no reconocido: \"…\". Tiene que ser \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" o \"Factura E\"/\"Export Invoice\".",
-  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -171,19 +171,19 @@
  {
   "origen": "server.js:6165",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: • …",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6184",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: en• Choose the Point of Sale in the … column• Elegí el Punto de Venta en la columna …",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6193",
   "mensaje": "El Punto de Venta \"…\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).",
-  "esperado": "❌ En la columna del Punto de Venta dice \"12345\" y ahí va solo el número. Corregilo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna del Punto de Venta dice \"12345\" y ahí va solo el número. Corregilo. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -194,12 +194,12 @@
  {
   "origen": "server.js:6383",
   "mensaje": "Faltan certificados AFIP para este emisor",
-  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6393",
   "mensaje": "Falta configurar el mapeo de columnas para este tablero",
-  "esperado": "❌ Abrí la app parado en este tablero → Mapeo Visual, emparejá cada dato con tu columna, guardá y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Abrí la app parado en este tablero → Mapeo Visual, emparejá cada dato con tu columna, guardá. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6449",
@@ -214,41 +214,41 @@
  {
   "origen": "server.js:6495",
   "mensaje": "CUIT/DNI del receptor inválido: \"…\" (… dígitos). Completá la columna con un CUIT de 11 dígitos o un DNI de 7 u 8. Si la operación es a consumidor final sin identificar, dejá la columna vacía.",
-  "esperado": "❌ Completá la columna del CUIT con un CUIT de 11 dígitos o un DNI de 7 u 8, sin guiones ni espacios y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá la columna del CUIT con un CUIT de 11 dígitos o un DNI de 7 u 8, sin guiones ni espacios. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6549",
   "mensaje": "}No hay líneas válidas en subitems para emitir la factura. …",
-  "esperado": "❌ Completá en cada subítem el Concepto, la Cantidad y el Precio Unitario y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá en cada subítem el Concepto, la Cantidad y el Precio Unitario. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6579",
   "mensaje": "Fechas de servicio obligatorias faltantes: …. Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: …), AFIP exige las fechas del período facturado y el vencimiento de pago.",
-  "esperado": "❌ Completá las columnas Fecha Servicio Desde y Fecha Servicio Hasta del item y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Completá las columnas Fecha Servicio Desde y Fecha Servicio Hasta del item. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6610",
   "mensaje": "Alícuota IVA faltante en subitems: …. Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).",
-  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6624",
   "mensaje": "Alícuotas IVA diferentes entre subitems. Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas: …",
-  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6636",
   "mensaje": "Alícuota IVA no válida: …%. Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.",
-  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné la misma alícuota IVA en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6647",
   "mensaje": "Alícuota IVA incompatible con Factura C. Configuraste …% pero las Facturas C no llevan IVA (emisor …). Cambiá la alícuota de los subítems a 0% antes de emitir.",
-  "esperado": "❌ Poné la columna de Alícuota IVA en 0 en todos los subítems y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné la columna de Alícuota IVA en 0 en todos los subítems. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -259,7 +259,7 @@
  {
   "origen": "server.js:7563",
   "mensaje": "No se puede emitir …: • …",
-  "esperado": "❌ Corregí en el item lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Corregí en el item lo que está marcado con ❌ acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:7581",
@@ -270,19 +270,19 @@
  {
   "origen": "server.js:7594",
   "mensaje": "El tablero no tiene mapeada la columna del CAE de referencia. Configurala en el Mapeo Visual de la app (sección \"Columnas opcionales\") para poder emitir ….",
-  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:7609",
   "mensaje": "La columna del CAE de referencia está vacía. Pegá ahí el CAE (14 dígitos) de la factura que esta … debe anular — lo encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.",
-  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:7618",
   "mensaje": "El CAE de referencia \"…\" no es válido: el CAE de AFIP tiene 14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). La columna puede ser numérica o de texto, las dos sirven.",
-  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -294,25 +294,25 @@
  {
   "origen": "server.js:7666",
   "mensaje": "No se encontró ninguna factura emitida por la app con el CAE …. Verificá que el CAE esté bien copiado y que la factura se haya emitido desde este mismo tablero.",
-  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:7693",
   "mensaje": "La factura de este item no tiene los datos completos (CAE / número / tipo / punto de venta) para poder referenciarla en una ….",
-  "esperado": "❌ Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:7702",
   "mensaje": "No se pudo determinar la letra de la factura original (tipo='…').",
-  "esperado": "❌ Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:7723",
   "mensaje": "Seleccionaste el Punto de Venta …, pero esta … anula la Factura … N° …-…, que es del Punto de Venta …. La … se emite desde el MISMO punto de venta que la factura — cambiá el Punto de Venta a … o dejá esa columna vacía.",
-  "esperado": "❌ Cambiá el punto de venta del item para que coincida con el de la factura que estás anulando, o dejá esa columna vacía y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Cambiá el punto de venta del item para que coincida con el de la factura que estás anulando, o dejá esa columna vacía. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -347,13 +347,13 @@
  {
   "origen": "server.js:7874",
   "mensaje": "La alícuota IVA de la Nota de Crédito (…%) no coincide con la de la factura (…%). La NC tiene que usar la misma alícuota IVA que la factura que anula.",
-  "esperado": "❌ Ajustá la columna de Alícuota IVA de los subítems para que coincida con la de la factura original y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Ajustá la columna de Alícuota IVA de los subítems para que coincida con la de la factura original. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8021",
   "mensaje": "La Nota de Crédito (…) supera el saldo disponible de la factura. Total facturado: … · Ya acreditado / en curso: … · Saldo disponible: ….",
-  "esperado": "❌ Bajá los importes de los subítems para que el total no supere el saldo disponible y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Bajá los importes de los subítems para que el total no supere el saldo disponible. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -369,61 +369,61 @@
  {
   "origen": "server.js:8480",
   "mensaje": "El país de destino \"…\" es ambiguo — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto del que necesitás.",
-  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8493",
   "mensaje": "El país de destino \"…\" no está en la lista de países de AFIP. Escribilo como lo nombra AFIP….",
-  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8520",
   "mensaje": "La tabla de monedas de AFIP no trae pesos argentinos (\"PES\"). Reintentá en unos minutos.",
-  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8546",
   "mensaje": "La moneda \"…\" es ambigua — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto o el código de AFIP.",
-  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8557",
   "mensaje": "La moneda \"…\" no está en la lista de monedas de AFIP. Ojo: los códigos de AFIP NO son los ISO (el euro no es \"EUR\"). Escribí el nombre como lo publica AFIP, o su código.",
-  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP,. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8599",
   "mensaje": "La unidad de medida \"…\" no es una de las de AFIP. Ojo: en la Factura A/B/C esta columna es texto libre (solo se imprime en el PDF), pero la Factura E se la manda a AFIP, así que tiene que ser una de las suyas. Para servicios usá: …. Parecidas: …. Para bienes: …. AFIP no tiene una unidad \"hora\" — las horas se facturan como \"unidades\".",
-  "esperado": "❌ Poné en la unidad de medida una de las que acepta AFIP y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné en la unidad de medida una de las que acepta AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8921",
   "mensaje": "Esta empresa no tiene habilitada la facturación de exportación. Abrí la app → Datos Fiscales, tildá \"Emito Facturas E (exportación)\" y completá el punto de venta de exportación antes de emitir.",
-  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8932",
   "mensaje": "Falta configurar el punto de venta de exportación. Abrí la app → Datos Fiscales y elegí tu punto de venta de exportación (AFIP exige un punto de venta del tipo \"Comprobantes de Exportación - Web Services\", distinto del de mercado interno).",
-  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8946",
   "mensaje": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E. Cargala en la app → Datos Fiscales (ej: \"Transferencia bancaria\").",
-  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Abrí la app → Datos Fiscales, completá lo de exportación. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8973",
   "mensaje": "No se puede emitir la Factura E: • …",
-  "esperado": "❌ Corregí en el item lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Corregí en el item lo que está marcado con ❌ acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:9010",
@@ -434,13 +434,13 @@
  {
   "origen": "server.js:9036",
   "mensaje": "Para emitir una … hay que mapear la columna que tiene el CAE de la factura de exportación que se ajusta (Mapeo Visual → \"Factura de referencia\").",
-  "esperado": "❌ Abrí la app → Mapeo Visual → en Factura de referencia elegí la columna donde ponés el CAE, guardá y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Abrí la app → Mapeo Visual → en Factura de referencia elegí la columna donde ponés el CAE, guardá. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:9046",
   "mensaje": "Falta el CAE de referencia o no es válido…. El CAE de AFIP tiene 14 dígitos — copialo exacto del PDF de la factura de exportación.",
-  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Pegá en la columna del CAE el código de 14 dígitos de la factura que querés anular. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:9066",
@@ -451,31 +451,31 @@
  {
   "origen": "server.js:9081",
   "mensaje": "Una Nota de Débito E solo puede referenciar una Factura E, no otra nota.",
-  "esperado": "❌ Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:9088",
   "mensaje": "El comprobante referenciado no es una exportación de servicios — AFIP exige que el comprobante asociado sea del mismo tipo de exportación.",
-  "esperado": "❌ Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Revisá el CAE que cargaste: tiene que ser el de una Factura E de servicios. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:9096",
   "mensaje": "Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se puede vincular. Contactá al soporte de la app.",
-  "esperado": "❌ Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Revisá que el CAE que pusiste sea el de una factura emitida por la app desde este mismo tablero. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:9170",
   "mensaje": "No se pudo leer la Fecha de Pago (\"…\"). Tiene que ser una columna de fecha con una fecha válida — AFIP la exige en toda Factura E de servicios.",
-  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:9181",
   "mensaje": "La Fecha de Pago (…) es anterior a la fecha de emisión (…). AFIP rechaza la Factura E con fecha de pago pasada — ponela de hoy en adelante.",
-  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -516,7 +516,7 @@
  {
   "origen": "server.js:9397",
   "mensaje": "AFIP no tiene un \"CUIT país\" para … con tipo de cliente \"…\" (es lo que pasa con las zonas francas). En ese caso AFIP exige el ID impositivo del cliente: completá la columna \"ID impositivo del cliente\" en el item (y mapeala en el Mapeo Visual si no lo está).",
-  "esperado": "❌ Completá la columna ID impositivo del cliente con el número fiscal que use tu cliente en su país y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Completá la columna ID impositivo del cliente con el número fiscal que use tu cliente en su país. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -540,13 +540,13 @@
  {
   "origen": "server.js:9608",
   "mensaje": "La fecha de la … (…) es anterior a la de la factura referenciada (…). AFIP exige que sea igual o posterior.",
-  "esperado": "❌ Cambiá la Fecha de Emisión del item para que sea igual o posterior a la de la factura que estás anulando y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Cambiá la Fecha de Emisión del item para que sea igual o posterior a la de la factura que estás anulando. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:9670",
   "mensaje": "La Nota de Crédito supera el saldo disponible de la factura. Factura: … · ya acreditado: … · disponible: … · esta nota: …. Bajá los importes de los subítems para que el total entre en el saldo disponible.",
-  "esperado": "❌ Bajá los importes de los subítems para que el total no supere el saldo disponible y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Bajá los importes de los subítems para que el total no supere el saldo disponible. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -572,32 +572,32 @@
  {
   "origen": "server.js:10726",
   "mensaje": "Item … no encontrado en Monday",
-  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:12145",
   "mensaje": "company no encontrada",
-  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:12151",
   "mensaje": "certs AFIP faltantes",
-  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipAuth.js:136",
   "mensaje": "WSAA no devolvió token/sign válidos. Respuesta:",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipAuth.js:218",
   "mensaje": "WSAA fetch falló tras 2 intentos: ……",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipAuth.js:230",
   "mensaje": "WSAA HTTP … (service=…, cuit=…, env=…): …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipPadron.js:53",
@@ -612,12 +612,12 @@
  {
   "origen": "modules/afipPadron.js:323",
   "mensaje": "CUIT inválido para consultar padrón: \"…\"",
-  "esperado": "❌ Completá la columna del CUIT con un CUIT de 11 dígitos o un DNI de 7 u 8, sin guiones ni espacios y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá la columna del CUIT con un CUIT de 11 dígitos o un DNI de 7 u 8, sin guiones ni espacios. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipPadron.js:340",
   "mensaje": "Error autenticando en WSAA para padrón: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipPadron.js:377",
@@ -632,129 +632,129 @@
  {
   "origen": "modules/afipWsfex.js:103",
   "mensaje": "[wsfex:…] […] …",
-  "esperado": "❌ Corregí en el item el dato que menciona AFIP acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Corregí en el item el dato que menciona AFIP acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:168",
   "mensaje": "[wsfex:…] timeout tras …ms",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:177",
   "mensaje": "[wsfex:…] error de red: ……",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:182",
   "mensaje": "[wsfex:…] HTTP …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:218",
   "mensaje": "[wsfex:FEXGetLast_ID] respuesta sin Id legible: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:244",
   "mensaje": "[wsfex:FEXGetLast_CMP] respuesta sin Cbte_nro legible: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:423",
   "mensaje": "[wsfex:FEXAuthorize] respuesta sin FEXResultAuth: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:434",
   "mensaje": "[wsfex:FEXAuthorize] AFIP rechazó el comprobante (Resultado=……)",
-  "esperado": "❌ Corregí en el item el dato que menciona AFIP acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Corregí en el item el dato que menciona AFIP acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipWsfex.js:554",
   "mensaje": "[wsfex:FEXGetPARAM_Ctz] cotización ilegible para …: …",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/invoiceRules.js:92",
   "mensaje": "Tipo de factura incorrecto: solicitaste … pero corresponde …. Emisor: … (…), Receptor: … (…). Regla: …",
-  "esperado": "❌ Revisá la Condición IVA de tu empresa en la app → Datos Fiscales, y el CUIT del cliente en el item y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Revisá la Condición IVA de tu empresa en la app → Datos Fiscales, y el CUIT del cliente en el item. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/invoiceRules.js:134",
   "mensaje": "Tipo de comprobante inválido: …",
-  "esperado": "❌ En la columna de Tipo de Comprobante escribí el nombre completo del comprobante y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ En la columna de Tipo de Comprobante escribí el nombre completo del comprobante. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2424",
   "mensaje": "No valid lines in the subitems.",
   "idioma": "en",
-  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:2439",
   "mensaje": "Missing VAT rate in subitems: …\"`).join(', ')}.",
   "idioma": "en",
-  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:2448",
   "mensaje": "Different VAT rates across subitems.",
   "idioma": "en",
-  "esperado": "❌ Set the same VAT rate on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the same VAT rate on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:2458",
   "mensaje": "Invalid VAT rate: …%.",
   "idioma": "en",
-  "esperado": "❌ Set the same VAT rate on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the same VAT rate on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:2485",
   "mensaje": "Problems with the discount amounts:",
   "idioma": "en",
-  "esperado": "❌ Fix the discount on the subitems marked below and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fix the discount on the subitems marked below. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:2514",
   "mensaje": "The voucher total is …. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.",
   "idioma": "en",
-  "esperado": "❌ Lower the discount amounts so the total is above zero and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Lower the discount amounts so the total is above zero. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8637",
   "mensaje": "The destination country \"…\" is ambiguous — it matches several AFIP entries: …\"`).join(', ')}. Write the exact name of the one you need in the column.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it, and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it,. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8650",
   "mensaje": "The destination country \"…\" is not in AFIP's country list.\nUse the country's name in English (e.g. \"Brazil\", \"United States\") or exactly as AFIP names it…` : ''}.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it, and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it,. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8677",
   "mensaje": "AFIP's currency table doesn't include Argentine pesos (\"PES\"). Try again in a few minutes.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it, and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it,. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8703",
   "mensaje": "The currency \"…\" is ambiguous — it matches several AFIP entries: …\" (…)`).join(', ')}. Write the exact name or AFIP's code in the column.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it, and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it,. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8714",
   "mensaje": "The currency \"…\" is not in AFIP's currency list.\nCareful: AFIP's codes are NOT the ISO ones (the euro is not \"EUR\"). Write the name as AFIP publishes it, or its code.",
   "idioma": "en",
-  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it, and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it,. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8756",
   "mensaje": "The unit of measure \"…\" is not one of AFIP's units.\nHeads up: in Factura A/B/C this column is free text (it only shows on the PDF), but Factura E sends it to AFIP, so it has to be one of theirs.\nFor services use: ….` +\n            (parecidas.length ? `\nSimilar ones: ….` : '') +\n            (comunes.length ? `\nFor goods: ….` : '') +\n            `\nAFIP has no \"hour\" unit — bill hours as \"unidades\".",
   "idioma": "en",
-  "esperado": "❌ Set the unit of measure to one of the ones AFIP accepts and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the unit of measure to one of the ones AFIP accepts. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9127",
@@ -778,7 +778,7 @@
   "origen": "server.js:9179",
   "mensaje": "Can't issue the Export Invoice:\n` + feReceptorErrors.map((e) => `• …`).join('\n')",
   "idioma": "en",
-  "esperado": "❌ Fix what is marked with ❌ below on the item and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fix what is marked with ❌ below on the item. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9199",
@@ -796,13 +796,13 @@
   "origen": "server.js:9242",
   "mensaje": "To issue an … you must map the column that holds the CAE of the export invoice being adjusted (Visual Mapping → \"Invoice reference\").",
   "idioma": "en",
-  "esperado": "❌ Open the app → Visual Mapping → under Reference invoice pick the column where you put the CAE, save and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Open the app → Visual Mapping → under Reference invoice pick the column where you put the CAE, save. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9252",
   "mensaje": "The reference CAE is missing or invalid…\")` : ''}. An AFIP CAE has 14 digits — copy it exactly from the export invoice PDF.",
   "idioma": "en",
-  "esperado": "❌ Paste the 14-digit CAE of the invoice you want to cancel into the CAE column and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Paste the 14-digit CAE of the invoice you want to cancel into the CAE column. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9272",
@@ -814,37 +814,37 @@
   "origen": "server.js:9287",
   "mensaje": "An Export Debit Note can only reference an Export Invoice, not another note.",
   "idioma": "en",
-  "esperado": "❌ Check the CAE you entered: it has to belong to a Factura E for services and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Check the CAE you entered: it has to belong to a Factura E for services. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9294",
   "mensaje": "The referenced voucher is not a services export — AFIP requires the associated voucher to be of the same export type.",
   "idioma": "en",
-  "esperado": "❌ Check the CAE you entered: it has to belong to a Factura E for services and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Check the CAE you entered: it has to belong to a Factura E for services. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9302",
   "mensaje": "The referenced voucher is missing its type / point of sale / number, so it can't be linked. Contact the app's support.",
   "idioma": "en",
-  "esperado": "❌ Check that the CAE you entered belongs to an invoice issued by the app from this same board and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Check that the CAE you entered belongs to an invoice issued by the app from this same board. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9361",
   "mensaje": "Item incomplete — fix the following before issuing:",
   "idioma": "en",
-  "esperado": "❌ Fill in what is marked with ❌ below and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in what is marked with ❌ below. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9376",
   "mensaje": "Couldn't read the Payment Date (\"…\"). It must be a date column with a valid date — AFIP requires it on every Factura E for services.",
   "idioma": "en",
-  "esperado": "❌ Set the Payment Date column to a date from today onwards and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the Payment Date column to a date from today onwards. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9387",
   "mensaje": "The Payment Date (…) is earlier than the issue date (…). AFIP rejects Factura E with a payment date in the past — set it to today or later.",
   "idioma": "en",
-  "esperado": "❌ Set the Payment Date column to a date from today onwards and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the Payment Date column to a date from today onwards. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9410",
@@ -886,7 +886,7 @@
   "origen": "server.js:9603",
   "mensaje": "AFIP has no \"country CUIT\" for … with client type \"…\" (typical of free-trade zones).\nIn that case AFIP requires the client's tax ID: fill in the \"Client's tax ID\" column on the item (map it in Visual Mapping if it isn't yet).",
   "idioma": "en",
-  "esperado": "❌ Fill in the Client tax ID column with the tax number your client uses in their country and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in the Client tax ID column with the tax number your client uses in their country. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9641",
@@ -910,73 +910,73 @@
   "origen": "server.js:9830",
   "mensaje": "The … date (…) is earlier than the referenced invoice's (…). AFIP requires it to be the same or later.",
   "idioma": "en",
-  "esperado": "❌ Change the item's Issue Date so it is the same as or later than the invoice you are cancelling and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Change the item's Issue Date so it is the same as or later than the invoice you are cancelling. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9892",
   "mensaje": "The Credit Note exceeds the invoice's available balance.\nInvoice: … · already credited: … · available: … · this note: ….\nLower the subitem amounts so the total fits within the available balance.",
   "idioma": "en",
-  "esperado": "❌ Lower the subitem amounts so the total does not exceed the available balance and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Lower the subitem amounts so the total does not exceed the available balance. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6164",
   "mensaje": "Voucher Type not recognized: \"…\". It must be \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" or \"Factura E\"/\"Export Invoice\".",
   "idioma": "en",
-  "esperado": "❌ In the Voucher Type column put Invoice, Credit Note or Debit Note, and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ In the Voucher Type column put Invoice, Credit Note or Debit Note,. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6275",
   "mensaje": "The Point of Sale \"…\" is not valid. It must be a point-of-sale number enabled in AFIP for web services (e.g. 1, 5, 0005).",
   "idioma": "en",
-  "esperado": "❌ The Point of Sale column says \"12345\" and only the number goes there. Fix it and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ The Point of Sale column says \"12345\" and only the number goes there. Fix it. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6653",
   "mensaje": "No valid lines in the subitems to issue the invoice.\n…`}",
   "idioma": "en",
-  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6683",
   "mensaje": "Missing required service dates: ….\nWhen the product/service type includes services (AFIP Concept: …), AFIP requires the billing-period dates and the payment due date.",
   "idioma": "en",
-  "esperado": "❌ Fill in the Service Date From and Service Date To columns on the item and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in the Service Date From and Service Date To columns on the item. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6714",
   "mensaje": "Missing VAT rate in subitems: ….\nAll subitems must have a VAT rate assigned (0, 2.5, 5, 10.5, 21 or 27).",
   "idioma": "en",
-  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fill in the Description, Quantity and Unit Price on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6728",
   "mensaje": "Different VAT rates across subitems.\nAll subitems must have the same VAT rate. Rates found:\n…",
   "idioma": "en",
-  "esperado": "❌ Set the same VAT rate on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the same VAT rate on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6740",
   "mensaje": "Invalid VAT rate: …%.\nAllowed rates are: 0%, 2.5%, 5%, 10.5%, 21%, 27%.",
   "idioma": "en",
-  "esperado": "❌ Set the same VAT rate on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the same VAT rate on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6751",
   "mensaje": "VAT rate incompatible with Invoice C.\nYou set …% but Invoice C doesn't carry VAT (issuer …).\nChange the subitem rates to 0% before issuing.",
   "idioma": "en",
-  "esperado": "❌ Set the VAT Rate column to 0 on every subitem and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Set the VAT Rate column to 0 on every subitem. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6782",
   "mensaje": "Problems with the discount amounts:\n…\nThe discount is an amount in the same currency as the unit price, and applies to the whole line (quantity × price) — not per unit.",
   "idioma": "en",
-  "esperado": "❌ Fix the discount on the subitems marked below and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Fix the discount on the subitems marked below. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6814",
   "mensaje": "The invoice total is …. The discounts consumed the entire amount — AFIP rejects vouchers with a total of zero or less.",
   "idioma": "en",
-  "esperado": "❌ Lower the discount amounts so the total is above zero and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Lower the discount amounts so the total is above zero. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "runtime — crash real medido en staging 2026-08-05",
@@ -1036,26 +1036,26 @@
   "origen": "catalogo — item-incompleto-celdas",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir:\n• Concepto\n• Cantidad (subítem \"Puerta\")",
   "idioma": "es",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "catalogo — tipo-comprobante-no-reconocido",
   "mensaje": "Tipo de Comprobante no reconocido: \"NC\".",
   "idioma": "es",
-  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito, y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — punto-venta-invalido",
   "mensaje": "El Punto de Venta \"Casa Central\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej. 1, 5, 0005).",
   "idioma": "es",
-  "esperado": "❌ En la columna del Punto de Venta dice \"Casa Central\" y ahí va solo el número. Corregilo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ En la columna del Punto de Venta dice \"Casa Central\" y ahí va solo el número. Corregilo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — padron-receptor-rechazado",
   "mensaje": "Padrón AFIP error: La CUIT registra requerimientos pendientes de verificaciones. (doc 30717423867). Consultá con el titular de ese CUIT.",
   "idioma": "es",
-  "esperado": "❌ Revisá el CUIT 30717423867 en la columna del CUIT: son 11 dígitos, sin puntos ni guiones. Corregilo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Revisá el CUIT 30717423867 en la columna del CUIT: son 11 dígitos, sin puntos ni guiones. Corregilo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — factura-ya-emitida-aviso",
@@ -1067,13 +1067,13 @@
   "origen": "catalogo — item-no-encontrado",
   "mensaje": "Item 12345678 no encontrado en Monday",
   "idioma": "es",
-  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — afip-iva-faltante",
   "mensaje": "AFIP rechazó la factura: [10070] Si ImpNeto es mayor a 0 el objeto IVA es obligatorio.",
   "idioma": "es",
-  "esperado": "❌ Revisá que TODOS los subítems tengan cargada la columna de Alícuota IVA y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Revisá que TODOS los subítems tengan cargada la columna de Alícuota IVA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — afip-numeracion-desfasada",
@@ -1085,19 +1085,19 @@
   "origen": "catalogo — fecha-pago-pasada",
   "mensaje": "La Fecha de Pago (28/07/2026) es anterior a la fecha de emisión (29/07/2026). AFIP rechaza la Factura E con fecha de pago pasada.",
   "idioma": "es",
-  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — empresa-no-cargada",
   "mensaje": "Empresa no encontrada para la cuenta monday.",
   "idioma": "es",
-  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — certificados-faltantes",
   "mensaje": "Faltan certificados AFIP para esta empresa.",
   "idioma": "es",
-  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA,. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — mapeo-sin-configurar",
@@ -1140,13 +1140,13 @@
   "origen": "catalogo — afip-sin-numero-siguiente",
   "mensaje": "No se pudo obtener último comprobante: FECompUltimoAutorizado HTTP 503",
   "idioma": "es",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — afip-error-al-autorizar",
   "mensaje": "FECompConsultar HTTP 500: Internal Server Error",
   "idioma": "es",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — conexion-cortada-al-autorizar",
@@ -1158,13 +1158,13 @@
   "origen": "catalogo — sesion-afip-cruzada",
   "mensaje": "WSAA HTTP 500 (service=wsfe, cuit=30637662755, env=production): El CEE ya posee un TA valido para el acceso al WSN solicitado",
   "idioma": "es",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — monday: rate limit",
   "mensaje": "Complexity budget exhausted, query cost 5000 budget remaining 0",
   "idioma": "es",
-  "esperado": "❌ Esperá un par de minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá un par de minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — monday: token vencido",
@@ -1188,7 +1188,7 @@
   "origen": "infra — monday: 500",
   "mensaje": "Internal server error",
   "idioma": "es",
-  "esperado": "❌ Esperá un par de minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá un par de minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — pg: conexion cortada",
@@ -1236,7 +1236,7 @@
   "origen": "infra — TLS vencido",
   "mensaje": "certificate has expired",
   "idioma": "es",
-  "esperado": "❌ Sacá un certificado nuevo, subilo en la app → Certificados ARCA y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Sacá un certificado nuevo, subilo en la app → Certificados ARCA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — TLS cadena rota",
@@ -1266,25 +1266,25 @@
   "origen": "infra — clave que no es RSA",
   "mensaje": "error:0909006C:PEM routines:get_name:no start line",
   "idioma": "es",
-  "esperado": "❌ Volvé a subir el par completo en la app → Certificados ARCA y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Volvé a subir el par completo en la app → Certificados ARCA. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — AFIP devuelve HTML",
   "mensaje": "<html><head><title>Service Unavailable</title></head></html>",
   "idioma": "es",
-  "esperado": "❌ Esperá un par de minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá un par de minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — AFIP XML cortado",
   "mensaje": "Unexpected close tag\nLine: 42\nColumn: 18",
   "idioma": "es",
-  "esperado": "❌ Esperá unos minutos y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Esperá unos minutos. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "infra — monday: rate limit (en)",
   "mensaje": "Complexity budget exhausted, query cost 5000 budget remaining 0",
   "idioma": "en",
-  "esperado": "❌ Wait a couple of minutes and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Wait a couple of minutes. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "infra — monday: token vencido (en)",
@@ -1308,7 +1308,7 @@
   "origen": "infra — monday: 500 (en)",
   "mensaje": "Internal server error",
   "idioma": "en",
-  "esperado": "❌ Wait a couple of minutes and set the status column back to \"Create Voucher\"."
+  "esperado": "❌ Wait a couple of minutes. Then set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "infra — pg: conexion cortada (en)",
