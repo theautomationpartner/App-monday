@@ -180,6 +180,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /falta.*mapeo|falta.*configurar.*mapeo|falta.*mapping/i,
             title: 'Falta configurar el mapeo de columnas',
+            accion: 'Abrí la app parado en este tablero → <b>Mapeo Visual</b>, emparejá cada dato con tu columna, guardá y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Si el tablero lo armaste con la plantilla de Factura ARCA, el mapeo se completa solo: entrá igual, revisá que esté todo en verde y guardá.',
             detail: 'El tablero no tiene configurado qué columna corresponde a cada campo de la factura.',
             solucion: 'Abrí la vista de la app → sección <b>Mapeo Visual</b> → seleccioná las columnas y guardá.',
         },
@@ -224,6 +227,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // de expiración", y encima NO agarraba el mensaje real. Estaba al revés.
             match: /certificados?.{0,30}(vencid|expirad|expir[oó])|certificate.{0,20}expired/i,
             title: 'Se te venció el certificado de ARCA',
+            accion: 'Sacá un certificado nuevo, subilo en la app → <b>Certificados ARCA</b> y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada. Hasta que lo subas, reintentar no sirve.',
+            detalle: 'Es el mismo trámite de la primera vez, y el paso a paso está en esa pantalla.',
+            soporte: 'Si te trabás con el trámite en ARCA,',
             detail: 'El certificado que tenés cargado ya venció, y ARCA no acepta comprobantes firmados con un certificado vencido.',
             solucion: 'Hay que sacar uno nuevo: es el mismo trámite que hiciste la primera vez, y el paso a paso está en la vista de la app → <b>Certificados ARCA</b>. Cuando lo termines de subir, volvé a disparar la receta. Hasta entonces reintentar no sirve.',
         },
@@ -248,6 +255,15 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // problema.
             match: /acceso al web service de exportaci[oó]n|no est[aá] delegado a ese servicio|access to the export web service|not delegated to that service/i,
             title: 'Falta habilitar la facturación de exportación en AFIP',
+            accion: 'Tenés que darle a tu certificado el permiso de exportación en AFIP. Es un trámite aparte del de facturación común, de una sola vez.',
+            pasos: [
+                'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación.',
+                'En "Servicio": AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>.',
+                'En "Representante" elegí el mismo certificado que ya usás para las facturas comunes.',
+                'Confirmá y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            ],
+            estado: 'No se emitió nada.',
+            detalle: 'No hace falta subir el certificado de nuevo: es el mismo, le falta el permiso.',
             detail: 'AFIP reconoce tu certificado para las facturas comunes, pero la <b>exportación es un permiso aparte</b> que todavía no está dado. <b>No hace falta subir el certificado de nuevo</b>: es el mismo, le falta el permiso.',
             solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación → Servicio → AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>. En "Representante" elegí el mismo certificado que ya usás para las facturas comunes. Confirmá y volvé a intentar.',
         },
@@ -258,6 +274,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // podia arreglar y que ademas no era lo que estaba roto.
             match: /faltan? (los )?certificados?|falta subir el certificado|certificate not uploaded|certificados?.*afip/i,
             title: 'Falta subir el certificado de ARCA',
+            accion: 'Subí el certificado (.crt) y la clave (.key) en la app → <b>Certificados ARCA</b>, y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'No hay ningún certificado cargado para esta empresa. El paso a paso para sacarlos está en esa misma pantalla: se hace una sola vez y dura dos años.',
             detail: 'No hay ningún certificado cargado para esta empresa, y sin él la app no se puede identificar ante ARCA.',
             solucion: 'Abrí la vista de la app → sección <b>Certificados ARCA</b> → subí el certificado (.crt) y la clave (.key). Si todavía no los sacaste, el paso a paso está en esa misma pantalla: se hace una sola vez y dura dos años.',
         },
@@ -323,6 +342,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /empresa no encontrada|no encontrada.*cuenta/i,
             title: 'Empresa no configurada',
+            accion: 'Cargá tu empresa en la app → <b>Datos Fiscales</b>, subí el certificado en <b>Certificados ARCA</b>, y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
             detail: 'No se encontraron los datos fiscales de la empresa emisora.',
             solucion: 'Abrí la vista de la app → sección <b>Datos Fiscales</b> → completá Razón Social, CUIT, Punto de Venta y guardá.',
         },
@@ -334,6 +355,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // genérico de AFIP para darle un mensaje propio cuando llega pelado.
             match: /fetch failed|ECONNRESET|ETIMEDOUT|ECONNREFUSED|EAI_AGAIN|socket hang up|network.*error|terminated/i,
             title: 'Falla de conexión temporal con AFIP',
+            accion: 'Volvé a poner ${columna_estado} en "${estado_disparo}". Fue un corte de red, no un problema de tus datos.',
+            estado: 'No se emitió nada, así que no hay riesgo de duplicado.',
+            detalle: 'Si sigue fallando, esperá unos minutos y probá de nuevo.',
             detail: 'Fue un corte de red, no un problema de tus datos. El comprobante <b>no se emitió</b> (no hay duplicado).',
             solucion: 'Volvé a disparar la receta. Si sigue fallando, esperá unos minutos y reintentá.',
         },
@@ -435,6 +459,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /^No se pudo leer la Fecha de Pago|^La Fecha de Pago .* es anterior|^Couldn.t read the Payment Date|^The Payment Date .* is earlier/i,
             title: 'Revisá la Fecha de Pago',
+            accion: 'Poné en ${columna_fecha_pago} una fecha de hoy en adelante y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Ahí va la fecha en la que esperás cobrar. AFIP no acepta una Factura E con fecha de pago anterior a la de emisión.',
             detail: mainMsg,
             solucion: 'Esa columna tiene que ser de tipo Fecha y llevar una fecha de hoy en adelante: es la fecha en la que esperás cobrar, no la de la venta. AFIP la exige en toda Factura E de servicios y no acepta una fecha pasada.',
         },
@@ -465,18 +492,28 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /^Esta es la instancia de PRUEBA \(staging\)/i,
             title: 'Es un problema nuestro de configuración',
+            accion: 'No vuelvas a intentarlo hasta que te confirmemos: va a dar el mismo error. Ya nos llegó el aviso y lo estamos destrabando.',
+            estado: 'No se emitió nada.',
+            detalle: 'La emisión entró por una copia de la app que no emite comprobantes fiscales.',
+            soporte: 'Si necesitás emitir hoy,',
             detail: 'La emisión entró por una copia de la app que no emite comprobantes fiscales.',
             solucion: 'Ya nos llegó el aviso y lo destrabamos en el momento. Hasta que te confirmemos no vuelvas a intentarlo: va a dar el mismo error. Si necesitás emitir hoy, escribinos a <b>arca@theautomationpartner.com</b>.',
         },
         {
             match: /^TEST forzado: error sistema simulado/i,
             title: 'Ese nombre de item está reservado',
+            accion: 'Cambiale el nombre al item y volvé a poner ${columna_estado} en "${estado_disparo}". Ese nombre lo usamos internamente para probar.',
+            estado: 'No se emitió nada.',
+            soporte: 'Si vos no le pusiste ese nombre, o se repite con el nombre nuevo,',
             detail: 'El item se llama igual que el nombre que usamos internamente para probar los avisos de error, así que la app cortó a propósito.',
             solucion: 'Cambiale el nombre al item por cualquier otro y volvé a poner el estado que dispara la emisión.',
         },
         {
             match: /^El Punto de Venta ".*" no es v[aá]lido|punto de venta habilitado en AFIP para web|^The Point of Sale ".*" is not valid|point-of-sale number enabled in AFIP/i,
             title: 'No pudimos leer el punto de venta',
+            accion: 'En ${columna_pv} dice "${pv_raw}" y ahí va solo el número. Corregilo y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Si querés seguir viendo el nombre del local en el tablero, dejá el número en esa columna y usá otra aparte para el nombre.',
             detail: mainMsg,
             solucion: 'En esa columna va solamente el número del punto de venta (1, 5, 0005). Si querés seguir viendo el nombre del local en el tablero, dejá el número ahí y usá otra columna aparte para el nombre.',
         },
@@ -518,6 +555,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /^Item \d+ no encontrado en Monday|^company no encontrada|^certs AFIP faltantes/i,
             title: 'No encontramos el item o la empresa',
+            accion: 'El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Si lo moviste a otro tablero, ese tablero también tiene que estar configurado en la app.',
             detail: 'La app no pudo leer el item, o la empresa que factura no está cargada.',
             solucion: 'Fijate si el item sigue en el tablero (mirá también la papelera de monday). Si está, revisá que la empresa esté cargada en la app → <b>Datos Fiscales</b>, con su certificado en <b>Certificados ARCA</b>.',
         },
@@ -530,6 +570,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /^Tipo de comprobante inv[aá]lido/i,
             title: 'No reconocemos ese tipo de comprobante',
+            accion: 'En ${columna_tipo} escribí el nombre completo del comprobante y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Los que aceptamos son: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E y Nota de Débito E.\nLas abreviaturas no las tomamos: NC, ND, Fact, N/C.',
             detail: mainMsg,
             solucion: 'En la columna Tipo de Comprobante dejá exactamente uno de estos, con el nombre completo: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E o Nota de Débito E. Las abreviaturas (NC, ND, Fact) no las tomamos.',
         },
@@ -541,6 +584,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // VA DESPUES de las reglas especificas: es una red, no un atajo.
             match: NUESTRO_PATTERN,
             title: 'Es un problema nuestro',
+            accion: 'No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo.',
+            estado: 'No se emitió nada. No es un dato que hayas cargado mal, así que revisar el item no lo va a resolver.',
+            soporte: 'Si necesitás emitir hoy,',
             detail: 'La app se trabó por algo de nuestro lado. <b>No es un dato que hayas cargado mal</b>, así que revisar el item no lo va a resolver.',
             solucion: 'No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo. Si necesitás emitir hoy, escribinos a <b>arca@theautomationpartner.com</b>.',
         },
@@ -574,6 +620,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         {
             match: /tipo de comprobante no reconocido|voucher type not recognized/i,
             title: 'Tipo de Comprobante no reconocido',
+            accion: 'En ${columna_tipo} poné <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>, y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
             detail: mainMsg,
             solucion: 'La columna <b>Tipo de Comprobante</b> del item tiene que decir <b>Factura</b>, <b>Nota de Crédito</b> o <b>Nota de Débito</b>. Corregí el valor y volvé a disparar la receta.',
         },
@@ -637,6 +685,14 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
     // español de AFIP mismo y no hay nada que traducir.
     const EN_TEXT = {
         'Faltan datos en el item': {
+            accion: 'Fill in what is marked with ❌ below and set ${columna_estado} back to "${estado_disparo}".',
+            // El `estado` de esta regla lleva los bullets del propio error, así que
+            // se arma igual que el español pero con el cierre en inglés.
+            estado: subitemDetails.length > 0
+                ? subitemDetails.map(l => l.replace(/^•\s*/, '').trim()).map(l => `&nbsp;&nbsp;❌&nbsp;&nbsp;${l}`).join('<br/>') +
+                  '<br/><br/>Nothing was issued.'
+                : 'There are required fields missing in the item or its subitems.<br/><br/>Nothing was issued.',
+            detalle: 'If one of those columns doesn\'t show up on the item, check the <b>Visual Mapping</b> in the app\'s view.',
             title: 'Missing item data',
             detail: subitemDetails.length > 0
                 ? 'Fill in these columns (empty or with invalid data) and try again:<br/><br/>' +
@@ -645,6 +701,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Open the item, fill in the columns marked with ❌ and set the status that starts the issuing again. If a column is missing, check the <b>Visual Mapping</b> in the app's configuration view.",
         },
         'Falta configurar el mapeo de columnas': {
+            accion: 'Open the app from this board → <b>Visual Mapping</b>, match each field to your column, save, and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'If you built the board from the Factura ARCA template, the mapping fills itself in: open it anyway, check everything is green and save.',
             title: 'Column mapping not configured',
             detail: "The board doesn't have configured which column corresponds to each invoice field.",
             solucion: "Open the app's view → <b>Visual Mapping</b> section → select the columns and save.",
@@ -670,6 +729,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Lower the discount amounts so the total is above zero — AFIP rejects vouchers with a total of zero or less.',
         },
         'Se te venció el certificado de ARCA': {
+            accion: 'Get a new certificate, upload it in the app → <b>ARCA Certificates</b> and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued. Until you upload it, retrying will not help.',
+            detalle: 'It is the same procedure as the first time, and the step by step is on that screen.',
+            soporte: 'If you get stuck with the ARCA procedure,',
             title: 'Your ARCA certificate expired',
             detail: 'The certificate you have uploaded has expired, and ARCA does not accept vouchers signed with an expired certificate.',
             solucion: "You need to issue a new one: it's the same procedure you did the first time, and the step by step is in the app's view → <b>ARCA Certificates</b>. Once you finish uploading it, start the issuing again. Until then, retrying won't help.",
@@ -680,11 +743,23 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Upload the complete pair again in the app's view → <b>ARCA Certificates</b>. They have to be the two files that were generated together: the key (.key) and the certificate ARCA gave you (.crt) — one from one procedure and one from another will not work. If you can't find them, issue a new certificate and upload both.",
         },
         'Falta habilitar la facturación de exportación en AFIP': {
+            accion: 'You need to grant your certificate the export permission in AFIP. It is separate from the regular invoicing one, and done once.',
+            pasos: [
+                'Go to afip.gob.ar with your tax key → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación.',
+                'Under "Servicio": AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>.',
+                'Under "Representante" pick the same certificate you already use for regular invoices.',
+                'Confirm and set ${columna_estado} back to "${estado_disparo}".',
+            ],
+            estado: 'Nothing was issued.',
+            detalle: 'You do not need to upload the certificate again: it is the same one, it is missing the permission.',
             title: 'Export invoicing is not enabled in AFIP yet',
             detail: 'AFIP recognises your certificate for regular invoices, but <b>export is a separate permission</b> that has not been granted yet. <b>You do not need to upload the certificate again</b>: it is the same one, it is missing the permission.',
             solucion: 'Go to afip.gob.ar with your tax key → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación → Servicio → AFIP → WebServices → <b>"ws - Facturación Electrónica de Exportación"</b>. Under "Representante" pick the same certificate you already use for regular invoices. Confirm and try again.',
         },
         'Falta subir el certificado de ARCA': {
+            accion: 'Upload the certificate (.crt) and the key (.key) in the app → <b>ARCA Certificates</b>, and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'There is no certificate loaded for this company. The step by step to get them is on that same screen: it is done once and lasts two years.',
             title: 'The ARCA certificate has not been uploaded',
             detail: "There is no certificate loaded for this company, and without it the app can't identify itself to ARCA.",
             solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the certificate (.crt) and the key (.key). If you haven't issued them yet, the step by step is on that same screen: it's done once and lasts two years.",
@@ -710,15 +785,23 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Open the item and check the client's CUIT: it's 11 digits, no dots or dashes. A single wrong digit is enough for AFIP not to find it. Fix it and set the status that starts the issuing again.",
         },
         'Error consultando el Padrón AFIP': {
+            accion: 'Check CUIT ${doc_receptor} in ${columna_cuit}: it is 11 digits, no dots or dashes. Fix it and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'AFIP answered: «${motivo_afip}». If the number is written correctly, your client has to sort it out with AFIP.\nIf the sale is to an unidentified final consumer, leave ${columna_cuit} empty and it will go through. Note: a different voucher type comes out and your client will not be able to use it to claim VAT.',
             title: 'Error querying the AFIP registry',
             solucion: "If the message above points to a specific problem with the CUIT (inactive, pending requirements, etc.), the owner of that CUIT has to resolve it directly with AFIP — retrying won't help. If it doesn't give more detail, it may be a temporary AFIP outage: wait a few minutes and retry.",
         },
         'Empresa no configurada': {
+            accion: 'Set up your company in the app → <b>Tax Details</b>, upload the certificate in <b>ARCA Certificates</b>, and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
             title: 'Company not configured',
             detail: 'The tax data of the issuing company was not found.',
             solucion: "Open the app's view → <b>Tax Details</b> section → fill in Legal Name, CUIT, Point of Sale and save.",
         },
         'Falla de conexión temporal con AFIP': {
+            accion: 'Set ${columna_estado} back to "${estado_disparo}". It was a network glitch, not a problem with your data.',
+            estado: 'Nothing was issued, so there is no risk of a duplicate.',
+            detalle: 'If it keeps failing, wait a few minutes and try again.',
             title: 'Temporary connection failure with AFIP',
             detail: 'It was a network glitch, not a problem with your data. The voucher was <b>not issued</b> (no duplicate).',
             solucion: 'Start the issuing again. If it keeps failing, wait a few minutes and retry.',
@@ -731,11 +814,24 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "If the message mentions an item field (destination country, payment date, client's address), fix it and try again. If it doesn't make sense to you, pass this message to the app's support.",
         },
         'AFIP no contestó sobre ese CUIT': {
+            accion: 'Wait a few minutes and set ${columna_estado} back to "${estado_disparo}" without touching anything else. AFIP did not answer.',
+            estado: 'Nothing was issued.',
+            detalle: 'Don\'t touch ${columna_cuit}: the client\'s data is fine, it\'s AFIP that isn\'t answering.',
+            soporte: 'If it still doesn\'t go through after half an hour,',
             title: "AFIP didn't answer about that CUIT",
             detail: "The app asked AFIP for the client's details and AFIP didn't respond. <b>This is not a problem with the data you entered</b>: the number is well formed, it's AFIP that isn't answering.",
             solucion: "Wait a few minutes and set the status that starts the issuing again, without touching anything on the item. If it's still the same after half an hour, contact the app's support.",
         },
         'Falta habilitar la facturación en AFIP': {
+            accion: 'You need to grant your certificate permission in AFIP. It is a one-time procedure and waiting will not fix it.',
+            pasos: [
+                'Go to afip.gob.ar with your tax key → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación.',
+                'Under "Servicio" follow this path: AFIP → WebServices → <b>Facturación Electrónica</b>. It is written that way, half in English, because AFIP named it.',
+                'Under "Representante" pick the certificate you already uploaded in the app.',
+                'Confirm and set ${columna_estado} back to "${estado_disparo}".',
+            ],
+            estado: 'Nothing was issued.',
+            detalle: 'If your certificate doesn\'t show up in that AFIP list, check which CUIT you generated it with. It has to be ${cuit_emisor}.',
             title: 'Electronic invoicing is not enabled in AFIP yet',
             detail: "AFIP recognises your certificate, but you haven't granted it permission to issue vouchers yet. <b>This is not an AFIP outage: waiting will not fix it.</b> It's a one-time procedure.",
             solucion: 'Go to afip.gob.ar with your tax key → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. Under "Servicio" follow this path: AFIP → WebServices → <b>Facturación Electrónica</b>. Under "Representante" pick the certificate you already uploaded in the app. Confirm and start the issuing again.',
@@ -752,6 +848,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Wait a few minutes and try again. AFIP usually has brief outages or maintenance. If it's still failing after 30 minutes, contact the app's support.",
         },
         'Revisá la Fecha de Pago': {
+            accion: 'Set ${columna_fecha_pago} to a date from today onwards and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'That is the date you expect to get paid. AFIP does not accept a Factura E with a payment date earlier than the issue date.',
             title: 'Check the Payment Date',
             solucion: "That column has to be a Date column and hold a date from today onwards: it's the date you expect to get paid, not the date of the sale. AFIP requires it on every Factura E for services and does not accept a past date.",
         },
@@ -773,16 +872,26 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Fill in the item's <b>Client tax ID</b> column with the tax identification number your client uses in their country. When AFIP has no generic CUIT for that destination, that field becomes required.",
         },
         'Es un problema nuestro de configuración': {
+            accion: 'Don\'t retry until we confirm: it will give the same error. We\'ve already been alerted and we\'re unblocking it.',
+            estado: 'Nothing was issued.',
+            detalle: 'The issuing went through a copy of the app that does not issue tax vouchers.',
+            soporte: 'If you need to issue today,',
             title: "This one's on us — a setup problem",
             detail: 'The issuing went through a copy of the app that does not issue tax vouchers.',
             solucion: "We've already been alerted and we're unblocking it right now. Don't try again until we confirm: it will give the same error. If you need to issue today, write to us at <b>arca@theautomationpartner.com</b>.",
         },
         'Ese nombre de item está reservado': {
+            accion: 'Rename the item and set ${columna_estado} back to "${estado_disparo}". We use that name internally for testing.',
+            estado: 'Nothing was issued.',
+            soporte: 'If you didn\'t give it that name, or it happens again with the new one,',
             title: 'That item name is reserved',
             detail: 'The item is named exactly like the name we use internally to test the error notices, so the app stopped on purpose.',
             solucion: 'Rename the item to anything else and set the status that starts the issuing again.',
         },
         'No pudimos leer el punto de venta': {
+            accion: '${columna_pv} says "${pv_raw}" and only the number goes there. Fix it and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'If you want to keep seeing the shop name on the board, leave the number in that column and use a separate one for the name.',
             title: "We couldn't read the point of sale",
             solucion: 'That column takes only the point of sale number (1, 5, 0005). If you want to keep seeing the shop name on the board, leave the number there and use a separate column for the name.',
         },
@@ -813,6 +922,9 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Set the status that starts the issuing again. If it fails three times in a row, wait 15 minutes and try again. If it is still the same after an hour, write to us at <b>arca@theautomationpartner.com</b>.',
         },
         'No encontramos el item o la empresa': {
+            accion: 'The item is no longer on the board. Look for it in monday\'s recycle bin, restore it and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'If you moved it to another board, that board also has to be set up in the app.',
             title: "We couldn't find the item or the company",
             detail: "The app couldn't read the item, or the invoicing company is not set up.",
             solucion: "Check whether the item is still on the board (look in monday's recycle bin too). If it is, check that the company is set up in the app → <b>Tax Details</b>, with its certificate in <b>ARCA Certificates</b>.",
@@ -823,10 +935,16 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Wait a few minutes and set the status that starts the issuing again, without touching anything on the item. If it is still the same after half an hour, write to us.',
         },
         'No reconocemos ese tipo de comprobante': {
+            accion: 'In ${columna_tipo} write the full name of the voucher and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'The ones we accept are: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E and Nota de Débito E.\nWe do not take abbreviations: NC, ND, Fact, N/C.',
             title: "We don't recognise that voucher type",
             solucion: 'In the Voucher Type column leave exactly one of these, with the full name: Factura, Nota de Crédito, Nota de Débito, Factura E, Nota de Crédito E or Nota de Débito E. We do not accept abbreviations (NC, ND, Fact).',
         },
         'Es un problema nuestro': {
+            accion: 'Don\'t touch anything and don\'t retry: we\'ve already been alerted and we\'re looking at it.',
+            estado: 'Nothing was issued. It\'s not data you entered wrong, so checking the item won\'t resolve it.',
+            soporte: 'If you need to issue today,',
             title: "This one's on us",
             detail: "The app got stuck on something on our side. <b>It's not data you entered wrong</b>, so checking the item won't resolve it.",
             solucion: "Don't touch anything and don't retry: we've already been alerted and we're looking at it. If you need to issue today, write to us at <b>arca@theautomationpartner.com</b>.",
@@ -853,6 +971,8 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'All subitems of an invoice must have the <b>same VAT rate</b>. Check the VAT Rate % column and make sure all subitems have the same value (0, 2.5, 5, 10.5, 21 or 27).',
         },
         'Tipo de Comprobante no reconocido': {
+            accion: 'In ${columna_tipo} put <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>, and set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
             title: 'Voucher Type not recognized',
             solucion: "The item's <b>Voucher Type</b> column must say <b>Invoice</b>, <b>Credit Note</b> or <b>Debit Note</b>. Fix the value and start the issuing again.",
         },
@@ -904,12 +1024,21 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
     // tiene su texto escrito y aprobado. Las que no lo tienen siguen como estaban
     // — que es correcto, solo que ordenado al revés. Nunca hay dos listas: es la
     // MISMA regla, con más campos.
-    if (known && known.accion) {
-        // Lo que viene del handler manda; lo que se saca del texto del error rellena
-        // los huecos que quedaron.
-        const datos = { ...derivarDatosDelError(msg), ...meta };
-        const V = (t) => rellenarDatos(t, datos, language);
-        let html = `<b>❌ ${V(known.accion)}</b>`;
+    // Lo que viene del handler manda; lo que se saca del texto del error rellena
+    // los huecos que quedaron.
+    const datos = known ? { ...derivarDatosDelError(msg), ...meta } : {};
+    const V = (t) => rellenarDatos(t, datos, language);
+
+    // Si a la acción le faltan tantos datos que se quedó sin oraciones, el mensaje
+    // se quedaría sin encabezado — que es lo único que la persona lee seguro. En
+    // ese caso vale más la forma vieja completa que la nueva mutilada.
+    // Mayúscula inicial: varios mensajes arrancan con un dato interpolado ("the
+    // Point of Sale column says...") y quedaban en minúscula al principio de la
+    // frase. Se saltean las etiquetas HTML de apertura para no romper el <b>.
+    const mayusculaInicial = (t) => t.replace(/^((?:<[^>]+>)*\s*)(\p{Ll})/u, (_, pre, letra) => pre + letra.toUpperCase());
+    const accion = known && known.accion ? mayusculaInicial(V(known.accion).trim()) : '';
+    if (known && accion.length > 12) {
+        let html = `<b>❌ ${accion}</b>`;
 
         if (known.pasos && known.pasos.length) {
             html += '<br/><br/>' + known.pasos
@@ -923,7 +1052,11 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         if (known.detalle) html += `<br/><br/>${V(known.detalle)}`;
         // El soporte va SOLO donde está declarado. Ofrecerlo cuando la persona
         // puede resolverlo sola le da permiso para no intentarlo.
-        if (known.soporte) html += `<br/><br/>${V(known.soporte)} escribinos a <b>arca@theautomationpartner.com</b>.`;
+        if (known.soporte) {
+            html += `<br/><br/>${V(known.soporte)} ` +
+                (isEn ? 'write to us at' : 'escribinos a') +
+                ' <b>arca@theautomationpartner.com</b>.';
+        }
         return html;
     }
 

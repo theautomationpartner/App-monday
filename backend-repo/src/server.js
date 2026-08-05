@@ -8027,8 +8027,9 @@ async function emitNotaHandler(req, res, clase = 'NC') {
 
             // Comprobante C no lleva IVA: la NC C tampoco.
             if (letra === 'C' && ncLines.alicuotaElegida !== '0') {
-                throw new Error(
-                    `La ${docLabel} C no lleva IVA. Poné la alícuota IVA de los subítems en 0%.`
+                throw new Error(ncLanguage === 'en'
+                    ? `A C ${esND ? 'Debit Note' : 'Credit Note'} doesn't carry VAT. Set the VAT rate of the subitems to 0%.`
+                    : `La ${docLabel} C no lleva IVA. Poné la alícuota IVA de los subítems en 0%.`
                 );
             }
             // La alícuota IVA de la NC tiene que coincidir con la de la factura

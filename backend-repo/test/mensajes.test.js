@@ -38,7 +38,12 @@ const CULPA_AFIP = /AFIP no está respondiendo correctamente/;
 //   1) toda regla tiene su texto inglés  → si agregás una y te olvidás, falla acá
 //   2) el texto que escribimos nosotros (título y solución) no sale en español
 const GENERICO_EN = /Review the item data and retry/;
-const NUESTRO_EN_ESPANOL = /\b(Abrí|Revisá|Completá|Corregí|Volvé|Cambiá|Fijate|Escribinos|Poné|Subí|Dejá|Cargá|Asegurate)\b/;
+// OJO con el \b: en JavaScript NO funciona después de una vocal acentuada, porque
+// \w es solo [A-Za-z0-9_] y la í queda afuera. Con /\bSubí\b/ este chequeo no
+// matcheaba NUNCA — y por eso dejó pasar que un tablero en inglés recibiera todo
+// el mensaje en español. Es la misma trampa que está documentada en el módulo, y
+// la pisé igual acá. Se usa (?=\s) o (?=[\s,.:]).
+const NUESTRO_EN_ESPANOL = /(^|[\s>])(Abr[ií]|Revis[aá]|Complet[aá]|Correg[ií]|Volv[eé]|Cambi[aá]|Fijate|Escribinos|Pon[eé]|Sub[ií]|Dej[aá]|Carg[aá]|Asegurate|Tenés que|No toques|No se emitió|Sacá)(l[oa]s?|le)?(?=[\s,.:])/;
 
 // Errores que SÍ son caídas de infraestructura: acá "AFIP no responde" es correcto.
 // Incluye los nombres de los métodos SOAP de AFIP (FECompUltimoAutorizado y
@@ -64,11 +69,16 @@ const rellenar = (texto) => {
     return texto.replace(/…/g, '12345');
 };
 
+// Lo que identifica al mensaje, para congelarlo y detectar cambios.
+// En la forma vieja es la línea de "Causa:"; en la nueva, la acción del encabezado.
+// OJO: la acción suele llevar un <b> anidado ("→ <b>Datos Fiscales</b>"), así que
+// buscar `<b>([^<]*)</b>` devolvía "Datos Fiscales" — el texto de adentro, no el
+// del encabezado. Con eso dos mensajes distintos congelaban igual y el test dejaba
+// de ver los cambios. Se corta en el primer <br/>, que es donde termina el título.
 const causaDe = (html) => {
     const m = html.match(/Causa:<\/b>\s*([^<]*)/) || html.match(/Cause:<\/b>\s*([^<]*)/);
     if (m) return m[1].trim();
-    const b = html.match(/<b>([^<]*)<\/b>/);
-    return b ? b[1].trim() : '';
+    return html.split('<br/>')[0].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim();
 };
 
 const corpus = JSON.parse(fs.readFileSync(CORPUS, 'utf8'));
@@ -130,19 +140,31 @@ for (const c of corpus) {
     // ~126 throws pasan por el helper de traducción, el resto tira español sin
     // importar el idioma del board. Así que un board en inglés ve las dos cosas y
     // hay que probar las dos.
-    const htmlEn = idioma === 'en' ? html : buildErrorComment(new Error(msg), 'Factura', 'en');
-    if (GENERICO_EN.test(htmlEn)) {
-        sinReglaEn++;
-        detalleSinReglaEn.push({ origen: c.origen, msg: msg.slice(0, 74) });
-    }
-    // Solo se mira lo que escribimos nosotros: el encabezado y el bloque de la
-    // solución. El detalle puede traer el texto crudo de AFIP, que viene en
-    // español porque AFIP contesta en español — eso no es un error nuestro.
-    const nuestro = (htmlEn.match(/<b>❌[^<]*<\/b>/) || [''])[0] +
-        ' ' + (htmlEn.split(/<b>How to fix it:<\/b>/)[1] || '');
-    if (NUESTRO_EN_ESPANOL.test(nuestro)) {
-        espanolEnIngles++;
-        detalleEspanol.push({ origen: c.origen, causa: causaDe(htmlEn) });
+    // `tiene_traduccion` marca los throws que el código ya tira en inglés cuando el
+    // board está en inglés (los que pasan por el helper L o por un ternario de
+    // idioma). Para esos, renderizar el texto ESPAÑOL en un board inglés es un caso
+    // que no ocurre nunca — medirlo daba 11 falsos positivos y tapaba los reales.
+    const htmlEn = idioma === 'en' ? html
+        : (c.tiene_traduccion ? null : buildErrorComment(new Error(msg), 'Factura', 'en'));
+    if (htmlEn) {
+        if (GENERICO_EN.test(htmlEn)) {
+            sinReglaEn++;
+            detalleSinReglaEn.push({ origen: c.origen, msg: msg.slice(0, 74) });
+        }
+        // Todo el mensaje MENOS lo que vino del error. El texto crudo de AFIP viene
+        // en español porque AFIP contesta en español: eso no es un descuido nuestro
+        // y no se puede traducir. Se filtra comparando contra el mensaje original,
+        // que es la única forma confiable de separar "lo que escribimos" de "lo que
+        // nos dijeron".
+        const nuestro = htmlEn
+            .split(/<br\/>/)
+            .map(l => l.replace(/<[^>]*>/g, '').replace(/&nbsp;/g, ' ').trim())
+            .filter(l => l && !msg.includes(l.replace(/^❌\s*/, '').slice(0, 40)))
+            .join(' | ');
+        if (NUESTRO_EN_ESPANOL.test(nuestro)) {
+            espanolEnIngles++;
+            detalleEspanol.push({ origen: c.origen, causa: causaDe(htmlEn) });
+        }
     }
 }
 

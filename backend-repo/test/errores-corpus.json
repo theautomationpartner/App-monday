@@ -2,22 +2,22 @@
  {
   "origen": "server.js:62",
   "mensaje": "La empresa no tiene CUIT configurado",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:163",
   "mensaje": "Documento inválido para consultar padrón: \"…\"",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:1124",
   "mensaje": "No hay secretos configurados (MONDAY_CLIENT_SECRET / MONDAY_SIGNING_SECRET)",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:1353",
   "mensaje": "Esta es la instancia de PRUEBA (staging) y no puede emitir comprobantes fiscales para este cliente. Eliminá la versión Draft del app en monday (Centro de Desarrollo) y volvé a disparar la receta desde la versión Live.",
-  "esperado": "Es un problema nuestro de configuración"
+  "esperado": "❌ No vuelvas a intentarlo hasta que te confirmemos: va a dar el mismo error. Ya nos llegó el aviso y lo estamos destrabando."
  },
  {
   "origen": "server.js:1462",
@@ -32,7 +32,7 @@
  {
   "origen": "server.js:1541",
   "mensaje": "FECompConsultar network error: …",
-  "esperado": "Falla de conexión temporal con AFIP"
+  "esperado": "❌ Volvé a poner la columna de estado en \"Crear Comprobante\". Fue un corte de red, no un problema de tus datos."
  },
  {
   "origen": "server.js:1545",
@@ -47,7 +47,7 @@
  {
   "origen": "server.js:1679",
   "mensaje": "FEParamGetCotizacion network error: …",
-  "esperado": "Falla de conexión temporal con AFIP"
+  "esperado": "❌ Volvé a poner la columna de estado en \"Crear Comprobante\". Fue un corte de red, no un problema de tus datos."
  },
  {
   "origen": "server.js:1683",
@@ -67,22 +67,22 @@
  {
   "origen": "server.js:1749",
   "mensaje": "No se pudo serializar la emisión (serie …): otra emisión de la misma serie sigue en curso o el lock quedó trabado (…). Reintentá en unos segundos.",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:1800",
   "mensaje": "Tipo de factura no soportado: …",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:1812",
   "mensaje": "Tipo de … no soportado: …",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:1932",
   "mensaje": "[RESERVA_FALLIDA] No se pudo reservar el número de comprobante (cbteNro=…, PV=…, tipo=…) en la base antes de emitir: …. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP. Reintentá en unos segundos.",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:2099",
@@ -127,27 +127,29 @@
  {
   "origen": "server.js:5986",
   "mensaje": "Empresa no encontrada para la cuenta monday. Configurá los datos fiscales en la app.",
-  "esperado": "Empresa no configurada"
+  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:5991",
   "mensaje": "No se pudo resolver boardId para item …",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:6001",
   "mensaje": "TEST forzado: error sistema simulado desde item make-errores-",
-  "esperado": "Ese nombre de item está reservado"
+  "esperado": "❌ Cambiale el nombre al item y volvé a poner la columna de estado en \"Crear Comprobante\". Ese nombre lo usamos internamente para probar."
  },
  {
   "origen": "server.js:6028",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: en• Choose a value in the … column: Invoice, Credit Note or Debit Note• Elegí un valor en la columna …: Factura, Nota de Crédito o Nota de Débito",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6082",
   "mensaje": "Tipo de Comprobante no reconocido: \"…\". Tiene que ser \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" o \"Factura E\"/\"Export Invoice\".",
-  "esperado": "Tipo de Comprobante no reconocido"
+  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito, y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6125",
@@ -157,27 +159,32 @@
  {
   "origen": "server.js:6134",
   "mensaje": "Este item está emitiendo una … en este momento. Esperá unos segundos a que termine — NO vuelvas a disparar la receta.",
-  "esperado": "Este item ya tiene un comprobante"
+  "esperado": "Este item ya tiene un comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6141",
   "mensaje": "Este item tiene una … con número reservado en AFIP pero sin confirmar (probable timeout del intento anterior). El cron de recuperación consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y volvé a intentar — emitir una factura ahora puede crear dos comprobantes.",
-  "esperado": "Este item ya tiene un comprobante"
+  "esperado": "Este item ya tiene un comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6165",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: • …",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6184",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir: en• Choose the Point of Sale in the … column• Elegí el Punto de Venta en la columna …",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6193",
   "mensaje": "El Punto de Venta \"…\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej: 1, 5, 0005).",
-  "esperado": "No pudimos leer el punto de venta"
+  "esperado": "❌ En la columna del Punto de Venta dice \"12345\" y ahí va solo el número. Corregilo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6308",
@@ -187,12 +194,12 @@
  {
   "origen": "server.js:6383",
   "mensaje": "Faltan certificados AFIP para este emisor",
-  "esperado": "Falta subir el certificado de ARCA"
+  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6393",
   "mensaje": "Falta configurar el mapeo de columnas para este tablero",
-  "esperado": "Falta configurar el mapeo de columnas"
+  "esperado": "❌ Abrí la app parado en este tablero → Mapeo Visual, emparejá cada dato con tu columna, guardá y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:6449",
@@ -217,32 +224,37 @@
  {
   "origen": "server.js:6579",
   "mensaje": "Fechas de servicio obligatorias faltantes: …. Cuando el tipo de producto/servicio incluye servicios (Concepto AFIP: …), AFIP exige las fechas del período facturado y el vencimiento de pago.",
-  "esperado": "Fechas de servicio obligatorias"
+  "esperado": "Fechas de servicio obligatorias",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6610",
   "mensaje": "Alícuota IVA faltante en subitems: …. Todos los subitems deben tener una alícuota IVA asignada (0, 2.5, 5, 10.5, 21 o 27).",
-  "esperado": "Alícuota IVA inválida"
+  "esperado": "Alícuota IVA inválida",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6624",
   "mensaje": "Alícuotas IVA diferentes entre subitems. Todos los subitems deben tener la misma alícuota IVA. Alícuotas encontradas: …",
-  "esperado": "Alícuota IVA inválida"
+  "esperado": "Alícuota IVA inválida",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6636",
   "mensaje": "Alícuota IVA no válida: …%. Las alícuotas permitidas son: 0%, 2.5%, 5%, 10.5%, 21%, 27%.",
-  "esperado": "Alícuota IVA inválida"
+  "esperado": "Alícuota IVA inválida",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6647",
   "mensaje": "Alícuota IVA incompatible con Factura C. Configuraste …% pero las Facturas C no llevan IVA (emisor …). Cambiá la alícuota de los subítems a 0% antes de emitir.",
-  "esperado": "El comprobante C no lleva IVA"
+  "esperado": "El comprobante C no lleva IVA",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:6805",
   "mensaje": "reserva de cbteNro no impactó la fila esperada (rowCount=…)",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:7563",
@@ -252,57 +264,68 @@
  {
   "origen": "server.js:7581",
   "mensaje": "El item está marcado como \"…\" en la columna Tipo de Comprobante, no como …. Verificá que estés disparando la receta sobre el item correcto.",
-  "esperado": "El item está marcado como \"12345\" en la columna Tipo de Comprobante, no como 12345."
+  "esperado": "El item está marcado como \"12345\" en la columna Tipo de Comprobante, no como 12345.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7594",
   "mensaje": "El tablero no tiene mapeada la columna del CAE de referencia. Configurala en el Mapeo Visual de la app (sección \"Columnas opcionales\") para poder emitir ….",
-  "esperado": "No se pudo identificar la factura a anular"
+  "esperado": "No se pudo identificar la factura a anular",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7609",
   "mensaje": "La columna del CAE de referencia está vacía. Pegá ahí el CAE (14 dígitos) de la factura que esta … debe anular — lo encontrás en el PDF de la factura o en el comentario que dejó la app al emitirla.",
-  "esperado": "No se pudo identificar la factura a anular"
+  "esperado": "No se pudo identificar la factura a anular",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7618",
   "mensaje": "El CAE de referencia \"…\" no es válido: el CAE de AFIP tiene 14 dígitos. Copialo exacto del PDF de la factura (o del comentario de la app). La columna puede ser numérica o de texto, las dos sirven.",
-  "esperado": "No se pudo identificar la factura a anular"
+  "esperado": "No se pudo identificar la factura a anular",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7655",
   "mensaje": "El CAE … es de un comprobante de EXPORTACIÓN (Nº …-…), que no se puede ajustar con una … común. Poné \"Nota De Credito E\" (o \"Nota De Debito E\") en la columna Tipo de Comprobante.",
-  "esperado": "El CAE 12345 es de un comprobante de EXPORTACIÓN (Nº 12345-12345), que no se puede ajustar con una 12345 común."
+  "esperado": "El CAE 12345 es de un comprobante de EXPORTACIÓN (Nº 12345-12345), que no se puede ajustar con una 12345 común.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7666",
   "mensaje": "No se encontró ninguna factura emitida por la app con el CAE …. Verificá que el CAE esté bien copiado y que la factura se haya emitido desde este mismo tablero.",
-  "esperado": "No se pudo identificar la factura a anular"
+  "esperado": "No se pudo identificar la factura a anular",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7693",
   "mensaje": "La factura de este item no tiene los datos completos (CAE / número / tipo / punto de venta) para poder referenciarla en una ….",
-  "esperado": "A la factura referenciada le faltan datos"
+  "esperado": "A la factura referenciada le faltan datos",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7702",
   "mensaje": "No se pudo determinar la letra de la factura original (tipo='…').",
-  "esperado": "A la factura referenciada le faltan datos"
+  "esperado": "A la factura referenciada le faltan datos",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7723",
   "mensaje": "Seleccionaste el Punto de Venta …, pero esta … anula la Factura … N° …-…, que es del Punto de Venta …. La … se emite desde el MISMO punto de venta que la factura — cambiá el Punto de Venta a … o dejá esa columna vacía.",
-  "esperado": "La nota tiene que salir del mismo punto de venta que la factura"
+  "esperado": "La nota tiene que salir del mismo punto de venta que la factura",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7767",
   "mensaje": "Este item ya emitió un comprobante (… N° …, CAE …). La … tiene que ir en un item NUEVO — con el CAE de la factura a anular en la columna de referencia. Cada item corresponde a un solo comprobante.",
-  "esperado": "Este item ya tiene un comprobante"
+  "esperado": "Este item ya tiene un comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7779",
   "mensaje": "Este item tiene una … con número reservado en AFIP pero sin confirmar (probable timeout). El cron de recuperación consulta AFIP en los próximos 5 minutos. Esperá y volvé a intentar — emitir una … ahora puede crear dos comprobantes vivos para el mismo item.",
-  "esperado": "Este item ya tiene un comprobante"
+  "esperado": "Este item ya tiene un comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7798",
@@ -312,27 +335,31 @@
  {
   "origen": "server.js:7836",
   "mensaje": "El item de … no tiene subítems. Cargá como subítems las líneas de lo que querés … (concepto, cantidad y precio).",
-  "esperado": "El item de 12345 no tiene subítems."
+  "esperado": "El item de 12345 no tiene subítems.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7857",
   "mensaje": "La … C no lleva IVA. Poné la alícuota IVA de los subítems en 0%.",
-  "esperado": "La 12345 C no lleva IVA."
+  "esperado": "La 12345 C no lleva IVA.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:7874",
   "mensaje": "La alícuota IVA de la Nota de Crédito (…%) no coincide con la de la factura (…%). La NC tiene que usar la misma alícuota IVA que la factura que anula.",
-  "esperado": "La alícuota IVA de la Nota de Crédito no coincide con la factura"
+  "esperado": "La alícuota IVA de la Nota de Crédito no coincide con la factura",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8021",
   "mensaje": "La Nota de Crédito (…) supera el saldo disponible de la factura. Total facturado: … · Ya acreditado / en curso: … · Saldo disponible: ….",
-  "esperado": "La Nota de Crédito supera el saldo de la factura"
+  "esperado": "La Nota de Crédito supera el saldo de la factura",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8073",
   "mensaje": "reserva de cbteNro (NC/ND) no impactó la fila esperada (rowCount=…)",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:8092",
@@ -342,47 +369,56 @@
  {
   "origen": "server.js:8480",
   "mensaje": "El país de destino \"…\" es ambiguo — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto del que necesitás.",
-  "esperado": "El país de destino \"12345\" es ambiguo — coincide con varias entradas de AFIP: 12345."
+  "esperado": "El país de destino \"12345\" es ambiguo — coincide con varias entradas de AFIP: 12345.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8493",
   "mensaje": "El país de destino \"…\" no está en la lista de países de AFIP. Escribilo como lo nombra AFIP….",
-  "esperado": "El país de destino \"12345\" no está en la lista de países de AFIP."
+  "esperado": "El país de destino \"12345\" no está en la lista de países de AFIP.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8520",
   "mensaje": "La tabla de monedas de AFIP no trae pesos argentinos (\"PES\"). Reintentá en unos minutos.",
-  "esperado": "La tabla de monedas de AFIP no trae pesos argentinos (\"PES\")."
+  "esperado": "La tabla de monedas de AFIP no trae pesos argentinos (\"PES\").",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8546",
   "mensaje": "La moneda \"…\" es ambigua — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto o el código de AFIP.",
-  "esperado": "La moneda \"12345\" es ambigua — coincide con varias entradas de AFIP: 12345."
+  "esperado": "La moneda \"12345\" es ambigua — coincide con varias entradas de AFIP: 12345.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8557",
   "mensaje": "La moneda \"…\" no está en la lista de monedas de AFIP. Ojo: los códigos de AFIP NO son los ISO (el euro no es \"EUR\"). Escribí el nombre como lo publica AFIP, o su código.",
-  "esperado": "La moneda \"12345\" no está en la lista de monedas de AFIP. Ojo: los códigos de AFIP NO son los ISO (el euro no es \"EUR\")."
+  "esperado": "La moneda \"12345\" no está en la lista de monedas de AFIP. Ojo: los códigos de AFIP NO son los ISO (el euro no es \"EUR\").",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8599",
   "mensaje": "La unidad de medida \"…\" no es una de las de AFIP. Ojo: en la Factura A/B/C esta columna es texto libre (solo se imprime en el PDF), pero la Factura E se la manda a AFIP, así que tiene que ser una de las suyas. Para servicios usá: …. Parecidas: …. Para bienes: …. AFIP no tiene una unidad \"hora\" — las horas se facturan como \"unidades\".",
-  "esperado": "Esa unidad de medida no existe en AFIP"
+  "esperado": "Esa unidad de medida no existe en AFIP",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8921",
   "mensaje": "Esta empresa no tiene habilitada la facturación de exportación. Abrí la app → Datos Fiscales, tildá \"Emito Facturas E (exportación)\" y completá el punto de venta de exportación antes de emitir.",
-  "esperado": "Esta empresa no tiene habilitada la facturación de exportación."
+  "esperado": "Esta empresa no tiene habilitada la facturación de exportación.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8932",
   "mensaje": "Falta configurar el punto de venta de exportación. Abrí la app → Datos Fiscales y elegí tu punto de venta de exportación (AFIP exige un punto de venta del tipo \"Comprobantes de Exportación - Web Services\", distinto del de mercado interno).",
-  "esperado": "Falta configurar el punto de venta de exportación."
+  "esperado": "Falta configurar el punto de venta de exportación.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8946",
   "mensaje": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E. Cargala en la app → Datos Fiscales (ej: \"Transferencia bancaria\").",
-  "esperado": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E."
+  "esperado": "Falta configurar la forma de pago de exportación. AFIP la exige en toda Factura E.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:8973",
@@ -392,12 +428,14 @@
  {
   "origen": "server.js:9010",
   "mensaje": "El tablero no tiene mapeadas las columnas de exportación: …. Configuralas en el Mapeo Visual de la app, sección \"Exportación (Factura E)\".",
-  "esperado": "El tablero no tiene mapeadas las columnas de exportación: 12345."
+  "esperado": "El tablero no tiene mapeadas las columnas de exportación: 12345.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9036",
   "mensaje": "Para emitir una … hay que mapear la columna que tiene el CAE de la factura de exportación que se ajusta (Mapeo Visual → \"Factura de referencia\").",
-  "esperado": "Falta emparejar la columna del CAE"
+  "esperado": "Falta emparejar la columna del CAE",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9046",
@@ -407,47 +445,56 @@
  {
   "origen": "server.js:9066",
   "mensaje": "No se encontró ningún comprobante de exportación emitido por la app con el CAE …. Verificá el CAE y que la factura se haya emitido desde este mismo tablero.",
-  "esperado": "No se encontró ningún comprobante de exportación emitido por la app con el CAE 12345."
+  "esperado": "No se encontró ningún comprobante de exportación emitido por la app con el CAE 12345.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9081",
   "mensaje": "Una Nota de Débito E solo puede referenciar una Factura E, no otra nota.",
-  "esperado": "Esa nota no puede referenciar ese comprobante"
+  "esperado": "Esa nota no puede referenciar ese comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9088",
   "mensaje": "El comprobante referenciado no es una exportación de servicios — AFIP exige que el comprobante asociado sea del mismo tipo de exportación.",
-  "esperado": "Esa nota no puede referenciar ese comprobante"
+  "esperado": "Esa nota no puede referenciar ese comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9096",
   "mensaje": "Al comprobante referenciado le faltan tipo / punto de venta / número, así que no se puede vincular. Contactá al soporte de la app.",
-  "esperado": "A la factura referenciada le faltan datos"
+  "esperado": "A la factura referenciada le faltan datos",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9170",
   "mensaje": "No se pudo leer la Fecha de Pago (\"…\"). Tiene que ser una columna de fecha con una fecha válida — AFIP la exige en toda Factura E de servicios.",
-  "esperado": "Revisá la Fecha de Pago"
+  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9181",
   "mensaje": "La Fecha de Pago (…) es anterior a la fecha de emisión (…). AFIP rechaza la Factura E con fecha de pago pasada — ponela de hoy en adelante.",
-  "esperado": "Revisá la Fecha de Pago"
+  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9204",
   "mensaje": "Seleccionaste el Punto de Venta …, pero las Facturas E se emiten siempre desde el punto de venta de exportación (…) configurado en Datos Fiscales — AFIP exige un punto de venta propio para exportación. Cambialo a … o dejá esa columna vacía.",
-  "esperado": "Seleccionaste el Punto de Venta 12345, pero las Facturas E se emiten siempre desde el punto de venta de exportación (12345) configurado en Datos Fiscales — AFIP exige un punto de venta propio para exportación."
+  "esperado": "Seleccionaste el Punto de Venta 12345, pero las Facturas E se emiten siempre desde el punto de venta de exportación (12345) configurado en Datos Fiscales — AFIP exige un punto de venta propio para exportación.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9243",
   "mensaje": "Este item ya emitió un comprobante (… N° …, CAE …). La Factura E tiene que ir en un item NUEVO — cada item corresponde a un solo comprobante.",
-  "esperado": "Este item ya tiene un comprobante"
+  "esperado": "Este item ya tiene un comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9259",
   "mensaje": "Este item tiene una … con número reservado en AFIP pero sin confirmar (probable timeout). Esperá unos minutos y volvé a intentar — emitir una Factura E ahora puede crear dos comprobantes vivos para el mismo item.",
-  "esperado": "Este item ya tiene un comprobante"
+  "esperado": "Este item ya tiene un comprobante",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9279",
@@ -457,77 +504,85 @@
  {
   "origen": "server.js:9323",
   "mensaje": "AFIP rechazó el acceso al web service de exportación (wsfex). Tu certificado todavía no está delegado a ese servicio. En AFIP: \"Administrador de Relaciones\" → Nueva Relación → Servicio → AFIP → WebServices → \"ws - Facturación Electrónica de Exportación\", y elegí el mismo alias de certificado que ya usás. El paso a paso está en la pantalla de Datos Fiscales de la app. (AFIP dijo: …)",
-  "esperado": "Falta habilitar la facturación de exportación en AFIP"
+  "esperado": "❌ Tenés que darle a tu certificado el permiso de exportación en AFIP. Es un trámite aparte del de facturación común, de una sola vez.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9372",
   "mensaje": "El país de destino de la … (… - …) no coincide con el de la factura referenciada (…). AFIP exige que sean el mismo. Corregí la columna de país del item, o dejala vacía para heredarlo.",
-  "esperado": "El país de destino de la 12345 (12345 - 12345) no coincide con el de la factura referenciada (12345). AFIP exige que sean el mismo."
+  "esperado": "El país de destino de la 12345 (12345 - 12345) no coincide con el de la factura referenciada (12345). AFIP exige que sean el mismo.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9397",
   "mensaje": "AFIP no tiene un \"CUIT país\" para … con tipo de cliente \"…\" (es lo que pasa con las zonas francas). En ese caso AFIP exige el ID impositivo del cliente: completá la columna \"ID impositivo del cliente\" en el item (y mapeala en el Mapeo Visual si no lo está).",
-  "esperado": "AFIP no tiene CUIT para ese país"
+  "esperado": "AFIP no tiene CUIT para ese país",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9435",
   "mensaje": "La moneda de la … (…) no coincide con la de la factura referenciada (…). AFIP solo acepta la misma moneda que el comprobante asociado, o PESOS. Corregí la columna de moneda del item, o dejala vacía para heredar la de la factura.",
-  "esperado": "La moneda de la 12345 (12345) no coincide con la de la factura referenciada (12345). AFIP solo acepta la misma moneda que el comprobante asociado, o PESOS."
+  "esperado": "La moneda de la 12345 (12345) no coincide con la de la factura referenciada (12345). AFIP solo acepta la misma moneda que el comprobante asociado, o PESOS.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9497",
   "mensaje": "No se pudo consultar la cotización de AFIP para … (…). Cargala a mano en la columna de tipo de cambio del item y reintentá. Importante: la exportación exige la cotización ADUANA de AFIP, no la financiera/bancaria — la financiera la rechaza con el error 2053. (Detalle: …)",
-  "esperado": "No se pudo consultar la cotización de AFIP para 12345 (12345)."
+  "esperado": "No se pudo consultar la cotización de AFIP para 12345 (12345).",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9518",
   "mensaje": "El item de Factura E no tiene subítems. Cargá como subítems los servicios que estás exportando (concepto, cantidad y precio).",
-  "esperado": "El item de Factura E no tiene subítems."
+  "esperado": "El item de Factura E no tiene subítems.",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9608",
   "mensaje": "La fecha de la … (…) es anterior a la de la factura referenciada (…). AFIP exige que sea igual o posterior.",
-  "esperado": "La nota no puede tener fecha anterior a la factura"
+  "esperado": "La nota no puede tener fecha anterior a la factura",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9670",
   "mensaje": "La Nota de Crédito supera el saldo disponible de la factura. Factura: … · ya acreditado: … · disponible: … · esta nota: …. Bajá los importes de los subítems para que el total entre en el saldo disponible.",
-  "esperado": "La Nota de Crédito supera el saldo de la factura"
+  "esperado": "La Nota de Crédito supera el saldo de la factura",
+  "tiene_traduccion": true
  },
  {
   "origen": "server.js:9744",
   "mensaje": "reserva del Id WSFEX no impactó la fila esperada (rowCount=…)",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:9757",
   "mensaje": "reserva de cbteNro (…) no impactó la fila esperada (rowCount=…)",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:9771",
   "mensaje": "[RESERVA_FALLIDA] No se pudo reservar … en la base antes de emitir: …. Se aborta la emisión para no arriesgar un comprobante huérfano en AFIP. Reintentá en unos segundos.",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:9792",
   "mensaje": "[RECOVERY_MISMATCH] cbteNro=… (PV …, tipo …) ya existe en AFIP con CAE=… pero su importe (…) no coincide con el de esta emisión (…). Probable número pisado por otra emisión — NO se reutiliza, se aborta para revisión manual.",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "server.js:10726",
   "mensaje": "Item … no encontrado en Monday",
-  "esperado": "No encontramos el item o la empresa"
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:12145",
   "mensaje": "company no encontrada",
-  "esperado": "No encontramos el item o la empresa"
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:12151",
   "mensaje": "certs AFIP faltantes",
-  "esperado": "No encontramos el item o la empresa"
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "modules/afipAuth.js:136",
@@ -547,12 +602,12 @@
  {
   "origen": "modules/afipPadron.js:53",
   "mensaje": "Falta PADRON_CRT en variables de entorno. Cargá el contenido del .crt de Martín en el Developer Center de Monday Code.",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "modules/afipPadron.js:59",
   "mensaje": "Falta PADRON_KEY en secrets. Cargá el contenido del .key de Martín como secret en el Developer Center de Monday Code.",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "modules/afipPadron.js:323",
@@ -627,7 +682,7 @@
  {
   "origen": "modules/invoiceRules.js:134",
   "mensaje": "Tipo de comprobante inválido: …",
-  "esperado": "No reconocemos ese tipo de comprobante"
+  "esperado": "❌ En la columna de Tipo de Comprobante escribí el nombre completo del comprobante y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "server.js:2424",
@@ -777,19 +832,19 @@
   "origen": "server.js:9361",
   "mensaje": "Item incomplete — fix the following before issuing:",
   "idioma": "en",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner the status column en \"Create Voucher\"."
+  "esperado": "❌ Fill in what is marked with ❌ below and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9376",
   "mensaje": "Couldn't read the Payment Date (\"…\"). It must be a date column with a valid date — AFIP requires it on every Factura E for services.",
   "idioma": "en",
-  "esperado": "Check the Payment Date"
+  "esperado": "❌ Set the Payment Date column to a date from today onwards and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9387",
   "mensaje": "The Payment Date (…) is earlier than the issue date (…). AFIP rejects Factura E with a payment date in the past — set it to today or later.",
   "idioma": "en",
-  "esperado": "Check the Payment Date"
+  "esperado": "❌ Set the Payment Date column to a date from today onwards and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:9410",
@@ -819,7 +874,7 @@
   "origen": "server.js:9529",
   "mensaje": "AFIP rejected access to the export web service (wsfex).\nYour certificate is not delegated to that service yet. In AFIP: \"Administrador de Relaciones\" → Nueva Relación → Servicio → AFIP → WebServices → \"ws - Facturación Electrónica de Exportación\", and pick the same certificate alias you already use. The app's Tax Details screen has the step by step.\n(AFIP said: …)",
   "idioma": "en",
-  "esperado": "Export invoicing is not enabled in AFIP yet"
+  "esperado": "❌ You need to grant your certificate the export permission in AFIP. It is separate from the regular invoicing one, and done once."
  },
  {
   "origen": "server.js:9578",
@@ -867,13 +922,13 @@
   "origen": "server.js:6164",
   "mensaje": "Voucher Type not recognized: \"…\". It must be \"Factura\"/\"Invoice\", \"Nota de Crédito\"/\"Credit Note\", \"Nota de Débito\"/\"Debit Note\" or \"Factura E\"/\"Export Invoice\".",
   "idioma": "en",
-  "esperado": "Voucher Type not recognized"
+  "esperado": "❌ In the Voucher Type column put Invoice, Credit Note or Debit Note, and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6275",
   "mensaje": "The Point of Sale \"…\" is not valid. It must be a point-of-sale number enabled in AFIP for web services (e.g. 1, 5, 0005).",
   "idioma": "en",
-  "esperado": "We couldn't read the point of sale"
+  "esperado": "❌ The Point of Sale column says \"12345\" and only the number goes there. Fix it and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:6653",
@@ -927,73 +982,74 @@
   "origen": "runtime — crash real medido en staging 2026-08-05",
   "mensaje": "Cannot read properties of null (reading 'id')",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime — crash",
   "mensaje": "Cannot read properties of undefined (reading 'text')",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime — crash",
   "mensaje": "columnValues.map is not a function",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime — crash",
   "mensaje": "resolverColumna is not defined",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime — crash: AFIP devolvio HTML",
   "mensaje": "Unexpected token < in JSON at position 0",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime — crash",
   "mensaje": "Maximum call stack size exceeded",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime — crash",
   "mensaje": "Converting circular structure to JSON",
   "idioma": "es",
-  "esperado": "Es un problema nuestro"
+  "esperado": "❌ No toques nada ni vuelvas a intentarlo: ya nos llegó el aviso y lo estamos viendo."
  },
  {
   "origen": "runtime en — crash real medido en staging 2026-08-05",
   "mensaje": "Cannot read properties of null (reading 'id')",
   "idioma": "en",
-  "esperado": "This one's on us"
+  "esperado": "❌ Don't touch anything and don't retry: we've already been alerted and we're looking at it."
  },
  {
   "origen": "runtime en — crash",
   "mensaje": "Cannot read properties of undefined (reading 'text')",
   "idioma": "en",
-  "esperado": "This one's on us"
+  "esperado": "❌ Don't touch anything and don't retry: we've already been alerted and we're looking at it."
  },
  {
   "origen": "catalogo — item-incompleto-celdas",
   "mensaje": "Item incompleto — corregí los siguientes datos antes de emitir:\n• Concepto\n• Cantidad (subítem \"Puerta\")",
   "idioma": "es",
-  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá lo que está marcado con ❌ acá abajo y volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
  },
  {
   "origen": "catalogo — tipo-comprobante-no-reconocido",
   "mensaje": "Tipo de Comprobante no reconocido: \"NC\".",
   "idioma": "es",
-  "esperado": "Tipo de Comprobante no reconocido"
+  "esperado": "❌ En la columna de Tipo de Comprobante poné Factura, Nota de Crédito o Nota de Débito, y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — punto-venta-invalido",
   "mensaje": "El Punto de Venta \"Casa Central\" no es válido. Tiene que ser un número de punto de venta habilitado en AFIP para web services (ej. 1, 5, 0005).",
   "idioma": "es",
-  "esperado": "No pudimos leer el punto de venta"
+  "esperado": "❌ En la columna del Punto de Venta dice \"Casa Central\" y ahí va solo el número. Corregilo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — padron-receptor-rechazado",
@@ -1011,7 +1067,7 @@
   "origen": "catalogo — item-no-encontrado",
   "mensaje": "Item 12345678 no encontrado en Monday",
   "idioma": "es",
-  "esperado": "No encontramos el item o la empresa"
+  "esperado": "❌ El item ya no está en el tablero. Buscalo en la papelera de monday, restauralo y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — afip-iva-faltante",
@@ -1029,25 +1085,25 @@
   "origen": "catalogo — fecha-pago-pasada",
   "mensaje": "La Fecha de Pago (28/07/2026) es anterior a la fecha de emisión (29/07/2026). AFIP rechaza la Factura E con fecha de pago pasada.",
   "idioma": "es",
-  "esperado": "Revisá la Fecha de Pago"
+  "esperado": "❌ Poné en la columna de Fecha de Pago una fecha de hoy en adelante y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — empresa-no-cargada",
   "mensaje": "Empresa no encontrada para la cuenta monday.",
   "idioma": "es",
-  "esperado": "Empresa no configurada"
+  "esperado": "❌ Cargá tu empresa en la app → Datos Fiscales, subí el certificado en Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — certificados-faltantes",
   "mensaje": "Faltan certificados AFIP para esta empresa.",
   "idioma": "es",
-  "esperado": "Falta subir el certificado de ARCA"
+  "esperado": "❌ Subí el certificado (.crt) y la clave (.key) en la app → Certificados ARCA, y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — mapeo-sin-configurar",
   "mensaje": "Configuración incompleta. Falta: Mapeo visual de columnas del tablero · Configuración de datos fiscales",
   "idioma": "es",
-  "esperado": "Falta configurar el mapeo de columnas"
+  "esperado": "❌ Abrí la app parado en este tablero → Mapeo Visual, emparejá cada dato con tu columna, guardá y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — cert-sin-permiso-facturacion",
@@ -1071,7 +1127,8 @@
   "origen": "catalogo — falta-permiso-exportacion",
   "mensaje": "AFIP rechazó el acceso al web service de exportación (wsfex).\nTu certificado todavía no está delegado a ese servicio.",
   "idioma": "es",
-  "esperado": "Falta habilitar la facturación de exportación en AFIP"
+  "esperado": "❌ Tenés que darle a tu certificado el permiso de exportación en AFIP. Es un trámite aparte del de facturación común, de una sola vez.",
+  "tiene_traduccion": true
  },
  {
   "origen": "catalogo — afip-sin-respuesta-datos-receptor",
@@ -1095,7 +1152,7 @@
   "origen": "catalogo — conexion-cortada-al-autorizar",
   "mensaje": "fetch failed",
   "idioma": "es",
-  "esperado": "Falla de conexión temporal con AFIP"
+  "esperado": "❌ Volvé a poner la columna de estado en \"Crear Comprobante\". Fue un corte de red, no un problema de tus datos."
  },
  {
   "origen": "catalogo — sesion-afip-cruzada",
