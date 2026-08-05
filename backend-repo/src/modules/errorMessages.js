@@ -156,7 +156,35 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
     const mainMsg = lines[0];
     const subitemDetails = lines.filter(l => l.startsWith('•'));
 
+    // Lo que la app reportó como faltante de configuración, ya separado en items.
+    // formatMissingConfigError los une con ' · '; acá se vuelven a partir para
+    // poder mostrarlos como checklist en vez de como una frase larga.
+    const faltantesConfig = /^(Configuraci[oó]n incompleta|Incomplete configuration)/.test(mainMsg)
+        ? mainMsg.replace(/^.*?(?:Falta|Missing):\s*/i, '').split(' · ').map(x => x.trim()).filter(Boolean)
+        : [];
+
     const KNOWN_ERRORS = [
+        {
+            // Faltan VARIAS cosas de configuración. La app ya arma la lista completa
+            // ('Falta: Certificados AFIP · Mapeo visual · Columna de estado') pero se
+            // perdía: ganaba la primera regla específica que matcheara y el usuario
+            // veía UNA. Arreglaba esa, reintentaba, y recién ahí se enteraba de la
+            // siguiente. Tres cosas faltantes eran tres viajes.
+            // El '·' es el separador que usa formatMissingConfigError, así que exigirlo
+            // es exigir que haya dos o más. Con una sola falta siguen ganando las
+            // reglas de abajo, que dicen exactamente qué hacer con esa.
+            match: /^Configuraci[oó]n incompleta\. Falta:[^\n]* · |^Incomplete configuration\. Missing:[^\n]* · /,
+            title: 'Falta terminar de configurar la app',
+            // El número sale de contar la lista, no fijo: decir "estas tres cosas"
+            // cuando son dos es exactamente el tipo de detalle que hace desconfiar
+            // del resto del mensaje.
+            accion: `Completá ${faltantesConfig.length > 1 ? `estas ${faltantesConfig.length} cosas` : 'esto'} en la app y volvé a poner \${columna_estado} en "\${estado_disparo}".`,
+            estado: faltantesConfig.map(x => `&nbsp;&nbsp;❌&nbsp;&nbsp;${x}`).join('<br/>') +
+                '<br/><br/>No se emitió nada.',
+            detalle: 'Están todas en la vista de la app: los datos de la empresa y el certificado en <b>Datos Fiscales</b> y <b>Certificados ARCA</b>, y las columnas en <b>Mapeo Visual</b>.',
+            detail: mainMsg,
+            solucion: 'Abrí la vista de la app y completá lo que falta.',
+        },
         {
             // Item incompleto = validateItemDataCompleteness (o el ruteo) falló.
             // El detalle de QUÉ columnas faltan viene en los bullets del mensaje.
@@ -849,6 +877,10 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: "Open the app's view → <b>ARCA Certificates</b> section → upload the certificate (.crt) and the key (.key). If you haven't issued them yet, the step by step is on that same screen: it's done once and lasts two years.",
         },
         'Falta terminar de configurar la app': {
+            accion: `Complete ${faltantesConfig.length > 1 ? `these ${faltantesConfig.length} things` : "this"} in the app and set  back to "".`,
+            estado: faltantesConfig.map(x => `&nbsp;&nbsp;❌&nbsp;&nbsp;${x}`).join("<br/>") +
+                "<br/><br/>Nothing was issued.",
+            detalle: "They are all in the app view: the company details and the certificate under <b>Tax Details</b> and <b>ARCA Certificates</b>, and the columns under <b>Visual Mapping</b>.",
             title: 'The app setup is not finished',
             solucion: "Open the app's view → complete the pending steps in <b>Visual Mapping</b>. Make sure to map all required columns.",
         },

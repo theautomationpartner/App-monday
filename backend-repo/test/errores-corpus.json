@@ -1103,7 +1103,7 @@
   "origen": "catalogo — mapeo-sin-configurar",
   "mensaje": "Configuración incompleta. Falta: Mapeo visual de columnas del tablero · Configuración de datos fiscales",
   "idioma": "es",
-  "esperado": "❌ Abrí la app parado en este tablero → Mapeo Visual, emparejá cada dato con tu columna, guardá y volvé a poner la columna de estado en \"Crear Comprobante\"."
+  "esperado": "❌ Completá estas 2 cosas en la app y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — cert-sin-permiso-facturacion",
