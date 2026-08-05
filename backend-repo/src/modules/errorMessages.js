@@ -156,6 +156,20 @@ function derivarDatosDelError(msg) {
     return d;
 }
 
+// El pie que va en TODOS los comentarios.
+//
+// Antes la dirección aparecía solo en 11 de 73 mensajes: los que declaraban un
+// bloque de soporte. La idea era no invitar a escribir cuando la persona podía
+// resolverlo sola. Pero eso deja a alguien trabado sin saber a dónde preguntar
+// justo en los casos que no previmos — y el que puede resolverlo solo, lo
+// resuelve igual: la instrucción está tres renglones más arriba.
+//
+// Va en gris y al final, separado, para que se lea como un pie y no como
+// "dejá de intentar y escribinos".
+const PIE = (isEn) => '<br/><br/><span style="color:#888">' +
+    (isEn ? 'Any questions, write to us at ' : 'Cualquier duda, escribinos a ') +
+    '<b>arca@theautomationpartner.com</b></span>';
+
 function buildErrorComment(err, displayKind = 'comprobante', language = 'es', meta = {}) {
     const msg = err?.message || 'Error desconocido';
     const kind = (displayKind && typeof displayKind === 'string') ? displayKind : 'comprobante';
@@ -606,6 +620,28 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detail: 'AFIP contestó y no lo aceptó. <b>No se emitió nada</b> y no se gastó ningún número.<br/><br/>Lo que dijo AFIP:<br/>' +
                 `&nbsp;&nbsp;❌&nbsp;&nbsp;${mainMsg.replace(/^AFIP rechaz[oó] [^:]*:\s*/i, '')}`,
             solucion: 'Esto no es una caída de AFIP: es una regla suya. Si el mensaje menciona el punto de venta, revisá que esté dado de alta en AFIP para facturación electrónica. Si menciona el CUIT, revisá qué comprobantes tenés habilitados en afip.gob.ar → Comprobantes en línea. Si menciona IVA o importes, revisá los subítems. Reintentar sin cambiar nada va a dar lo mismo.',
+        },
+        {
+            // El pais de destino no esta en la lista de AFIP, o coincide con varios.
+            // Antes decia "escribilo como lo nombra AFIP" sin decir en que columna.
+            match: /pa[ií]s de destino "[^"]*" (no est[aá] en la lista|es ambiguo)|destination country "[^"]*" is (not in|ambiguous)/i,
+            title: "Ese país no está en la lista de AFIP",
+            accion: "En la columna <b>País de Destino</b> del item escribí el país como lo nombra AFIP, y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "AFIP tiene su propia lista de nombres y no acepta variantes. Abajo está lo que contestó — si te ofrece opciones parecidas, copiá una tal cual.",
+            detail: mainMsg,
+            solucion: "Escribí el país como lo nombra AFIP en la columna País de Destino.",
+        },
+        {
+            // La moneda no esta en la lista de AFIP, o coincide con varias. Ojo que los
+            // codigos de AFIP NO son los ISO — el euro no es "EUR".
+            match: /moneda "[^"]*" (no est[aá] en la lista|es ambigua)|currency "[^"]*" is (not in|ambiguous)|tabla de monedas de AFIP no trae|currency table doesn.t include/i,
+            title: "Esa moneda no está en la lista de AFIP",
+            accion: "En la columna <b>Moneda</b> del item escribí la moneda como la publica AFIP, y volvé a poner ${columna_estado} en \"${estado_disparo}\".",
+            estado: "No se emitió nada.",
+            detalle: "Ojo: los códigos de AFIP <b>no son los ISO</b> — el euro no es \"EUR\". Abajo está lo que contestó AFIP; si te ofrece opciones, copiá una tal cual.",
+            detail: mainMsg,
+            solucion: "Escribí la moneda como la publica AFIP en la columna Moneda.",
         },
         {
             // COMODÍN, ahora acotado. La versión vieja era
@@ -1509,6 +1545,18 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: "The app signs every voucher on its own, so it can't type a password. If you let the app's wizard generate the request, the key comes out without one and this doesn't happen.",
         },
 
+        "Ese país no está en la lista de AFIP": {
+            title: "That country is not in AFIP list",
+            accion: 'In the item’s <b>Destination Country</b> column write the country the way AFIP names it, and set ${columna_estado} back to "${estado_disparo}".',
+            estado: "Nothing was issued.",
+            detalle: "AFIP has its own list of names and does not accept variants. Below is what it answered — if it offers similar options, copy one exactly.",
+        },
+        "Esa moneda no está en la lista de AFIP": {
+            title: "That currency is not in AFIP list",
+            accion: 'In the item’s <b>Currency</b> column write the currency the way AFIP publishes it, and set ${columna_estado} back to "${estado_disparo}".',
+            estado: "Nothing was issued.",
+            detalle: 'Careful: AFIP codes are <b>not</b> the ISO ones — the euro is not "EUR". Below is what AFIP answered; if it offers options, copy one exactly.',
+        },
     };
 
 
@@ -1585,18 +1633,20 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
         }
         // El soporte va SOLO donde está declarado. Ofrecerlo cuando la persona
         // puede resolverlo sola le da permiso para no intentarlo.
+        // La línea de soporte CONDICIONAL: "si a la media hora sigue igual, …".
+        // Solo va donde tiene sentido esperar antes de escribir. La dirección no
+        // se repite acá — la lleva el pie, que va en todos.
         if (known.soporte) {
-            html += `<br/><br/>${V(known.soporte)} ` +
-                (isEn ? 'write to us at' : 'escribinos a') +
-                ' <b>arca@theautomationpartner.com</b>.';
+            html += `<br/><br/>${V(known.soporte)} ${isEn ? 'let us know.' : 'avisanos.'}`;
         }
+        html += PIE(isEn);
         return html;
     }
 
     if (known) {
         return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
             `<b>${A.cause}</b> ${known.title}<br/>${known.detail}<br/><br/>` +
-            `<b>${A.fix}</b> ${known.solucion}`;
+            `<b>${A.fix}</b> ${known.solucion}` + PIE(isEn);
     }
 
     // ── Fallback ────────────────────────────────────────────────────────────
@@ -1658,13 +1708,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             const inicial = comoSe.replace(/^(\p{Ll})/u, (c) => c.toUpperCase());
             return `<b>❌ ${inicial}</b><br/><br/>` +
                 `${isEn ? 'Nothing was issued.' : 'No se emitió nada.'}<br/><br/>` +
-                `${causa}`;
+                `${causa}` + PIE(isEn);
         }
     }
 
     return `<b>❌ ${A.issue} ${kindArticle(kind, language)}</b><br/><br/>` +
         `<b>${A.cause}</b> ${mainMsg}<br/><br/>` +
-        `<b>${A.fix}</b> ${A.fallback}`;
+        `<b>${A.fix}</b> ${A.fallback}` + PIE(isEn);
 }
 
 function kindArticle(kind, language = 'es') {

@@ -369,31 +369,31 @@
  {
   "origen": "server.js:8480",
   "mensaje": "El país de destino \"…\" es ambiguo — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto del que necesitás.",
-  "esperado": "❌ Escribí en la columna el nombre exacto del que necesitás.",
+  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8493",
   "mensaje": "El país de destino \"…\" no está en la lista de países de AFIP. Escribilo como lo nombra AFIP….",
-  "esperado": "❌ Escribilo como lo nombra AFIP12345.",
+  "esperado": "❌ En la columna País de Destino del item escribí el país como lo nombra AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8520",
   "mensaje": "La tabla de monedas de AFIP no trae pesos argentinos (\"PES\"). Reintentá en unos minutos.",
-  "esperado": "❌ Reintentá en unos minutos.",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8546",
   "mensaje": "La moneda \"…\" es ambigua — coincide con varias entradas de AFIP: …. Escribí en la columna el nombre exacto o el código de AFIP.",
-  "esperado": "❌ Escribí en la columna el nombre exacto o el código de AFIP.",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:8557",
   "mensaje": "La moneda \"…\" no está en la lista de monedas de AFIP. Ojo: los códigos de AFIP NO son los ISO (el euro no es \"EUR\"). Escribí el nombre como lo publica AFIP, o su código.",
-  "esperado": "❌ Escribí el nombre como lo publica AFIP, o su código.",
+  "esperado": "❌ En la columna Moneda del item escribí la moneda como la publica AFIP, y volvé a poner la columna de estado en \"Crear Comprobante\".",
   "tiene_traduccion": true
  },
  {
@@ -724,31 +724,31 @@
   "origen": "server.js:8637",
   "mensaje": "The destination country \"…\" is ambiguous — it matches several AFIP entries: …\"`).join(', ')}. Write the exact name of the one you need in the column.",
   "idioma": "en",
-  "esperado": "❌ Write the exact name of the one you need in the column."
+  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it, and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8650",
   "mensaje": "The destination country \"…\" is not in AFIP's country list.\nUse the country's name in English (e.g. \"Brazil\", \"United States\") or exactly as AFIP names it…` : ''}.",
   "idioma": "en",
-  "esperado": "❌ Use the country's name in English (e.g. \"Brazil\", \"United States\") or exactly as AFIP names it12345` : ''}."
+  "esperado": "❌ In the item’s Destination Country column write the country the way AFIP names it, and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8677",
   "mensaje": "AFIP's currency table doesn't include Argentine pesos (\"PES\"). Try again in a few minutes.",
   "idioma": "en",
-  "esperado": "❌ Try again in a few minutes."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it, and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8703",
   "mensaje": "The currency \"…\" is ambiguous — it matches several AFIP entries: …\" (…)`).join(', ')}. Write the exact name or AFIP's code in the column.",
   "idioma": "en",
-  "esperado": "❌ Write the exact name or AFIP's code in the column."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it, and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8714",
   "mensaje": "The currency \"…\" is not in AFIP's currency list.\nCareful: AFIP's codes are NOT the ISO ones (the euro is not \"EUR\"). Write the name as AFIP publishes it, or its code.",
   "idioma": "en",
-  "esperado": "❌ Write the name as AFIP publishes it, or its code."
+  "esperado": "❌ In the item’s Currency column write the currency the way AFIP publishes it, and set the status column back to \"Create Voucher\"."
  },
  {
   "origen": "server.js:8756",
