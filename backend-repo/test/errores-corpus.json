@@ -159,13 +159,13 @@
  {
   "origen": "server.js:6134",
   "mensaje": "Este item está emitiendo una … en este momento. Esperá unos segundos a que termine — NO vuelvas a disparar la receta.",
-  "esperado": "Este item ya tiene un comprobante",
+  "esperado": "❌ No toques nada por un minuto. Este item ya está emitiendo y el resultado va a aparecer acá solo.",
   "tiene_traduccion": true
  },
  {
   "origen": "server.js:6141",
   "mensaje": "Este item tiene una … con número reservado en AFIP pero sin confirmar (probable timeout del intento anterior). El cron de recuperación consulta AFIP y resuelve el estado real en los próximos 5 minutos. Esperá y volvé a intentar — emitir una factura ahora puede crear dos comprobantes.",
-  "esperado": "Este item ya tiene un comprobante",
+  "esperado": "❌ Esperá. La app le vuelve a preguntar a AFIP sola y escribe acá qué pasó, siempre dentro de los 5 minutos.",
   "tiene_traduccion": true
  },
  {
@@ -189,7 +189,7 @@
  {
   "origen": "server.js:6308",
   "mensaje": "Factura ya emitida para este item (Factura …, Comp. Nº …, CAE …). Para crear una factura nueva, generá un item nuevo en el tablero.",
-  "esperado": "Ya se emitió un comprobante para este item"
+  "esperado": "❌ No tenés que hacer nada: ya estaba hecha."
  },
  {
   "origen": "server.js:6383",
@@ -324,7 +324,7 @@
  {
   "origen": "server.js:7779",
   "mensaje": "Este item tiene una … con número reservado en AFIP pero sin confirmar (probable timeout). El cron de recuperación consulta AFIP en los próximos 5 minutos. Esperá y volvé a intentar — emitir una … ahora puede crear dos comprobantes vivos para el mismo item.",
-  "esperado": "Este item ya tiene un comprobante",
+  "esperado": "❌ Esperá. La app le vuelve a preguntar a AFIP sola y escribe acá qué pasó, siempre dentro de los 5 minutos.",
   "tiene_traduccion": true
  },
  {
@@ -493,7 +493,7 @@
  {
   "origen": "server.js:9259",
   "mensaje": "Este item tiene una … con número reservado en AFIP pero sin confirmar (probable timeout). Esperá unos minutos y volvé a intentar — emitir una Factura E ahora puede crear dos comprobantes vivos para el mismo item.",
-  "esperado": "Este item ya tiene un comprobante",
+  "esperado": "❌ Esperá. La app le vuelve a preguntar a AFIP sola y escribe acá qué pasó, siempre dentro de los 5 minutos.",
   "tiene_traduccion": true
  },
  {
@@ -862,13 +862,13 @@
   "origen": "server.js:9458",
   "mensaje": "This item is issuing a … right now. Wait a few seconds for it to finish — do NOT trigger the recipe again.",
   "idioma": "en",
-  "esperado": "This item already has a voucher"
+  "esperado": "❌ Don't touch anything for a minute. This item is already issuing and the result will show up here on its own."
  },
  {
   "origen": "server.js:9465",
   "mensaje": "This item has a … with a number reserved at AFIP but unconfirmed (likely a timeout). Wait a few minutes and retry — issuing an Export Invoice now could create two live vouchers for the same item.",
   "idioma": "en",
-  "esperado": "This item already has a voucher"
+  "esperado": "❌ Wait. The app asks AFIP again on its own and writes the outcome here, always within 5 minutes."
  },
  {
   "origen": "server.js:9529",
@@ -1061,7 +1061,7 @@
   "origen": "catalogo — factura-ya-emitida-aviso",
   "mensaje": "Factura ya emitida para este item (Factura C, Comp. Nº 91, CAE 12345678901234). Para crear una factura nueva usá un item nuevo.",
   "idioma": "es",
-  "esperado": "Ya se emitió un comprobante para este item"
+  "esperado": "❌ No tenés que hacer nada: ya estaba hecha."
  },
  {
   "origen": "catalogo — item-no-encontrado",
@@ -1073,7 +1073,7 @@
   "origen": "catalogo — afip-iva-faltante",
   "mensaje": "AFIP rechazó la factura: [10070] Si ImpNeto es mayor a 0 el objeto IVA es obligatorio.",
   "idioma": "es",
-  "esperado": "AFIP rechazó el comprobante"
+  "esperado": "❌ Revisá que TODOS los subítems tengan cargada la columna de Alícuota IVA y volvé a poner la columna de estado en \"Crear Comprobante\"."
  },
  {
   "origen": "catalogo — afip-numeracion-desfasada",
@@ -1115,13 +1115,13 @@
   "origen": "catalogo — punto-venta-no-habilitado",
   "mensaje": "AFIP rechazó la factura: [10005] NO AUTORIZADO A EMITIR COMPROBANTES - EL PUNTO DE VENTA NO SE ENCUENTRA AUTORIZADO",
   "idioma": "es",
-  "esperado": "AFIP rechazó el comprobante"
+  "esperado": "❌ Tenés que dar de alta el punto de venta en AFIP. Es un alta que hacés vos: reintentar no la crea."
  },
  {
   "origen": "catalogo — afip-cuit-no-habilitado",
   "mensaje": "AFIP rechazó la factura: [10000] NO AUTORIZADO A EMITIR COMPROBANTES - LA CUIT INFORMADA NO SE ENCUENTRA AUTORIZADA",
   "idioma": "es",
-  "esperado": "AFIP rechazó el comprobante"
+  "esperado": "❌ Revisá la letra del comprobante: AFIP dice que tu CUIT no está autorizado a emitir esa."
  },
  {
   "origen": "catalogo — falta-permiso-exportacion",

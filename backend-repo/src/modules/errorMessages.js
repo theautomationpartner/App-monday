@@ -301,7 +301,14 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             // que dispara la guardia cross-tipo (factura sobre item con NC/ND
             // y viceversa): "ya emitió", "está emitiendo" (concurrente), y
             // "tiene una ... con número reservado en AFIP pero sin confirmar".
-            match: /este item (ya emiti[oó]|est[aá] emitiendo|tiene.*n[uú]mero reservado)|this item (already issued|is issuing|has a .{0,20}with a number reserved)/i,
+            // Antes esta regla juntaba TRES situaciones con acciones opuestas: el
+            // item que ya emitió (crear uno nuevo), el que está emitiendo ahora
+            // mismo (esperar y no tocar nada) y el que tiene un número reservado sin
+            // confirmar (esperar la reconciliación). Decirle "creá un item nuevo" a
+            // los dos últimos es la peor respuesta posible: sale un comprobante de
+            // más. Las otras dos tienen su regla más abajo, así que ésta se queda
+            // solo con la suya.
+            match: /este item ya emiti[oó]|this item already issued/i,
             title: 'Este item ya tiene un comprobante',
             detail: mainMsg,
             solucion: 'Cada item corresponde a <b>un solo comprobante</b>. Para emitir otro — o la Nota de Crédito de esta factura — creá un <b>item nuevo</b> en el tablero. La NC referencia la factura por su CAE.',
@@ -418,6 +425,83 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: 'Si tu certificado no aparece en esa lista de AFIP, revisá con qué CUIT lo generaste. Tiene que ser el ${cuit_emisor}.',
             detail: 'AFIP reconoce tu certificado, pero todavía no le diste permiso para emitir comprobantes. <b>No es una caída de AFIP: esperar no lo arregla.</b> Es un trámite de una sola vez.',
             solucion: 'Entrá a afip.gob.ar con tu clave fiscal → <b>Administrador de Relaciones de Clave Fiscal</b> → Nueva Relación. En "Servicio" seguí este camino: AFIP → WebServices → <b>Facturación Electrónica</b> (está escrito así, mitad en inglés, porque es el nombre que le puso AFIP). En "Representante" elegí el certificado que ya cargaste en la app. Confirmá y volvé a disparar la receta.',
+        },
+        {
+            // AFIP [10070]: falta la alicuota IVA en algun subitem. Va antes de la
+            // generica de rechazo porque la accion es concreta y esta en el item.
+            match: /AFIP rechaz[oó] (la factura|el comprobante|la Nota)[^\n]*\[10070\]/i,
+            title: 'Falta la alícuota IVA en algún subítem',
+            accion: 'Revisá que TODOS los subítems tengan cargada ${columna_alicuota} y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Alcanza con que uno solo quede vacío para que AFIP rechace el comprobante entero.',
+            soporte: 'Si todos ya la tienen cargada, es un problema nuestro:',
+            detail: 'AFIP no aceptó el comprobante porque el detalle de IVA venía incompleto.',
+            solucion: 'Revisá que todos los subítems tengan cargada la columna de alícuota IVA.',
+        },
+        {
+            // AFIP [10005]: el punto de venta no esta dado de alta. Es un alta que
+            // hace el cliente en AFIP — reintentar no la crea nunca.
+            match: /AFIP rechaz[oó] (la factura|el comprobante|la Nota)[^\n]*\[10005\]|punto de venta no se encuentra (autorizado|habilitad)/i,
+            title: 'Ese punto de venta no está dado de alta en AFIP',
+            accion: 'Tenés que dar de alta el punto de venta en AFIP. Es un alta que hacés vos: reintentar no la crea.',
+            pasos: [
+                'Entrá a afip.gob.ar con tu clave fiscal → <b>Administración de puntos de venta y domicilios</b> → A/B/M de puntos de venta → Alta.',
+                'Creá el número que estás usando en el item. Te va a pedir elegir un sistema de una lista.',
+                'Si sos monotributista elegí <b>"Factura Electrónica - Monotributo - Web Services"</b>. Si sos responsable inscripto, <b>"RECE - Facturación Electrónica - Web Services"</b>. Están escritos así de raro por AFIP, no por nosotros.',
+                'Esperá un minuto y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            ],
+            estado: 'No se emitió nada.',
+            detalle: 'Si querías facturar desde otro punto de venta, corregí ${columna_pv} del item.',
+            detail: 'AFIP no reconoce ese punto de venta para facturación electrónica.',
+            solucion: 'Dalo de alta en afip.gob.ar → Administración de puntos de venta y domicilios.',
+        },
+        {
+            // AFIP [10000]: el CUIT no esta autorizado a emitir ESA letra. Casi
+            // siempre es un monotributista intentando emitir A o B.
+            match: /AFIP rechaz[oó] (la factura|el comprobante|la Nota)[^\n]*\[10000\]/i,
+            title: 'Tu CUIT no está autorizado a emitir ese comprobante',
+            accion: 'Revisá la letra del comprobante: AFIP dice que tu CUIT no está autorizado a emitir esa.',
+            pasos: [
+                'Fijate qué letra tiene el item. Si sos monotributista, solo podés emitir Factura C.',
+                'Para ver qué letras tenés habilitadas, entrá a afip.gob.ar → <b>Comprobantes en línea</b>.',
+                'Corregí la letra y volvé a poner ${columna_estado} en "${estado_disparo}".',
+            ],
+            estado: 'No se emitió nada.',
+            detalle: 'Reintentar sin cambiar la letra va a dar lo mismo.',
+            detail: 'AFIP no tiene tu CUIT habilitado para el tipo de comprobante que se intentó emitir.',
+            solucion: 'Revisá la letra del comprobante y qué tenés habilitado en afip.gob.ar → Comprobantes en línea.',
+        },
+        {
+            // Emision EN CURSO. Separada de "ya tiene un comprobante" porque la accion
+            // es la contraria: aca hay que esperar, no crear un item nuevo.
+            match: /este item est[aá] emitiendo|this item is (currently )?issuing/i,
+            title: 'Este item ya está emitiendo',
+            accion: 'No toques nada por un minuto. Este item ya está emitiendo y el resultado va a aparecer acá solo.',
+            estado: 'Si volvés a poner ${columna_estado} en "${estado_disparo}" ahora, podrían salir dos comprobantes.',
+            detail: 'Hay una emisión en curso para este item.',
+            solucion: 'Esperá a que termine: el resultado aparece en este mismo item.',
+        },
+        {
+            // Numero reservado sin confirmar (timeout con AFIP). La reconciliacion
+            // corre sola cada 5 minutos, asi que la accion es esperar.
+            match: /n[uú]mero reservado en AFIP|number reserved at AFIP/i,
+            title: 'Quedó un intento anterior sin cerrar',
+            accion: 'Esperá. La app le vuelve a preguntar a AFIP sola y escribe acá qué pasó, siempre dentro de los 5 minutos.',
+            estado: 'Quedó un número reservado en AFIP de un intento anterior que no llegó a confirmarse.',
+            detalle: 'Recién si pasados los 5 minutos el item sigue sin comprobante, volvé a poner ${columna_estado} en "${estado_disparo}". Antes no la toques: podrían salir dos.',
+            detail: 'Un intento anterior reservó el número en AFIP pero no llegó a confirmarse.',
+            solucion: 'Esperá unos minutos: la app lo resuelve sola.',
+        },
+        {
+            // Ya estaba emitida. No es una falla: el comprobante existe y esta bien.
+            // La accion es NO hacer nada, que es lo contrario de lo que sugiere un error.
+            match: /^(Factura|Nota de Cr[eé]dito|Nota de D[eé]bito)[^\n]* ya emitida para este item \(/i,
+            title: 'Ya estaba emitida',
+            accion: 'No tenés que hacer nada: ya estaba hecha.',
+            estado: 'No se emitió otra, a propósito.',
+            detalle: 'Para facturar otra cosa, creá un item nuevo y poné ${columna_estado} en "${estado_disparo}" ahí.',
+            detail: 'El comprobante de este item ya existe.',
+            solucion: 'Para emitir otro, creá un item nuevo en el tablero.',
         },
         {
             // AFIP rechazó el comprobante y dijo por qué, con un código entre corchetes.
@@ -996,6 +1080,54 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             title: 'A voucher was already issued for this item',
             solucion: 'Each board item corresponds to <b>a single voucher</b>. To issue another, <b>create a new item</b> on the board and start it from there. This avoids duplicating vouchers in AFIP.',
         },
+        "Falta la alícuota IVA en algún subítem": {
+            title: "A subitem is missing its VAT rate",
+            accion: "Check that ALL subitems have ${columna_alicuota} filled in and set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: "Nothing was issued.",
+            detalle: "One empty cell is enough for AFIP to reject the whole voucher.",
+            soporte: "If they all have it filled in already, it's on us:",
+        },
+        "Ese punto de venta no está dado de alta en AFIP": {
+            title: "That point of sale is not registered in AFIP",
+            accion: "You need to register the point of sale in AFIP. It is something you do yourself: retrying will not create it.",
+            pasos: [
+                "Go to afip.gob.ar with your tax key → <b>Administración de puntos de venta y domicilios</b> → A/B/M de puntos de venta → Alta.",
+                "Create the number you are using on the item. It will ask you to pick a system from a list.",
+                "If you are a monotributista pick <b>\"Factura Electrónica - Monotributo - Web Services\"</b>. If you are responsable inscripto, <b>\"RECE - Facturación Electrónica - Web Services\"</b>. They are written that oddly by AFIP, not by us.",
+                "Wait a minute and set ${columna_estado} back to \"${estado_disparo}\".",
+            ],
+            estado: "Nothing was issued.",
+            detalle: "If you meant to invoice from a different point of sale, fix ${columna_pv} on the item.",
+        },
+        "Tu CUIT no está autorizado a emitir ese comprobante": {
+            title: "Your CUIT is not authorised to issue that voucher",
+            accion: "Check the voucher letter: AFIP says your CUIT is not authorised to issue that one.",
+            pasos: [
+                "Look at which letter the item has. If you are a monotributista, you can only issue Factura C.",
+                "To see which letters you have enabled, go to afip.gob.ar → <b>Comprobantes en línea</b>.",
+                "Fix the letter and set ${columna_estado} back to \"${estado_disparo}\".",
+            ],
+            estado: "Nothing was issued.",
+            detalle: "Retrying without changing the letter will give the same result.",
+        },
+        "Este item ya está emitiendo": {
+            title: "This item is already issuing",
+            accion: "Don't touch anything for a minute. This item is already issuing and the result will show up here on its own.",
+            estado: "If you set ${columna_estado} back to \"${estado_disparo}\" now, two vouchers could come out.",
+        },
+        "Quedó un intento anterior sin cerrar": {
+            title: "A previous attempt was left open",
+            accion: "Wait. The app asks AFIP again on its own and writes the outcome here, always within 5 minutes.",
+            estado: "A number was left reserved at AFIP by an attempt that never confirmed.",
+            detalle: "Only if the item still has no voucher after those 5 minutes, set ${columna_estado} back to \"${estado_disparo}\". Before that, leave it alone: two could come out.",
+        },
+        "Ya estaba emitida": {
+            title: "It was already issued",
+            accion: "You do not need to do anything: it was already done.",
+            estado: "Another one was not issued, on purpose.",
+            detalle: "To invoice something else, create a new item and set ${columna_estado} to \"${estado_disparo}\" there.",
+        },
+
     };
 
 
