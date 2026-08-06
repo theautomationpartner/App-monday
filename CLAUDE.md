@@ -2,6 +2,12 @@
 
 App de facturación electrónica AFIP para clientes en el marketplace de monday.com.
 
+> ## 🚨 ¿Se rompió algo? No leas esto: andá a **[RUNBOOK.md](RUNBOOK.md)**
+>
+> Este archivo explica **cómo funciona** el sistema y cómo hacerle cambios.
+> El runbook explica **qué hacer cuando algo falla**, entrando por el síntoma.
+> Si hay un cliente esperando, el runbook es el documento.
+
 > **⚠️ Si vas a hacer un cambio (feature nuevo o fix), LEÉ EL WORKFLOW DE CAMBIOS abajo antes de tocar código.** No es opcional. Si pusheás directo a `main` impactás 3 clientes reales en producción.
 
 ---
@@ -160,22 +166,34 @@ Para un commit específico no reciente: `git revert <hash>`. Nunca uses `git res
 ```
 backend-repo/
   src/
-    server.js                    # ÚNICO archivo grande — endpoints + crons + lifecycle + audit
+    server.js                    # el más grande — endpoints + crons + lifecycle + audit
     config.js                    # endpoints AFIP por entorno (homo vs prod) + constantes (CBTE_TYPE, IVA_CONDITION)
     db.js                        # pool PostgreSQL (SSL verify-full con CA cert de DO)
     validation.js                # Zod schemas (BoardConfigSchema, MappingSchema, etc.)
     onboarding.html              # página de bienvenida iframe-friendly (/onboarding)
     modules/
+      errorMessages.js           # TODOS los mensajes de error al usuario (ES + EN)
       invoicePdf.js              # generación PDF (pdfkit)
       invoiceRules.js            # condiciones IVA, helper toTitleCase
       afipAuth.js                # WSAA (token+sign per company, cacheado)
       afipPadron.js              # consulta padrón AFIP (cuit→razón social)
+      afipWsfex.js               # comprobantes de exportación (WSFEXv1, otro web service)
+      piiCrypto.js               # cifrado de la PII del emisor (tabla companies)
+      recoveryGuard.js           # ¿el comprobante que devolvió AFIP es realmente nuestro?
+      documentoReceptor.js       # dígito verificador del CUIT + etiqueta del documento
+  test/                          # corren solos en cada deploy (ver .github/workflows)
+    mensajes.test.js             # los 232 mensajes de error, en los dos idiomas
+    errores-corpus.json          # el corpus congelado que usa el anterior
+    textos-al-usuario.test.js    # los textos de éxito y aviso (acentos, jerga)
+    recovery-ajeno.test.js       # que no adoptemos el CAE de la factura de otro
+    cuit-digito.test.js          # que un CUIT mal escrito se detecte sin AFIP
+    pdf-doc-receptor.test.js     # que el PDF no le diga CUIT a un DNI
   scripts/
     test-pdf.js                  # genera PDF de muestra sin emitir
     check-account-data.js        # diagnóstico de uninstall
   ecosystem.config.js            # pm2 prod (puerto 3000)
   ecosystem.staging.config.js    # pm2 staging (puerto 3001, cwd App-monday-staging)
-  package.json
+  package.json                   # `npm test` corre los 5 bancos de prueba
 
 frontend-repo/
   src/
@@ -244,24 +262,51 @@ curl -X POST http://localhost:3000/api/admin/run-nightly-audit \
 
 ## Mensajes de error al usuario — cómo se arman (leer antes de tocar un `throw`)
 
-Todo error que llega al item de monday pasa por **`buildErrorComment`** (`server.js`). Su lógica:
+> **Actualizado el 06/08/2026.** Lo que decía antes esta sección quedó viejo: la función se
+> mudó de archivo y la lista en inglés dejó de existir. Si leíste esto antes, releelo.
+
+Todo error que llega al item de monday pasa por **`buildErrorComment`**, que vive en
+**`src/modules/errorMessages.js`** (se mudó de `server.js` el 05/08). Su lógica:
 
 1. Parte el mensaje en líneas. **La primera línea es la "Causa"**.
 2. Las líneas que empiezan con `•` son el detalle por subítem.
-3. Busca el mensaje en **`KNOWN_ERRORS`** (español) o **`KNOWN_ERRORS_EN`** (inglés), dos arrays de `{ match: /regex/, title, detail, solucion }`.
-4. Si **matchea** una entrada: muestra `title` + `detail` (que puede usar los bullets) + `solucion`.
-5. Si **NO matchea**: cae al fallback, que muestra **solo la primera línea** y un texto genérico.
+3. Busca el mensaje en **`KNOWN_ERRORS`**, un array de `{ match: /regex/, title, accion, estado, detalle, solucion }`.
+4. Si **matchea**: arma el mensaje con `accion` (qué hacer, primero), `estado` (si se emitió algo) y `detalle`.
+5. Si **NO matchea**: cae al fallback genérico.
 
-⚠️ **La trampa:** un `throw new Error()` con detalle en varias líneas **pierde todo salvo la primera** si no está en `KNOWN_ERRORS`. Pasó con la bonificación: el comentario decía *"Problemas con los importes de bonificación:"* y cortaba ahí, justo antes de la parte que le dice al usuario qué subítem arreglar.
+### Una sola lista, y el inglés arriba
 
-**Al agregar un error nuevo con detalle, agregá también su entrada en los DOS arrays** y verificá que ninguna regex anterior de la lista se lo robe (gana la primera que matchea).
+⚠️ **`KNOWN_ERRORS_EN` ya no existe.** Había dos listas paralelas y **derivaron**: la
+española llegó a 49 reglas y la inglesa se quedó en 24, así que 30 mensajes se le mostraban
+en español a un tablero en inglés.
 
-Ejemplos de entradas que sí usan los bullets: `Item incompleto`, `no hay subitems`, `importes de bonificación`.
+Hoy hay **una sola lista ordenada** (`KNOWN_ERRORS`, en español) y un mapa **`EN_TEXT`**
+indexado **por el `title` en español**, que superpone el texto en inglés. Una regla sin
+entrada en `EN_TEXT` hace **fallar el banco de pruebas**, así que no se puede olvidar.
 
-### Errores con mensaje mejorable (pendientes)
+**Al agregar un error nuevo:** agregá la regla a `KNOWN_ERRORS`, su traducción a `EN_TEXT`
+con la misma clave, y verificá que ninguna regex anterior se lo robe — **gana la primera
+que matchea**.
 
-- **CAE que apunta a una NC/ND en vez de una factura**: dice *"verificá que el CAE esté bien copiado"* cuando el CAE está perfecto — el problema es que referencia una nota. La query de búsqueda excluye `invoice_type IN ('NC','ND','E','NCE','NDE')` a propósito. Ya existe el patrón a copiar: cuando el CAE es de exportación, el código detecta el caso y dice *"poné Nota De Credito E"*.
-- **"El comprobante quedó en cero"**: repite la misma frase en la causa y en la solución.
+⚠️ **La trampa vieja:** un `throw` con detalle en varias líneas perdía todo salvo la
+primera si no estaba en la lista. Pasó con la bonificación. **Hoy los 232 errores tienen
+mensaje propio y ninguno cae al genérico** — y hay un test que lo verifica en cada deploy.
+
+Ejemplos de entradas que usan los bullets: `Item incompleto`, `no hay subitems`,
+`importes de bonificación`.
+
+### Antes de tocar un mensaje
+
+```bash
+cd backend-repo && npm test        # 5 bancos, menos de un segundo, sin AFIP ni monday
+```
+
+Si cambiaste un mensaje **a propósito**, refrescá el corpus:
+`node test/mensajes.test.js --actualizar`
+
+Y para ver un error real de punta a punta, el tablero **18425062980** tiene 12 items
+cargados con datos mal a propósito. Tiene certificado de **homologación**: no puede emitir
+nada real.
 
 ---
 

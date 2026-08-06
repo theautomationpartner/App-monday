@@ -11918,7 +11918,15 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
     }
 
     const total = ok + mismatch + notFound + errors;
-    if (total === 0) return; // nada nuevo que reportar tonight
+    // OJO: acá antes había un `if (total === 0) return`. Parecía razonable —no hay nada
+    // que contar, no molestemos— pero convertía el silencio en Slack en un dato ambiguo:
+    // no llegar el resumen podía significar (a) no hubo comprobantes para auditar, muy
+    // común un domingo, (b) el proceso está muerto, o (c) falló el webhook. Las tres se
+    // ven exactamente igual desde afuera, y solo una está bien.
+    //
+    // Mandar igual el mensaje de "0 para auditar" cuesta un POST por noche y convierte
+    // eso en información binaria: si NO llegó nada a Slack, algo está roto. Es la única
+    // señal de vida diaria que tiene el sistema.
 
     // Desglose facturas vs notas de crédito vs notas de débito de lo auditado esta noche.
     // Se cuentan tambien las de EXPORTACION ('NCE'/'NDE'): son la misma clase de
@@ -11968,7 +11976,21 @@ async function notifyAuditSummary({ results, ok, mismatch, notFound, errors, dur
     const durationStr = `${(durationMs / 1000).toFixed(1)}s`;
 
     let text;
-    if (!hasIssues && errors === 0) {
+    if (total === 0) {
+        // Noche sin nada que auditar. No es un problema — pero el mensaje tiene que
+        // salir igual, porque es la señal de vida. Dice explícitamente que la corrida
+        // ocurrió, para que nadie lo confunda con un cron caído.
+        text = [
+            `:white_check_mark: *Auditoria nocturna AFIP — ${auditedDate}*`,
+            ``,
+            `*Auditadas esta noche:* 0 — no había comprobantes nuevos para auditar.`,
+            cumLine,
+            ``,
+            `_La corrida se hizo y terminó bien. Este mensaje es la señal de vida diaria:_`,
+            `_si alguna noche NO llega ninguno de estos avisos, algo dejó de funcionar._`,
+            `_Duracion: ${durationStr}_`,
+        ].join('\n');
+    } else if (!hasIssues && errors === 0) {
         text = [
             `:white_check_mark: *Auditoria nocturna AFIP — ${auditedDate}*`,
             ``,
