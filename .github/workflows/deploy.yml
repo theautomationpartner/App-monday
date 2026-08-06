@@ -77,6 +77,22 @@ jobs:
           npm run build
           ls -la dist/
 
+      # ─── Los mensajes y comprobantes que ve el cliente ──────────────────────
+      # Corre ANTES de deployar y frena el deploy si algo quedó roto.
+      # Tarda menos de un segundo: no necesita AFIP, ni monday, ni base de datos.
+      - name: Node para los tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Probar lo que ve el cliente
+        run: |
+          node backend-repo/test/mensajes.test.js
+          node backend-repo/test/textos-al-usuario.test.js
+          node backend-repo/test/recovery-ajeno.test.js
+          node backend-repo/test/cuit-digito.test.js
+          node backend-repo/test/pdf-doc-receptor.test.js
+
       # ─── Setup SSH ──────────────────────────────────────────────────────────
       - name: Configurar SSH al droplet
         run: |
