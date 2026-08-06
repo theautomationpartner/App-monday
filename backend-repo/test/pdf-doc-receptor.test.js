@@ -15,7 +15,7 @@
  * que es el caso de lejos más común y lo que se imprimió siempre. Cambiar el
  * título de un comprobante que hoy sale bien sería peor que el bug.
  */
-const { etiquetaDocReceptor } = require('../src/modules/invoicePdf');
+const { etiquetaDocReceptor } = require('../src/modules/documentoReceptor');
 
 const casos = [
     // El tipo que manda AFIP gana siempre

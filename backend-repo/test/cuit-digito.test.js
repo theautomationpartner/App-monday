@@ -21,7 +21,7 @@
  * opino") en todo lo que no sea un 11 dígitos concluyente, y `null` nunca
  * rechaza nada.
  */
-const { cuitDvValido } = require('../src/modules/afipPadron');
+const { cuitDvValido } = require('../src/modules/documentoReceptor');
 const { buildErrorComment } = require('../src/modules/errorMessages');
 
 const casos = [
