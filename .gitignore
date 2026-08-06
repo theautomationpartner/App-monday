@@ -32,3 +32,12 @@ db-backups/
 # Docs temporales del proceso de submission a monday Marketplace
 # (se elimina la carpeta entera cuando la app este aprobada)
 To Delete after do/
+
+# Salidas de pruebas que se acumulan en la raiz: PDFs generados probando el
+# formato de los comprobantes y exports de monday. La barra del principio ancla
+# el patron a la raiz, para no tapar por accidente algo de adentro del codigo.
+/TEST-*.pdf
+/Factura_*.pdf
+/FacturaE-*.pdf
+/*_00000*.pdf
+/board_automations_*.csv
