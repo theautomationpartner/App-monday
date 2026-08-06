@@ -12120,12 +12120,34 @@ async function runNightlyAfipAudit() {
         `, [NIGHTLY_AUDIT_BATCH_SIZE]);
         rows = result.rows;
     } catch (err) {
+        // Si falla la base, la auditoría de la noche no corre. Antes eso era un
+        // console.error y nada más: el canal quedaba en silencio y el silencio se
+        // confunde con "todo bien". Avisamos, porque es justo el caso en que nadie
+        // más se va a enterar.
         console.error('[nightly-audit] error buscando rows:', err.message);
+        notifySlackSystemError({
+            accountId: null,
+            clientItemName: 'auditoría nocturna',
+            errorMessage: `La auditoría nocturna de AFIP no pudo correr: falló la consulta a la base (${err.message}). `
+                        + `Las facturas de anoche quedaron sin verificar contra AFIP. Ver RUNBOOK.md, ficha 10.`,
+            auditItemId: null,
+        }).catch(() => {});
         return;
     }
 
     if (rows.length === 0) {
-        console.log('[nightly-audit] sin facturas pendientes de auditar — skip');
+        // No hay nada que auditar — pero el aviso a Slack sale IGUAL.
+        //
+        // Antes acá había un `return` pelado, y era el más dañino de los dos que tenía
+        // esta función: dejaba el canal en silencio sin que nadie pudiera distinguir
+        // "no había comprobantes nuevos" (normal un domingo) de "el proceso está muerto".
+        // Como este mensaje nocturno es la única señal de vida diaria del sistema, el
+        // silencio tenía que dejar de ser ambiguo: si no llega, algo se rompió.
+        console.log('[nightly-audit] sin facturas pendientes de auditar — aviso igual a Slack');
+        await notifyAuditSummary({
+            results: [], ok: 0, mismatch: 0, notFound: 0, errors: 0,
+            durationMs: Date.now() - startedAt,
+        });
         return;
     }
 
