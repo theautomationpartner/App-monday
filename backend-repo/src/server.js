@@ -1626,6 +1626,12 @@ async function afipConsultarComprobante({ token, sign, cuit, pointOfSale, cbteTy
     };
 }
 
+// ¿El comprobante que AFIP devolvió es realmente el de esta emisión? El
+// criterio vive en su propio módulo porque lo usan los DOS caminos que pueden
+// adoptar un CAE ajeno (Fase 1 y el cron de reconciliación) y porque así se
+// puede probar sin levantar el servidor. Ver recoveryGuard.js.
+const { motivosDeComprobanteAjeno } = require('./modules/recoveryGuard');
+
 // Tipos de comprobante AFIP: A=1, B=6, C=11
 const INVOICE_TYPE_CONFIG = {
     A: { cbteType: 1,  ivaRate: 0.21, requiresCuit: true  },
@@ -1865,30 +1871,21 @@ async function afipIssueFacturaLocked({
                 // ── Anti-fantasma (incidente Polifroni NC 0007-00000002) ──────
                 // Validar que el comprobante recuperado es REALMENTE el de esta
                 // emisión y no uno que otra emisión registró con el mismo número.
-                // Solo invalidamos con EVIDENCIA POSITIVA de mismatch (importe o
-                // factura asociada que difieren); si no podemos determinarlo, NO
-                // bloqueamos (evita falsos positivos en recoveries legítimos).
-                const importeKnown = recovered.imp_total != null
-                    && Number(recovered.imp_total) > 0 && totalAmountForCheck > 0;
-                const importeMismatch = importeKnown
-                    && Math.abs(Number(recovered.imp_total) - totalAmountForCheck) > 0.01;
+                // El criterio vive en motivosDeComprobanteAjeno, compartido con
+                // el cron de reconciliación: son los dos lugares que adoptan un
+                // CAE ajeno si se equivocan, y tienen que decidir igual.
+                const motivosAjeno = motivosDeComprobanteAjeno({
+                    recovered,
+                    expectedTotal:     totalAmountForCheck,
+                    expectedDocNro:    draft.docNro,
+                    expectedCbtesAsoc: cbtesAsoc,
+                });
 
-                let cbtesAsocMismatch = false;
-                if (Array.isArray(cbtesAsoc) && cbtesAsoc.length > 0
-                    && Array.isArray(recovered.cbtes_asoc) && recovered.cbtes_asoc.length > 0) {
-                    // NC/ND: el comprobante recuperado debe anular la MISMA factura.
-                    const want = cbtesAsoc.map(c => `${Number(c.tipo)}|${Number(c.ptoVta)}|${Number(c.nro)}`).sort();
-                    const got  = recovered.cbtes_asoc.map(c => `${Number(c.tipo)}|${Number(c.pto_vta)}|${Number(c.nro)}`).sort();
-                    cbtesAsocMismatch = want.length !== got.length || want.some((w, i) => w !== got[i]);
-                }
-
-                if (importeMismatch || cbtesAsocMismatch) {
+                if (motivosAjeno.length > 0) {
                     const detail =
                         `[RECOVERY_MISMATCH] cbteNro=${previousCbteNro} (PV ${recoveryPtoVta}, tipo ${recoveryCbteType}) ` +
-                        `ya existe en AFIP con CAE=${recovered.cae} pero NO corresponde a esta emisión ` +
-                        `(importeMismatch=${importeMismatch}, cbtesAsocMismatch=${cbtesAsocMismatch}). ` +
-                        `Esperado total=${totalAmountForCheck} cbtesAsoc=${JSON.stringify(cbtesAsoc || [])}; ` +
-                        `AFIP total=${recovered.imp_total} cbtesAsoc=${JSON.stringify(recovered.cbtes_asoc || [])}. ` +
+                        `ya existe en AFIP con CAE=${recovered.cae} pero NO corresponde a esta emisión: ` +
+                        `${motivosAjeno.join(' | ')}. ` +
                         `Probable número pisado por otra emisión — NO se reutiliza, se aborta para revisión manual.`;
                     console.error(`[wsfe] ${detail}`);
                     throw new Error(detail);
@@ -2141,12 +2138,31 @@ async function afipIssueFacturaLocked({
     if (probed && probeRecovered) {
         const totalAmountForCheck = Number(draft.importe_total || 0);
         const expectedCbteNro = nextVoucher;
+
+        // Anti-fantasma, igual que la Fase 1 y el cron: el número que probamos
+        // puede tenerlo otra emisión. Acá es menos probable (probamos el número
+        // que acabamos de mandar, segundos después) pero la consecuencia de
+        // equivocarse es la misma — adoptar el CAE de la factura de otro — así
+        // que la decisión se toma con el mismo criterio y no con una copia.
+        const motivosAjeno = motivosDeComprobanteAjeno({
+            recovered:         probeRecovered,
+            expectedTotal:     totalAmountForCheck,
+            expectedDocNro:    draft.docNro,
+            expectedCbtesAsoc: cbtesAsoc,
+        });
+        if (motivosAjeno.length > 0) {
+            const detail =
+                `[RECOVERY_MISMATCH] cbteNro=${expectedCbteNro} (PV ${pointOfSale}, tipo ${cbteType}) ` +
+                `ya existe en AFIP con CAE=${probeRecovered.cae} pero NO corresponde a esta emisión: ` +
+                `${motivosAjeno.join(' | ')}. ` +
+                `Probable número pisado por otra emisión — NO se reutiliza, se aborta para revisión manual.`;
+            console.error(`[wsfe] ${detail}`);
+            throw new Error(detail);
+        }
+
         const phase2Mismatches = [];
         if (probeRecovered.cbte_nro && probeRecovered.cbte_nro !== expectedCbteNro) {
             phase2Mismatches.push(`cbteNro: esperado=${expectedCbteNro} vs probe=${probeRecovered.cbte_nro}`);
-        }
-        if (totalAmountForCheck > 0 && Math.abs((probeRecovered.imp_total || 0) - totalAmountForCheck) > 0.01) {
-            phase2Mismatches.push(`importe: esperado=${totalAmountForCheck} vs probe=${probeRecovered.imp_total}`);
         }
         const baseObs = '[recovery_callwsfe_retry] AFIP confirmó el comprobante vía FECompConsultar tras fallo de red en el primer SOAP — sin re-emisión.';
         const obs = phase2Mismatches.length > 0
@@ -12588,12 +12604,94 @@ async function reconcileSingleEmission(row) {
     // attempted_cbte_tipo.
     const letraFromInvoiceType = ['A', 'B', 'C'].includes(row.invoice_type)
         ? row.invoice_type : null;
+    const expectedImporteCron = Number(row.draft_json?.importe_total || 0);
+
+    // ── Anti-fantasma: ¿este comprobante es nuestro? ─────────────────────────
+    // Mismo criterio que la Fase 1. Hasta acá el cron adoptaba el CAE de lo que
+    // encontrara en el número reservado, y con eso alcanzó para que la Factura A
+    // 0007-00000177 de un cliente quedara marcada como emitida con el CAE de la
+    // factura de OTRO receptor — mientras la suya no se emitió nunca.
+    //
+    // Lo peor del caso viejo es que el mismatch SÍ se detectaba (quedaba escrito
+    // "[FASE2_MISMATCH] importe: esperado=259163.85 vs afip=1069942.5") y la
+    // emisión se marcaba exitosa igual. Detectar sin consecuencia no sirve: acá
+    // el hallazgo corta el recovery.
+    // El draft de una NC/ND guarda la factura que anula como
+    // `comprobante_asociado` (letra + PV + número), no como el `cbtesAsoc` que
+    // se le manda a AFIP. Hay que traducirlo o el chequeo no compara nada.
+    // Factura E queda afuera a propósito: su letra no está en INVOICE_TYPE_CONFIG
+    // y preferimos no comparar antes que comparar mal.
+    const compAsoc = row.draft_json?.comprobante_asociado;
+    const cbtesAsocEsperados = (compAsoc && Number(compAsoc.numero) > 0
+        && INVOICE_TYPE_CONFIG[compAsoc.letra])
+        ? [{
+            tipo:   INVOICE_TYPE_CONFIG[compAsoc.letra].cbteType,
+            ptoVta: compAsoc.punto_venta,
+            nro:    compAsoc.numero,
+          }]
+        : null;
+
+    const motivosAjeno = motivosDeComprobanteAjeno({
+        recovered,
+        expectedTotal:     expectedImporteCron,
+        expectedDocNro:    row.draft_json?.docNro,
+        expectedCbtesAsoc: cbtesAsocEsperados,
+    });
+
+    if (motivosAjeno.length > 0) {
+        const detalle =
+            `[RECOVERY_MISMATCH] El N° ${recovered.cbte_nro} (PV ${row.attempted_pto_vta}) existe en AFIP ` +
+            `con CAE=${recovered.cae} pero NO es el de esta emisión: ${motivosAjeno.join(' | ')}. ` +
+            `Otra emisión se quedó con el número. NO se adopta ese CAE: el comprobante de este ítem ` +
+            `no está emitido y hay que emitirlo de nuevo.`;
+        console.error(`${tag} ${detalle}`);
+
+        // status='error' para que el usuario y el audit board vean la verdad.
+        // El error_message además saca la row de la cola del cron (ver el SELECT
+        // de reconcileStuckEmissions): sin eso volvería cada 5 minutos a
+        // encontrar el mismo comprobante ajeno y a alertar de nuevo, 100 veces.
+        try {
+            await db.query(
+                `UPDATE invoice_emissions
+                 SET status='error', error_message=$2, updated_at=CURRENT_TIMESTAMP
+                 WHERE id=$1`,
+                [row.id, detalle]
+            );
+        } catch (dbErr) {
+            console.error(`${tag} error marcando RECOVERY_MISMATCH:`, dbErr.message);
+        }
+
+        notifySlackSystemError({
+            accountId: company?.monday_account_id || null,
+            clientItemName: row.draft_json?.receptor_nombre || `item ${row.item_id}`,
+            errorMessage: `${detalle} Item ${row.item_id}, invoice_emissions.id=${row.id}`,
+            auditItemId: null,
+        }).catch((e) => console.warn(`${tag} Slack alert falló:`, e.message));
+
+        if (company?.monday_account_id) {
+            logEmissionToAuditBoard({
+                accountId: String(company.monday_account_id),
+                success: false,
+                clientItemId: row.item_id,
+                sourceItemName: null,
+                draft: row.draft_json || null,
+                afipResult: null,
+                tipo: null,
+                error: new Error(detalle),
+                durationMs: null,
+                company,
+                esNotaCredito: row.invoice_type === 'NC',
+                esNotaDebito: row.invoice_type === 'ND',
+            }).catch((e) => console.warn(`${tag} audit-log mismatch falló:`, e.message));
+        }
+        return;
+    }
+
     // 5. Construir afipResult equivalente al que devuelve afipIssueFactura
     // B1: Fase 2 verify para recovery via cron — comparamos cbteNro/importe
     // de lo que AFIP nos devuelve contra lo que esperabamos enviar (draft).
     // Si hay mismatch tag-eamos [FASE2_MISMATCH] en observacion para que la
     // alerta de Slack se dispare igual que en una emision con verificacion.
-    const expectedImporteCron = Number(row.draft_json?.importe_total || 0);
     const cronPhase2Mismatches = [];
     if (row.attempted_cbte_nro && Number(recovered.cbte_nro) !== Number(row.attempted_cbte_nro)) {
         cronPhase2Mismatches.push(`cbteNro: esperado=${row.attempted_cbte_nro} vs afip=${recovered.cbte_nro}`);
@@ -12824,6 +12922,10 @@ async function reconcileStuckEmissions() {
             FROM invoice_emissions
             WHERE status != 'success'
               AND attempted_cbte_nro IS NOT NULL
+              -- Ya sabemos que el número reservado se lo quedó otra emisión:
+              -- volver a preguntarle a AFIP da siempre lo mismo, y cada vuelta
+              -- son una alerta de Slack y una escritura al audit board de más.
+              AND COALESCE(error_message, '') NOT LIKE '[RECOVERY_MISMATCH]%'
               AND updated_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes'
               AND (last_reconciliation_at IS NULL
                    OR last_reconciliation_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes')
