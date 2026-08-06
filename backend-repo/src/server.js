@@ -6591,6 +6591,17 @@ async function comprobanteHandler(req, res) {
                                 : 'Consultá con el titular de ese CUIT — el problema está en su propio registro de AFIP, no se resuelve reintentando la emisión.';
                             throw new Error(`${padronErr.message} (doc ${receptorDocClean}). ${hint}`);
                         }
+                        // Sin errorType el padrón no contestó (red, WSAA, 5xx sin
+                        // fault) y no sabemos si el CUIT existe. Pero si además NO
+                        // pasa el dígito verificador, eso lo sabemos sin AFIP: ese
+                        // número no puede ser un CUIT, y decirle "esperá a que AFIP
+                        // se recupere" lo deja reintentando para siempre.
+                        if (afipPadron.cuitDvValido(receptorDocClean) === false) {
+                            throw new Error(
+                                `El CUIT del receptor (doc ${receptorDocClean}) está mal escrito: no pasa el dígito verificador de AFIP. ` +
+                                `Corregilo en la columna del item. Reintentar sin cambiarlo va a dar lo mismo.`
+                            );
+                        }
                         throw new Error(
                             `No se pudo consultar el padrón de AFIP para el receptor (doc ${receptorDocClean}). ` +
                             `AFIP puede estar caído o lento. Reintentá la emisión en unos minutos.`

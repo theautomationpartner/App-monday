@@ -437,6 +437,36 @@ function dniToPossibleCuits(dni) {
 }
 
 /**
+ * ¿El CUIT pasa el dígito verificador de AFIP?
+ *
+ * Se calcula acá, sin preguntarle a nadie. Eso es todo el punto: cuando el
+ * padrón de AFIP no responde no podemos saber si un CUIT existe, pero SÍ
+ * podemos saber si está mal escrito. Sin esto, a un cliente con un CUIT mal
+ * tipeado le decimos "AFIP está caído, reintentá" — y reintenta para siempre.
+ * Pasó: 9 intentos en dos días, y terminó facturando desde el portal de AFIP.
+ *
+ * Devuelve `true`, `false`, o **`null` cuando no se puede opinar**:
+ *   - no son 11 dígitos (un DNI no tiene dígito verificador)
+ *   - resto 1, el caso donde el dígito daría 10: AFIP ahí cambia el prefijo
+ *     (20→23) en vez de usar ese dígito, así que la cuenta simple no alcanza
+ *     para condenarlo.
+ *
+ * `null` nunca se usa para rechazar nada. Solo un `false` — que significa
+ * "este número no puede ser un CUIT de AFIP" — habilita un mensaje distinto.
+ */
+function cuitDvValido(cuit) {
+    const s = String(cuit || '').replace(/\D/g, '');
+    if (s.length !== 11) return null;
+    const mult = [5, 4, 3, 2, 7, 6, 5, 4, 3, 2];
+    let suma = 0;
+    for (let i = 0; i < 10; i++) suma += parseInt(s[i], 10) * mult[i];
+    const resto = suma % 11;
+    if (resto === 1) return null;
+    const dv = resto === 0 ? 0 : 11 - resto;
+    return dv === parseInt(s[10], 10);
+}
+
+/**
  * Dado un DNI o CUIT, intenta obtener la condición fiscal.
  * Si es DNI, prueba cada CUIT posible contra el padrón hasta encontrar uno válido.
  */
@@ -511,4 +541,4 @@ async function getCondicionFiscalByDoc({ documento, certPem, keyPem }) {
     };
 }
 
-module.exports = { getCondicionFiscal, getCondicionFiscalByDoc, dniToPossibleCuits };
+module.exports = { getCondicionFiscal, getCondicionFiscalByDoc, dniToPossibleCuits, cuitDvValido };

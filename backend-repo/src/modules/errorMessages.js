@@ -402,6 +402,24 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Cada item corresponde a <b>un solo comprobante</b>. Para emitir otro — o la Nota de Crédito de esta factura — creá un <b>item nuevo</b> en el tablero. La NC referencia la factura por su CAE.',
         },
         {
+            // El dígito verificador se calcula sin preguntarle a AFIP, así que
+            // este error aparece incluso con el padrón caído — que es justo
+            // cuando hace falta. Antes, ese caso recibía "AFIP puede estar
+            // caído, reintentá": un cliente reintentó 9 veces en dos días y
+            // terminó facturando desde el portal de AFIP.
+            //
+            // OJO con el orden: va ARRIBA de las reglas de padrón. Su texto
+            // dice "de AFIP" y la genérica de padrón se lo comería.
+            match: /d[ií]gito verificador|check digit/i,
+            title: 'Ese CUIT está mal escrito',
+            accion: 'Corregí el CUIT del cliente en ${columna_cuit}: son 11 dígitos, sin puntos ni guiones. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            // El número va acá adentro y no citando el texto crudo del sistema:
+            // ese texto está en castellano y en un tablero en inglés se filtraba.
+            detalle: 'El que trae el item es <b>${doc_receptor}</b>, y ese número no puede ser un CUIT de AFIP: lo comprobamos con la misma cuenta que usa AFIP y no da.\nSuele ser un dígito cambiado, o un DNI al que se le agregó el 20 adelante y un número atrás a mano.\nSi la venta es a consumidor final sin identificar, dejá ${columna_cuit} vacía y se emite igual.',
+            solucion: 'Corregí el CUIT del cliente en el item: son 11 dígitos, sin puntos ni guiones. Ese número no puede ser un CUIT de AFIP. Si la venta es a consumidor final sin identificar, dejá la columna vacía y se emite igual.',
+        },
+        {
             match: /cuit.*inválido|cuit.*invalido|cuit.*vac|receptor_cuit.*null/i,
             title: 'CUIT / DNI del receptor inválido',
             accion: "Completá ${columna_cuit} con un <b>CUIT de 11 dígitos</b> o un <b>DNI de 7 u 8</b>, sin guiones ni espacios. Después volvé a poner ${columna_estado} en \"${estado_disparo}\".",
@@ -1154,6 +1172,13 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             detalle: "If the sale is to an unidentified final consumer, leave that column <b>empty</b> and it will go through.",
             title: 'Invalid recipient CUIT / DNI',
             solucion: 'Fill in the <b>Recipient CUIT / DNI</b> column of the item with an <b>11-digit CUIT</b> (e.g. 20327446348) or a <b>7 or 8-digit DNI</b>. No dashes or spaces. If the sale is to an unidentified final consumer, leave the column <b>empty</b>.',
+        },
+        'Ese CUIT está mal escrito': {
+            title: 'That CUIT is mistyped',
+            accion: "Fix the client's CUIT in ${columna_cuit}: it is 11 digits, no dots or dashes. Then set ${columna_estado} back to \"${estado_disparo}\".",
+            estado: 'Nothing was issued.',
+            detalle: "The one on the item is <b>${doc_receptor}</b>, and that number cannot be an AFIP CUIT: we checked it with the same calculation AFIP uses and it doesn't add up.\nIt is usually one changed digit, or a DNI with a 20 added in front and a digit at the end by hand.\nIf the sale is to an unidentified final consumer, leave ${columna_cuit} empty and it will go through.",
+            solucion: "Fix the client's CUIT in the item: it is 11 digits, no dots or dashes. That number cannot be an AFIP CUIT. If the sale is to an unidentified final consumer, leave the column empty and it will go through.",
         },
         'Ese CUIT no existe en AFIP': {
             title: "That CUIT doesn't exist in AFIP",

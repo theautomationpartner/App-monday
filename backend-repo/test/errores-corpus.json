@@ -1315,5 +1315,10 @@
   "mensaje": "Connection terminated unexpectedly",
   "idioma": "en",
   "esperado": "❌ Set the status column back to \"Create Voucher\". It was a network glitch, not a problem with your data."
+ },
+ {
+  "origen": "server.js:6601",
+  "mensaje": "El CUIT del receptor (doc 20215005962) está mal escrito: no pasa el dígito verificador de AFIP. Corregilo en la columna del item. Reintentar sin cambiarlo va a dar lo mismo.",
+  "esperado": "❌ Corregí el CUIT del cliente en la columna del CUIT: son 11 dígitos, sin puntos ni guiones. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  }
 ]
