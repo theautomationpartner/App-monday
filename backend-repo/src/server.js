@@ -1000,7 +1000,7 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping, language
     }
 
     if (!subitems || subitems.length === 0) {
-        errors.push(L('The item has no subitems (at least one is required)', 'El item no tiene subitems (al menos uno es obligatorio)'));
+        errors.push(L('The item has no subitems (at least one is required)', 'El item no tiene subítems (al menos uno es obligatorio)'));
         return { ok: false, errors };
     }
 
@@ -1071,15 +1071,15 @@ function validateItemDataCompleteness({ mainColumns, subitems, mapping, language
     if (hayServicio) {
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_desde)) {
             const lbl = getColumnLabel(mainColumns, mapping.fecha_servicio_desde, L('Service Date From', 'Fecha Servicio Desde'));
-            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subítems de servicio)`));
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_servicio_hasta)) {
             const lbl = getColumnLabel(mainColumns, mapping.fecha_servicio_hasta, L('Service Date To', 'Fecha Servicio Hasta'));
-            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subítems de servicio)`));
         }
         if (!getColumnTextById(mainColumns, mapping.fecha_vto_pago)) {
             const lbl = getColumnLabel(mainColumns, mapping.fecha_vto_pago, L('Payment Due Date', 'Fecha Vto. Pago'));
-            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subitems de servicio)`));
+            errors.push(L(`Item: missing column ${lbl} (required when there are service subitems)`, `Item: falta la columna ${lbl} (obligatoria cuando hay subítems de servicio)`));
         }
     }
 

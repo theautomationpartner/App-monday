@@ -31,7 +31,7 @@ const ARCHIVOS = [
 
 // Palabras que existen en castellano CON acento y aparecen seguido sin él.
 // Solo se busca dentro de textos que van al usuario, no en comentarios ni logs.
-const SIN_ACENTO = /\b(emision|Emision|recuperacion|Recuperacion|automatica|Automatica|recupero|numero(?!s?_)|Numero|comprobacion|informacion|configuracion|Configuracion|facturacion|Facturacion|codigo|Codigo|credito|Credito|debito|Debito|electronica|Electronica|dias|periodo|ultimo|Ultimo|mas\b)\b/;
+const SIN_ACENTO = /\b(emision|Emision|recuperacion|Recuperacion|automatica|Automatica|recupero|numero(?!s?_)|Numero|comprobacion|informacion|configuracion|Configuracion|facturacion|Facturacion|codigo|Codigo|credito|Credito|debito|Debito|electronica|Electronica|dias|periodo|ultimo|Ultimo|subitems?|Subitems?|alicuota|Alicuota|mas\b)\b/;
 
 // Jerga de monday que el usuario no conoce.
 const JERGA = /\brecipe\b|\breceta\b/i;
@@ -46,19 +46,43 @@ for (const rel of ARCHIVOS) {
 
     for (let i = 0; i < lineas.length; i++) {
         const l = lineas[i];
-        // Solo líneas que forman parte de un texto para el usuario: las que están
-        // dentro de un template y llevan HTML o emoji, o las que se pasan como body.
-        const esTextoUsuario = /(<br\/>|<b>|✅|⏳|⚠️|🛠|🎉|❌)/.test(l) && /[`'"]/.test(l);
+        // Líneas que forman parte de un texto para el usuario. Son tres formas:
+        //
+        //   1. las que llevan HTML o emoji (los updates de éxito y aviso)
+        //   2. las que se lanzan como error            → throw new Error('…')
+        //   3. las bilingües y las de validación       → L('en', 'es') · errors.push('…')
+        //
+        // La 3 se agregó después de una prueba en vivo: el item sin subítems le
+        // mostró al usuario "El item no tiene subitems", sin tilde, y este banco
+        // no lo vio porque esa línea no lleva ni HTML ni emoji.
+        const esTextoUsuario =
+            (/(<br\/>|<b>|✅|⏳|⚠️|🛠|🎉|❌)/.test(l) && /[`'"]/.test(l))
+            || /throw new Error\(\s*[`'"]/.test(l)
+            || /\bL\(\s*['"`]/.test(l)
+            || /\.push\(\s*L?\(?\s*['"`]/.test(l);
         if (!esTextoUsuario) continue;
         // Descartar comentarios del código
         if (/^\s*(\/\/|\*)/.test(l)) continue;
         revisados++;
 
-        const texto = l.replace(/<[^>]*>/g, ' ').replace(/\$\{[^}]*\}/g, ' ');
-        const m1 = texto.match(SIN_ACENTO);
-        if (m1) problemas.push({ rel, linea: i + 1, tipo: 'sin acento', que: m1[0], l: l.trim().slice(0, 88) });
-        const m2 = texto.match(JERGA);
-        if (m2) problemas.push({ rel, linea: i + 1, tipo: 'jerga de monday', que: m2[0], l: l.trim().slice(0, 88) });
+        // Mirar cada string por separado, no la línea entera. Es necesario por el
+        // helper bilingüe L('inglés', 'español'): en el lado inglés "subitems" y
+        // "emission" están BIEN escritos, y revisar la línea completa los marcaba
+        // como errores de acentuación. Solo se revisan los strings que parecen
+        // castellano — los que ya traen una tilde, una ñ, o una palabra que en
+        // inglés no existe.
+        // "item" y "column" quedan afuera a propósito: aparecen igual en los dos
+        // idiomas y hacían pasar por castellano a los strings en inglés.
+        const ES_CASTELLANO = /[áéíóúñ¿¡]|\b(el|la|los|las|del|que|para|con|una|este|esta|tenés|poné|revisá|volvé|falta|obligatori[ao]|cuando|hay)\b/i;
+        const strings = (l.match(/[`'"]([^`'"]{8,})[`'"]/g) || []).map(s => s.slice(1, -1));
+        for (const s of strings) {
+            const texto = s.replace(/<[^>]*>/g, ' ').replace(/\$\{[^}]*\}/g, ' ');
+            if (!ES_CASTELLANO.test(texto)) continue;   // es el lado inglés → no aplica
+            const m1 = texto.match(SIN_ACENTO);
+            if (m1) problemas.push({ rel, linea: i + 1, tipo: 'sin acento', que: m1[0], l: s.trim().slice(0, 88) });
+            const m2 = texto.match(JERGA);
+            if (m2) problemas.push({ rel, linea: i + 1, tipo: 'jerga de monday', que: m2[0], l: s.trim().slice(0, 88) });
+        }
     }
 }
 
