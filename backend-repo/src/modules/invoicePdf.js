@@ -37,6 +37,28 @@ function fmtCuit(c) {
     return s.length === 11 ? `${s.slice(0, 2)}-${s.slice(2, 10)}-${s.slice(10)}` : (c || '');
 }
 
+/**
+ * Cómo se llama el documento del receptor en el encabezado del comprobante.
+ *
+ * Decía siempre "CUIT". A 17 comprobantes ya emitidos les quedó impreso
+ * "CUIT: 12345678" arriba de un DNI — en un papel fiscal que el cliente le
+ * manda a su comprador. AFIP identifica al receptor con un tipo de documento
+ * (80 CUIT, 86 CUIL, 96 DNI) y el título tiene que seguirlo.
+ *
+ * Si el tipo no viene, se deduce por el largo: 7 u 8 dígitos es un DNI, 11 es
+ * un CUIT. Ante la duda queda "CUIT", que es el caso de lejos más común y el
+ * comportamiento de siempre.
+ */
+function etiquetaDocReceptor(draft) {
+    const tipo = Number(draft?.docTipo);
+    if (tipo === 96) return 'DNI: ';
+    if (tipo === 86) return 'CUIL: ';
+    if (tipo === 80) return 'CUIT: ';
+    const digitos = String(draft?.receptor_cuit_o_dni || '').replace(/\D/g, '').length;
+    if (digitos === 7 || digitos === 8) return 'DNI: ';
+    return 'CUIT: ';
+}
+
 function fmtMoney(n) {
     return Number(n || 0).toLocaleString('es-AR', {
         minimumFractionDigits: 2,
@@ -645,7 +667,7 @@ async function generateFacturaPdfBuffer({ company, draft, afipResult, language, 
             const halfW = W / 2;
             let cy = y + 5;
             doc.fontSize(7.5);
-            doc.font('Helvetica-Bold').text('CUIT: ', colLeft + 8, cy, { continued: true });
+            doc.font('Helvetica-Bold').text(etiquetaDocReceptor(draft), colLeft + 8, cy, { continued: true });
             doc.font('Helvetica').text(fmtCuit(draft.receptor_cuit_o_dni) || '-');
             doc.font('Helvetica-Bold').text(L.apellidoNombre, colLeft + halfW + 8, cy, { continued: true });
             const recNombreRaw = (draft.receptor_nombre || '').trim();
@@ -1674,4 +1696,5 @@ module.exports = {
     generateFacturaEPdfBuffer,
     calcularDesgloseIva,
     normalizeAlicuota,
+    etiquetaDocReceptor,
 };
