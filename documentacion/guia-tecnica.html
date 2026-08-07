@@ -59,6 +59,18 @@
   .num{background:var(--tinta); color:#fff; width:21px; height:21px; border-radius:50%;
        display:inline-flex; align-items:center; justify-content:center; font-size:9pt;
        font-weight:700; margin-right:7px; vertical-align:middle}
+  .ficha{border:1px solid var(--linea); border-radius:7px; margin:0 0 18px;
+         page-break-inside:avoid; overflow:hidden}
+  .ficha h4{margin:0; padding:8px 14px; background:#f4f6f8; font-size:11pt;
+            border-bottom:1px solid var(--linea)}
+  .ficha .cuerpo{padding:4px 14px 10px}
+  .ficha figure{margin:11px 0 4px}
+  .fila{display:flex; gap:13px; padding:7px 0; border-top:1px solid #eff1f4}
+  .fila:first-child{border-top:0}
+  .fila .rot{flex:0 0 84px; font-weight:700; font-size:8pt; letter-spacing:.6px;
+             text-transform:uppercase; color:var(--suave); padding-top:2.5px}
+  .fila .txt{flex:1}
+  .fila.no .rot, .fila.no .txt{color:var(--rojo)}
   .salto{page-break-before:always}
   h2,h3{page-break-after:avoid} pre,table,.caja{page-break-inside:avoid}
   @page{size:A4; margin:15mm 13mm}
@@ -418,156 +430,146 @@ devs.</p>
 <figure>
   <img src="capturas/slack-canal.png" alt="Canal de Slack con las alertas"
        onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El canal #make-errores- con alertas reales.&lt;br&gt;Guardala como &lt;code&gt;capturas/slack-canal.png&lt;/code&gt;&lt;/div&gt;'">
-  <figcaption>El canal donde llegan todas las alertas del sistema.</figcaption>
+  <figcaption>Ojo: a este canal <b>también caen los errores de Make y de n8n</b> de otros
+  proyectos de TAP. Los de esta app son los que firma <b>"TAP Facturación Alertas"</b>.</figcaption>
 </figure>
 
-<h3>Traducción rápida de lo que llega</h3>
+<h3>Qué llega al canal, y qué hacer</h3>
 
 <table>
-  <tr><th style="width:38%">Lo que ves</th><th>Qué es</th><th style="width:22%">¿Hacés algo?</th></tr>
+  <tr><th style="width:37%">Lo que ves</th><th>Qué es</th><th style="width:24%">¿Hacés algo?</th></tr>
   <tr>
     <td>✅ <b>Auditoria nocturna AFIP</b></td>
-    <td>La <b>señal de vida diaria</b>. Llega todas las noches a las 3 AM, incluso si no hubo nada que auditar</td>
+    <td>La señal de vida diaria, a las 3 AM</td>
     <td>No. <b>Que NO llegue sí es un problema</b></td>
   </tr>
   <tr>
     <td>🚨 <b>Error sistema en facturación</b></td>
     <td>Un mismo título tapa <b>6 cosas distintas</b></td>
-    <td>Leé la línea <code>Error:</code></td>
+    <td>Leé la línea <code>Error:</code> ↓</td>
   </tr>
-  <tr><td>🚨 <b>DISCREPANCIA AFIP</b></td><td>lo que registramos no coincide con AFIP</td><td>Sí, el mismo día</td></tr>
+  <tr><td>🚨 <b>DISCREPANCIA AFIP</b></td><td>lo nuestro no coincide con AFIP</td><td>Sí, el mismo día → <b>ficha C</b></td></tr>
   <tr><td>🟡 <b>Conciliación AFIP</b></td><td>AFIP tiene comprobantes que nosotros no</td><td>Preguntar, no arreglar</td></tr>
-  <tr><td>⚠️ <b>Condición de IVA no reconocida</b></td><td>la factura <b>salió bien</b></td><td>No</td></tr>
 </table>
-
-<figure>
-  <img src="capturas/error-g-conciliacion.png" alt="Alerta de conciliación AFIP"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta 🟡 Conciliación AFIP.&lt;br&gt;&lt;code&gt;capturas/error-g-conciliacion.png&lt;/code&gt;&lt;/div&gt;'">
-  <figcaption><b>🟡 Conciliación AFIP.</b> Casi siempre es que alguien emitió a mano desde
-  el portal de AFIP, cosa que es perfectamente legítima: la app no puede saberlo y avisa.
-  <b>Se pregunta antes de tocar nada</b> — la otra explicación posible es un duplicado, y
-  eso lo resuelve Pamela con una nota de crédito, no un dev.</figcaption>
-</figure>
-
-<div class="dato">
-  <span class="etq">Sobre las imágenes de alertas de este documento</span>
-  <p>Las alertas rojas aparecen cada varios meses, así que <b>no se pudo esperar a que
-  pasaran para fotografiarlas</b>, ni provocarlas a propósito sin romper una emisión real.
-  Están <b>reconstruidas</b>: el texto y el formato salen literal de las plantillas del
-  código, y los datos —cliente, importes, números— son inventados.</p>
-  <p style="margin-top:8px">Se regeneran con
-  <code>node documentacion/hacer-capturas-slack.js</code>. Si alguien cambia el formato de
-  una alerta, hay que cambiarlo también ahí.</p>
-</div>
 
 <div class="cuidado">
   <span class="etq">Lo más importante de esta página</span>
   <p>El título rojo <b>"Error sistema en facturación" no dice nada por sí solo</b>: tapa
-  seis incidentes con acciones opuestas — uno es "esperá" y otro es "esto es plata,
-  pará todo". <b>Hay que abrir la línea que empieza con <code>Error:</code></b>.</p>
+  seis incidentes con acciones opuestas — uno es "esperá" y otro es "pará todo, esto es
+  plata". <b>Hay que abrir la línea que empieza con <code>Error:</code></b> y buscarla acá:</p>
 </div>
 
 <table>
-  <tr><th style="width:34%">Si <code>Error:</code> empieza con…</th><th>Qué significa</th><th style="width:80px">Gravedad</th></tr>
-  <tr>
-    <td><code>[RECOVERY_MISMATCH]</code></td>
-    <td><b>La factura del cliente NO se emitió</b>, y el sistema no la va a reintentar nunca más</td>
-    <td><span class="sev s-alta">ALTA</span></td>
-  </tr>
-  <tr><td><code>[ABANDONED]</code></td><td>reservó número y AFIP dice que no existe</td><td><span class="sev s-alta">ALTA</span></td></tr>
+  <tr><th style="width:36%">Si <code>Error:</code> empieza con…</th><th>Es</th><th style="width:74px">Gravedad</th></tr>
+  <tr><td><code>[RECOVERY_MISMATCH]</code></td><td><b>Ficha A</b> — la factura no se emitió, y no se reintenta más</td><td><span class="sev s-alta">ALTA</span></td></tr>
+  <tr><td><code>[ABANDONED]</code></td><td><b>Ficha B</b> — reservó número y AFIP dice que no existe</td><td><span class="sev s-alta">ALTA</span></td></tr>
   <tr><td><code>Esta es la instancia de PRUEBA</code></td><td>un cliente real cayó en staging y está esperando</td><td><span class="sev s-alta">ALTA</span></td></tr>
-  <tr><td><code>503</code> · <code>ETIMEDOUT</code> · <code>ECONNRESET</code></td><td>se cayó AFIP. No es nuestro</td><td><span class="sev s-media">MEDIA</span></td></tr>
+  <tr><td><code>503</code> · <code>ETIMEDOUT</code> · <code>ECONNRESET</code></td><td><b>Ficha D</b> — se cayó AFIP. No es nuestro</td><td><span class="sev s-media">MEDIA</span></td></tr>
   <tr><td><code>[FASE2_MISMATCH]</code></td><td>la factura <b>sí</b> tiene CAE. Informativo</td><td><span class="sev s-baja">BAJA</span></td></tr>
 </table>
 
-<h3 class="salto">Los seis casos más probables</h3>
-
-<h4><span class="sev s-alta">ALTA</span> &nbsp; A · El número se lo llevó otra emisión</h4>
-<p>Llega como <code>[RECOVERY_MISMATCH]</code>. El número que un ítem tenía reservado ya
-existe en AFIP <b>pero es de otro comprobante</b>: esa factura <b>no se emitió</b>.</p>
-<div class="peligro">
-  <span class="etq">Y hay una segunda parte, peor</span>
-  <p>El sistema sacó esa fila de la cola de reintentos <b>para siempre</b>. Si nadie actúa,
-  la venta queda sin facturar y <b>nadie se entera</b>.</p>
-</div>
-<p><b>Qué hacer:</b> nada técnico. Documentarlo y avisar a Pamela y a Martín el mismo día.
-<b>Nunca</b> re-emitir ni copiar el CAE que aparece en el mensaje.</p>
-
 <figure>
-  <img src="capturas/error-a-recovery-mismatch.png" alt="Alerta de RECOVERY_MISMATCH"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta de [RECOVERY_MISMATCH] en Slack.&lt;br&gt;&lt;code&gt;capturas/error-a-recovery-mismatch.png&lt;/code&gt;&lt;/div&gt;'">
+  <img src="capturas/error-g-conciliacion.png" alt="Alerta de conciliación AFIP"
+       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta Conciliación AFIP.&lt;br&gt;&lt;code&gt;capturas/error-g-conciliacion.png&lt;/code&gt;&lt;/div&gt;'">
+  <figcaption><b>🟡 Conciliación AFIP.</b> Casi siempre alguien emitió a mano desde el
+  portal de AFIP, cosa perfectamente legítima. La otra explicación es un duplicado, y eso
+  lo resuelve Pamela con una nota de crédito.</figcaption>
 </figure>
 
-<h4><span class="sev s-alta">ALTA</span> &nbsp; B · Reservó número y AFIP dice que no existe</h4>
-<p>Llega como <code>[ABANDONED]</code>. Durante 8 horas el sistema preguntó 100 veces y AFIP
-siempre dijo que no. Conclusión: <b>la factura realmente no se emitió</b> — esa es la buena
-noticia dentro de la mala.</p>
-<p><b>Ojo con el reloj:</b> la alerta llega 8 horas después del hecho, así que
-<b>el cliente ya se quejó antes</b> por otro lado. Son el mismo caso.</p>
-<p><b>Qué hacer:</b> re-emitir es técnicamente seguro, pero <b>lo autoriza Pamela</b> —
-puede haber cambiado la fecha, o el cliente puede haber facturado a mano mientras tanto.</p>
-
-<figure>
-  <img src="capturas/error-b-abandoned.png" alt="Alerta de ABANDONED"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta de [ABANDONED] en Slack.&lt;br&gt;&lt;code&gt;capturas/error-b-abandoned.png&lt;/code&gt;&lt;/div&gt;'">
-</figure>
-
-<h4><span class="sev s-alta">ALTA</span> &nbsp; C · La auditoría nocturna encontró una discrepancia</h4>
-<p>Lo que registramos no coincide con AFIP: importe, número o CAE.</p>
-<div class="cuidado">
-  <span class="etq">Trampa</span>
-  <p>Si el <b>mismo</b> problema aparece 3 noches seguidas, <b>el sistema deja de avisar</b>.
-  No se arregló: se calló.</p>
-</div>
-<p><b>Nunca</b> editar la fila para que "coincida" con AFIP: eso destruye la evidencia, y
-nuestro registro es lo que respalda el PDF que el cliente ya mandó.</p>
-
-<figure>
-  <img src="capturas/error-c-discrepancia.png" alt="Alerta de discrepancia de la auditoría"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta DISCREPANCIA AFIP de la auditoría nocturna.&lt;br&gt;&lt;code&gt;capturas/error-c-discrepancia.png&lt;/code&gt;&lt;/div&gt;'">
-</figure>
-
-<h4><span class="sev s-media">MEDIA</span> &nbsp; D · AFIP está caído <span style="font-weight:400;color:#5b6470">— lo más probable de todo</span></h4>
-<p>Varios ítems de <b>clientes distintos</b> fallan a la vez. <b>El error es de ellos.</b></p>
-<p>Se confirma en 5 segundos con una consulta que <b>no pide autenticación</b>: si
-<code>AppServer</code>, <code>DbServer</code> o <code>AuthServer</code> no dicen
-<code>OK</code>, es AFIP.</p>
-<p><b>Qué hacer:</b> avisar y esperar. <b>No</b> reiniciar, <b>no</b> revertir el deploy,
-<b>no</b> tocar certificados.</p>
-
-<figure>
-  <img src="capturas/error-d-afip-caido.png" alt="Error de AFIP caído en un ítem"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El comentario que ve el cliente cuando AFIP no responde.&lt;br&gt;&lt;code&gt;capturas/error-d-afip-caido.png&lt;/code&gt;&lt;/div&gt;'">
-  <figcaption>La app le aclara al cliente que el problema no es suyo.</figcaption>
-</figure>
-
-<h4><span class="sev s-media">MEDIA</span> &nbsp; E · Una emisión quedó colgada en "Creando"</h4>
-<p>El problema es benigno: la capa 3 lo revisa cada 5 minutos. <b>El peligro es la
-reacción.</b></p>
-<div class="peligro">
-  <span class="etq">Lo más importante de todo el documento</span>
-  <p>No re-dispares la receta. No cambies el estado a mano. No hagas un <code>UPDATE</code>.
-  <b>Cualquiera de esas cosas puede generar dos CAE para una sola venta</b>, y eso solo se
-  corrige con una nota de crédito.</p>
-  <p style="margin-top:8px"><b>Esperá 15 minutos y volvé a mirar.</b></p>
+<div class="dato">
+  <span class="etq">Sobre las imágenes de alertas de este documento</span>
+  <p>Las rojas aparecen cada varios meses: no se pudo esperar a que pasaran, ni provocarlas
+  sin romper una emisión real. Están <b>reconstruidas</b> — el texto sale literal de las
+  plantillas del código, los datos son inventados. Se regeneran con
+  <code>node documentacion/hacer-capturas-slack.js</code>.</p>
 </div>
 
-<figure>
-  <img src="capturas/error-e-processing.png" alt="Ítem trabado en Creando Comprobante"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem con la columna de estado en «Creando Comprobante».&lt;br&gt;&lt;code&gt;capturas/error-e-processing.png&lt;/code&gt;&lt;/div&gt;'">
-</figure>
+<h3>Las seis fichas</h3>
 
-<h4><span class="sev s-baja">BAJA</span> &nbsp; F · El cliente cargó algo mal <span style="font-weight:400;color:#5b6470">— el más frecuente</span></h4>
-<p>Falta o está mal un dato del ítem. <b>La app ya se lo explicó al cliente</b> en un
-comentario, con la causa y cómo arreglarlo, en su idioma. Hay 232 mensajes distintos y
-todos dicen qué hacer.</p>
-<p><b>Qué hacer:</b> copiarle al cliente lo que dice el comentario. Nada más.</p>
+<p>Cada una se lee en 20 segundos. <b>La línea roja es la que importa</b>: es lo que no
+tiene vuelta atrás.</p>
 
-<figure>
-  <img src="capturas/error-f-dato-mal.png" alt="Comentario de error en un ítem de monday"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem de monday con el comentario de error que deja la app.&lt;br&gt;&lt;code&gt;capturas/error-f-dato-mal.png&lt;/code&gt;&lt;/div&gt;'">
-  <figcaption>Así ve el cliente el error: con la causa y cómo resolverlo.</figcaption>
-</figure>
+<div class="ficha">
+  <h4><span class="sev s-alta">ALTA</span> &nbsp; A · El número se lo llevó otra emisión</h4>
+  <div class="cuerpo">
+  <figure>
+    <img src="capturas/error-a-recovery-mismatch.png" alt="Alerta de RECOVERY_MISMATCH"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta de [RECOVERY_MISMATCH] en Slack.&lt;br&gt;&lt;code&gt;capturas/error-a-recovery-mismatch.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+    <div class="fila"><div class="rot">Qué pasó</div><div class="txt">El número que este ítem tenía reservado ya lo usó otro comprobante. <b>La factura del cliente no existe.</b></div></div>
+    <div class="fila"><div class="rot">Y además</div><div class="txt">El sistema la sacó de los reintentos <b>para siempre</b>. Si nadie hace nada, la venta queda sin facturar y no vuelve a avisar.</div></div>
+    <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Nada técnico. Avisás <b>hoy</b> a Pamela y a Martín.</div></div>
+    <div class="fila no"><div class="rot">Nunca</div><div class="txt">Re-emitir por tu cuenta ni copiar el CAE del mensaje: <b>ese CAE es de otra factura</b>.</div></div>
+  </div>
+</div>
+
+<div class="ficha">
+  <h4><span class="sev s-alta">ALTA</span> &nbsp; B · Reservó número y AFIP dice que no existe</h4>
+  <div class="cuerpo">
+  <figure>
+    <img src="capturas/error-b-abandoned.png" alt="Alerta de ABANDONED"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta de [ABANDONED] en Slack.&lt;br&gt;&lt;code&gt;capturas/error-b-abandoned.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+    <div class="fila"><div class="rot">Qué pasó</div><div class="txt">Durante 8 horas preguntó 100 veces y AFIP siempre dijo que no. <b>La factura no se emitió</b> — esa es la buena noticia adentro de la mala.</div></div>
+    <div class="fila"><div class="rot">Ojo</div><div class="txt">Llega 8 horas tarde, así que <b>el cliente ya se quejó antes</b> por otro lado. Es el mismo caso, no dos.</div></div>
+    <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Re-emitir es técnicamente seguro, pero <b>lo autoriza Pamela</b>.</div></div>
+    <div class="fila no"><div class="rot">Nunca</div><div class="txt">Re-emitir sin preguntar: pudo cambiar la fecha, o el cliente pudo facturar a mano mientras tanto.</div></div>
+  </div>
+</div>
+
+<div class="ficha">
+  <h4><span class="sev s-alta">ALTA</span> &nbsp; C · La auditoría nocturna encontró una discrepancia</h4>
+  <div class="cuerpo">
+  <figure>
+    <img src="capturas/error-c-discrepancia.png" alt="Alerta de discrepancia"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta DISCREPANCIA AFIP de la auditoría nocturna.&lt;br&gt;&lt;code&gt;capturas/error-c-discrepancia.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+    <div class="fila"><div class="rot">Qué pasó</div><div class="txt">Lo que tenemos registrado no coincide con AFIP: importe, número o CAE.</div></div>
+    <div class="fila"><div class="rot">Trampa</div><div class="txt">Si el <b>mismo</b> problema aparece 3 noches seguidas, el sistema deja de avisar. No se arregló: se calló.</div></div>
+    <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Mirarlo el mismo día y avisar a Pamela.</div></div>
+    <div class="fila no"><div class="rot">Nunca</div><div class="txt">Editar la fila para que "coincida" con AFIP: eso destruye la evidencia que respalda el PDF que el cliente ya mandó.</div></div>
+  </div>
+</div>
+
+<div class="ficha">
+  <h4><span class="sev s-media">MEDIA</span> &nbsp; D · AFIP está caído <span style="font-weight:400;color:#5b6470">— lo más probable de todo</span></h4>
+  <div class="cuerpo">
+  <figure>
+    <img src="capturas/error-d-afip-caido.png" alt="Error de AFIP caído en un ítem"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El comentario que ve el cliente cuando AFIP no responde.&lt;br&gt;&lt;code&gt;capturas/error-d-afip-caido.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+    <div class="fila"><div class="rot">Cómo se ve</div><div class="txt">Fallan a la vez ítems de <b>clientes distintos</b>.</div></div>
+    <div class="fila"><div class="rot">Confirmalo</div><div class="txt">Con el <code>FEDummy</code>, que no pide autenticación: si <code>AppServer</code>, <code>DbServer</code> o <code>AuthServer</code> no dicen <code>OK</code>, es AFIP. Tarda 5 segundos.</div></div>
+    <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Avisar y esperar. La app ya le aclaró al cliente que el problema no es suyo.</div></div>
+    <div class="fila no"><div class="rot">Nunca</div><div class="txt">Reiniciar, revertir el deploy ni tocar certificados. No es nuestro: solo agregás una variable.</div></div>
+  </div>
+</div>
+
+<div class="ficha">
+  <h4><span class="sev s-media">MEDIA</span> &nbsp; E · Una emisión quedó colgada en "Creando"</h4>
+  <div class="cuerpo">
+  <figure>
+    <img src="capturas/error-e-processing.png" alt="Ítem trabado en Creando Comprobante"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem con la columna de estado en «Creando Comprobante».&lt;br&gt;&lt;code&gt;capturas/error-e-processing.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+    <div class="fila"><div class="rot">Qué pasó</div><div class="txt">Casi nada. La capa 3 revisa estos casos <b>cada 5 minutos</b> y los destraba sola.</div></div>
+    <div class="fila"><div class="rot">Qué hacés</div><div class="txt"><b>Esperar 15 minutos y volver a mirar.</b> Eso es todo.</div></div>
+    <div class="fila no"><div class="rot">Nunca</div><div class="txt">Re-disparar la receta, cambiar el estado a mano ni hacer un <code>UPDATE</code>. Cualquiera de las tres puede generar <b>dos CAE para una sola venta</b>, y eso solo se corrige con una nota de crédito.</div></div>
+  </div>
+</div>
+
+<div class="ficha">
+  <h4><span class="sev s-baja">BAJA</span> &nbsp; F · El cliente cargó algo mal <span style="font-weight:400;color:#5b6470">— el más frecuente</span></h4>
+  <div class="cuerpo">
+  <figure>
+    <img src="capturas/error-f-dato-mal.png" alt="Comentario de error en un ítem de monday"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem de monday con el comentario de error que deja la app.&lt;br&gt;&lt;code&gt;capturas/error-f-dato-mal.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+    <div class="fila"><div class="rot">Qué pasó</div><div class="txt">Falta o está mal un dato del ítem.</div></div>
+    <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Nada. La app ya le explicó al cliente en un comentario, en su idioma, con la causa y cómo resolverlo. Hay 232 mensajes distintos y todos dicen qué hacer.</div></div>
+    <div class="fila"><div class="rot">Si pregunta</div><div class="txt">Copiarle lo que dice el comentario.</div></div>
+  </div>
+</div>
 
 <h2 class="salto">5 · Cómo se hace un cambio, de punta a punta</h2>
 
