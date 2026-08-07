@@ -41,3 +41,6 @@ To Delete after do/
 /FacturaE-*.pdf
 /*_00000*.pdf
 /board_automations_*.csv
+
+# El PDF se regenera con documentacion/generar-pdf.bat
+documentacion/*.pdf

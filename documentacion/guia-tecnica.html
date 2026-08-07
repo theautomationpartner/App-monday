@@ -1,0 +1,507 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Factura ARCA — Guía técnica</title>
+<style>
+  :root{
+    --tinta:#1a1d21; --suave:#5b6470; --linea:#dfe3e8; --fondo-caja:#f6f8fa;
+    --rojo:#c0392b; --rojo-f:#fdf1f0; --ambar:#b7791f; --ambar-f:#fffaf0;
+    --verde:#1e7e46; --verde-f:#f0faf4; --azul:#1a5f9e; --azul-f:#f0f6fc;
+  }
+  *{box-sizing:border-box}
+  html{-webkit-print-color-adjust:exact; print-color-adjust:exact}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--tinta); line-height:1.55; font-size:10.5pt;
+    max-width:820px; margin:0 auto; padding:36px 44px; background:#fff;
+  }
+  h1{font-size:26pt; line-height:1.15; margin:0 0 6px; letter-spacing:-.5px}
+  h2{font-size:16pt; margin:34px 0 12px; padding-bottom:7px; border-bottom:2px solid var(--tinta); letter-spacing:-.2px}
+  h3{font-size:12.5pt; margin:24px 0 8px; letter-spacing:-.1px}
+  h4{font-size:10.5pt; margin:16px 0 6px; color:var(--suave); text-transform:uppercase; letter-spacing:.6px}
+  p{margin:0 0 10px}
+  ul,ol{margin:0 0 12px; padding-left:22px} li{margin-bottom:5px}
+  code{font-family:"SF Mono",Menlo,Consolas,monospace; font-size:9pt;
+       background:var(--fondo-caja); padding:1px 5px; border-radius:3px; border:1px solid var(--linea)}
+  pre{font-family:"SF Mono",Menlo,Consolas,monospace; font-size:8.5pt; line-height:1.5;
+      background:#1c2128; color:#dfe3e8; padding:13px 15px; border-radius:6px;
+      overflow-x:auto; margin:0 0 12px; white-space:pre-wrap; word-break:break-word}
+  pre code{background:none; border:none; padding:0; color:inherit; font-size:inherit}
+  table{width:100%; border-collapse:collapse; margin:0 0 14px; font-size:9.5pt}
+  th{text-align:left; background:var(--fondo-caja); font-weight:600; padding:7px 9px; border:1px solid var(--linea)}
+  td{padding:7px 9px; border:1px solid var(--linea); vertical-align:top}
+  .portada{border-bottom:3px solid var(--tinta); padding-bottom:22px; margin-bottom:26px}
+  .sub{color:var(--suave); font-size:12pt; margin:0}
+  .meta{color:var(--suave); font-size:9pt; margin-top:14px}
+  .caja{padding:12px 15px; border-radius:6px; margin:0 0 14px; border-left:4px solid}
+  .peligro{background:var(--rojo-f); border-color:var(--rojo)}
+  .cuidado{background:var(--ambar-f); border-color:var(--ambar)}
+  .ok{background:var(--verde-f); border-color:var(--verde)}
+  .dato{background:var(--azul-f); border-color:var(--azul)}
+  .caja p:last-child, .caja ul:last-child{margin-bottom:0}
+  .etq{font-weight:700; font-size:8.5pt; text-transform:uppercase; letter-spacing:.7px; display:block; margin-bottom:4px}
+  .peligro .etq{color:var(--rojo)} .cuidado .etq{color:var(--ambar)}
+  .ok .etq{color:var(--verde)} .dato .etq{color:var(--azul)}
+  figure{margin:14px 0 18px; page-break-inside:avoid}
+  figure img{max-width:100%; border:1px solid var(--linea); border-radius:5px; display:block}
+  figcaption{font-size:8.5pt; color:var(--suave); margin-top:6px; font-style:italic}
+  .falta{border:2px dashed #c7ccd3; border-radius:6px; padding:26px 18px; text-align:center;
+         color:#98a0aa; background:#fbfcfd; font-size:9pt}
+  .falta b{display:block; color:var(--suave); font-size:10pt; margin-bottom:4px}
+  .falta code{background:#fff}
+  .sev{display:inline-block; padding:1px 8px; border-radius:11px; font-size:8pt;
+       font-weight:700; letter-spacing:.4px; vertical-align:middle}
+  .s-alta{background:#fbe4e1; color:var(--rojo)} .s-media{background:#fdf0d9; color:var(--ambar)}
+  .s-baja{background:#e8eaed; color:var(--suave)}
+  .paso{border-left:3px solid var(--linea); padding:0 0 2px 16px; margin:0 0 18px}
+  .paso h3{margin-top:0}
+  .num{background:var(--tinta); color:#fff; width:21px; height:21px; border-radius:50%;
+       display:inline-flex; align-items:center; justify-content:center; font-size:9pt;
+       font-weight:700; margin-right:7px; vertical-align:middle}
+  .salto{page-break-before:always}
+  h2,h3{page-break-after:avoid} pre,table,.caja{page-break-inside:avoid}
+  @page{size:A4; margin:15mm 13mm}
+  @media print{ body{padding:0; max-width:none; font-size:10pt} .no-print{display:none} }
+</style>
+</head>
+<body>
+
+<div class="portada">
+  <h1>Factura ARCA</h1>
+  <p class="sub">Guía técnica — cómo funciona y cómo resolver un problema</p>
+  <p class="meta">
+    App de facturación electrónica AFIP para monday.com · Versión del 6 de agosto de 2026<br>
+    Escrita para el equipo técnico. Se lee entera una vez, en 15 minutos.
+  </p>
+</div>
+
+<div class="caja peligro">
+  <span class="etq">Lo único que no tiene vuelta atrás</span>
+  <p>Cuando AFIP autoriza una factura devuelve un <b>CAE</b>. Desde ese momento el
+  comprobante <b>existe para el Estado y no se borra</b>: solo se anula con una nota de
+  crédito, que es un acto contable, no un botón.</p>
+  <p><b>Todo lo demás se arregla</b> — el servidor, un deploy malo, una fila trabada. De
+  ahí sale la regla que ordena todo este documento: <b>ante la duda, no toques y
+  preguntá.</b></p>
+</div>
+
+<h2>1 · Quién usa la app</h2>
+
+<p>Emisiones exitosas de los <b>últimos 30 días</b>, medido sobre la base de producción:</p>
+
+<table>
+  <tr><th>Cliente</th><th>CUIT</th><th style="width:110px">Últimos 30 días</th><th>Ritmo de uso</th></tr>
+  <tr>
+    <td><b>Polifroni Puertas</b></td><td><code>30637662755</code></td>
+    <td><b>134 · 63%</b></td><td>5,4 por día · <b>25 de los 30 días</b></td>
+  </tr>
+  <tr>
+    <td><b>eGrowers</b> <span style="color:#5b6470">(Sofía Alewarts)</span></td><td><code>27333439692</code></td>
+    <td><b>49 · 23%</b></td><td>6,1 por día, pero solo <b>8 días</b></td>
+  </tr>
+  <tr><td>The Automation Partner SA</td><td><code>30719434505</code></td><td>29 · 14%</td><td>4,1 por día · 7 días</td></tr>
+  <tr><td>Martin Meliendrez <span style="color:#5b6470">(dev)</span></td><td><code>20327446348</code></td><td>2 · 1%</td><td>casi no se usa</td></tr>
+  <tr><td>Pamela Martinez</td><td><code>23329811484</code></td><td>0</td><td>último uso: 05/07</td></tr>
+</table>
+
+<div class="dato">
+  <span class="etq">Polifroni y eGrowers son el 85% del uso real</span>
+  <p>Si algo falla, son los que van a escribir. Y <b>cada uno usa la app distinto</b>, lo
+  que sirve para saber si algo anda mal:</p>
+  <ul>
+    <li><b>Polifroni factura casi todos los días.</b> Si pasa <b>un día hábil sin emitir
+    nada</b>, algo está pasando. Es la señal más temprana que tenemos.</li>
+    <li><b>eGrowers factura en tandas</b> — 49 comprobantes concentrados en 8 días. Que
+    estén 3 días sin facturar es <b>normal</b>, no es un síntoma.</li>
+  </ul>
+</div>
+
+<h4>Detalles que conviene saber antes de un incidente</h4>
+<ul>
+  <li><b>Polifroni está en otra cuenta de monday</b> (<code>30446835</code>): no se ve
+  desde la cuenta de ustedes. Y tiene <b>dos tableros</b> que facturan contra la misma
+  numeración de AFIP — uno local y uno de obra. Que un número "falte" en un tablero no
+  significa nada: puede estar en el otro.</li>
+  <li><b>eGrowers</b> usa un solo tablero, punto de venta 2.</li>
+  <li><b>La Batea todavía no existe</b> en el sistema. Nunca se dio de alta.</li>
+</ul>
+
+<h2 class="salto">2 · Cómo está armado</h2>
+
+<p>Un solo servidor con <b>dos copias de la app</b>. Cada una con su base de datos y su
+entorno de AFIP.</p>
+
+<svg viewBox="0 0 700 400" style="width:100%;height:auto;margin:6px 0 16px" role="img"
+     aria-label="Diagrama: monday y Cloudflare hacia el droplet con producción y staging">
+  <defs>
+    <marker id="f" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L7,3 z" fill="#5b6470"/>
+    </marker>
+  </defs>
+  <g font-family="-apple-system,Segoe UI,sans-serif" font-size="11">
+    <rect x="270" y="8" width="160" height="34" rx="6" fill="#f6f8fa" stroke="#dfe3e8"/>
+    <text x="350" y="24" text-anchor="middle" font-weight="600">monday.com</text>
+    <text x="350" y="37" text-anchor="middle" font-size="9" fill="#5b6470">el cliente aprieta el botón</text>
+
+    <line x1="350" y1="42" x2="350" y2="62" stroke="#5b6470" marker-end="url(#f)"/>
+
+    <rect x="285" y="66" width="130" height="30" rx="6" fill="#f0f6fc" stroke="#1a5f9e"/>
+    <text x="350" y="85" text-anchor="middle" font-weight="600" fill="#1a5f9e">Cloudflare</text>
+
+    <line x1="330" y1="96" x2="200" y2="128" stroke="#5b6470" marker-end="url(#f)"/>
+    <line x1="370" y1="96" x2="500" y2="128" stroke="#5b6470" marker-end="url(#f)"/>
+
+    <rect x="18" y="120" width="664" height="176" rx="9" fill="none" stroke="#1a1d21" stroke-width="2"/>
+    <text x="34" y="141" font-size="10" font-weight="700" letter-spacing="1">DROPLET · 134.122.5.114</text>
+
+    <rect x="40" y="152" width="290" height="126" rx="7" fill="#f0faf4" stroke="#1e7e46" stroke-width="1.5"/>
+    <text x="185" y="174" text-anchor="middle" font-weight="700" fill="#1e7e46">PRODUCCIÓN</text>
+    <text x="185" y="192" text-anchor="middle" font-size="9.5">pm2 "tap-monday" · puerto 3000</text>
+    <text x="185" y="208" text-anchor="middle" font-size="9.5">branch main</text>
+    <text x="185" y="230" text-anchor="middle" font-size="10" font-weight="600">base: defaultdb</text>
+    <text x="185" y="248" text-anchor="middle" font-size="10" font-weight="700" fill="#c0392b">AFIP DE VERDAD</text>
+    <text x="185" y="264" text-anchor="middle" font-size="9" fill="#5b6470">el CAE que sale acá es real</text>
+
+    <rect x="370" y="152" width="290" height="126" rx="7" fill="#fffaf0" stroke="#b7791f" stroke-width="1.5"/>
+    <text x="515" y="174" text-anchor="middle" font-weight="700" fill="#b7791f">STAGING (pruebas)</text>
+    <text x="515" y="192" text-anchor="middle" font-size="9.5">pm2 "tap-monday-staging" · 3001</text>
+    <text x="515" y="208" text-anchor="middle" font-size="9.5">branch develop</text>
+    <text x="515" y="230" text-anchor="middle" font-size="10" font-weight="600">base: stagingdb</text>
+    <text x="515" y="248" text-anchor="middle" font-size="10" font-weight="700" fill="#1e7e46">AFIP DE MENTIRA</text>
+    <text x="515" y="264" text-anchor="middle" font-size="9" fill="#5b6470">acá no se puede romper nada</text>
+
+    <text x="350" y="326" text-anchor="middle" font-size="10.5" font-weight="600">Se deploya solo</text>
+    <text x="350" y="346" text-anchor="middle" font-size="10">push a <tspan font-weight="700">develop</tspan> → staging      ·      push a <tspan font-weight="700">main</tspan> → producción</text>
+    <text x="350" y="364" text-anchor="middle" font-size="9" fill="#5b6470">tarda unos 2 minutos</text>
+  </g>
+</svg>
+
+<h3>Qué pasa cuando alguien emite una factura</h3>
+
+<pre><code> 1.  monday dispara la receta        →  POST /api/invoices/emit
+ 2.  lee el ítem y sus subítems         (concepto, cantidad, precio, IVA)
+ 3.  valida los datos                ←  acá falla el 80% de los errores
+ 4.  consulta el padrón de AFIP         (¿quién es este CUIT? ¿qué IVA tiene?)
+ 5.  decide la letra: A, B o C
+ 6.  RESERVA el número en la base    ←  ANTES de hablar con AFIP
+ 7.  le pide el CAE a AFIP
+ 8.  verifica que el CAE sea el correcto
+ 9.  genera el PDF y lo sube al ítem
+10.  registra en el tablero de auditoría</code></pre>
+
+<div class="dato">
+  <span class="etq">Por qué el paso 6 es el que importa</span>
+  <p>El número se anota <b>antes</b> de hablar con AFIP. Si AFIP responde y justo se corta
+  la red, el número quedó guardado y el sistema puede preguntar más tarde "¿esto se
+  emitió?". Sin eso, el comprobante quedaría existiendo en AFIP <b>sin que lo sepamos</b>.</p>
+</div>
+
+<h3>Las cuatro capas que arreglan solas</h3>
+
+<p>Es lo que hace que la mayoría de los problemas <b>no requieran que nadie haga nada</b>:</p>
+
+<table>
+  <tr><th style="width:130px">Capa</th><th style="width:150px">Cuándo actúa</th><th>Qué hace</th></tr>
+  <tr><td><b>1. Reserva</b></td><td>antes de cada emisión</td><td>anota el número antes de hablar con AFIP</td></tr>
+  <tr><td><b>2. Verificación</b></td><td>justo después del CAE</td><td>le vuelve a preguntar a AFIP si coincide</td></tr>
+  <tr><td><b>3. Reconciliación</b></td><td><b>cada 5 minutos</b></td><td>rescata las emisiones que quedaron colgadas</td></tr>
+  <tr><td><b>4. Auditoría</b></td><td><b>3 AM, todos los días</b></td><td>compara todo contra AFIP y avisa a Slack</td></tr>
+</table>
+
+<p>Hay una quinta, al revés: el <b>detector de huérfanos</b> corre pegado a la de las 3 AM y
+busca comprobantes que <b>AFIP tiene y nosotros no</b>.</p>
+
+<div class="ok">
+  <span class="etq">Por eso la regla es esperar</span>
+  <p>Ante una emisión que "parece trabada", <b>esperá 15 minutos</b>. La capa 3 ya está
+  trabajando en eso.</p>
+</div>
+
+<h2 class="salto">3 · Qué puede fallar, y qué significa</h2>
+
+<p>Las alertas llegan al canal de Slack <code>#make-errores-</code>, donde están todos los
+devs.</p>
+
+<figure>
+  <img src="capturas/01-slack-canal.png" alt="Canal de Slack con las alertas"
+       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;CAPTURA 1&lt;/b&gt;El canal #make-errores- con alertas reales.&lt;br&gt;Guardala como &lt;code&gt;capturas/01-slack-canal.png&lt;/code&gt;&lt;/div&gt;'">
+  <figcaption>El canal donde llegan todas las alertas del sistema.</figcaption>
+</figure>
+
+<h3>Traducción rápida de lo que llega</h3>
+
+<table>
+  <tr><th style="width:38%">Lo que ves</th><th>Qué es</th><th style="width:22%">¿Hacés algo?</th></tr>
+  <tr>
+    <td>✅ <b>Auditoria nocturna AFIP</b></td>
+    <td>La <b>señal de vida diaria</b>. Llega todas las noches a las 3 AM, incluso si no hubo nada que auditar</td>
+    <td>No. <b>Que NO llegue sí es un problema</b></td>
+  </tr>
+  <tr>
+    <td>🚨 <b>Error sistema en facturación</b></td>
+    <td>Un mismo título tapa <b>6 cosas distintas</b></td>
+    <td>Leé la línea <code>Error:</code></td>
+  </tr>
+  <tr><td>🚨 <b>DISCREPANCIA AFIP</b></td><td>lo que registramos no coincide con AFIP</td><td>Sí, el mismo día</td></tr>
+  <tr><td>🟡 <b>Conciliación AFIP</b></td><td>AFIP tiene comprobantes que nosotros no</td><td>Preguntar, no arreglar</td></tr>
+  <tr><td>⚠️ <b>Condición de IVA no reconocida</b></td><td>la factura <b>salió bien</b></td><td>No</td></tr>
+</table>
+
+<div class="cuidado">
+  <span class="etq">Lo más importante de esta página</span>
+  <p>El título rojo <b>"Error sistema en facturación" no dice nada por sí solo</b>: tapa
+  seis incidentes con acciones opuestas — uno es "esperá" y otro es "esto es plata,
+  pará todo". <b>Hay que abrir la línea que empieza con <code>Error:</code></b>.</p>
+</div>
+
+<table>
+  <tr><th style="width:34%">Si <code>Error:</code> empieza con…</th><th>Qué significa</th><th style="width:80px">Gravedad</th></tr>
+  <tr>
+    <td><code>[RECOVERY_MISMATCH]</code></td>
+    <td><b>La factura del cliente NO se emitió</b>, y el sistema no la va a reintentar nunca más</td>
+    <td><span class="sev s-alta">ALTA</span></td>
+  </tr>
+  <tr><td><code>[ABANDONED]</code></td><td>reservó número y AFIP dice que no existe</td><td><span class="sev s-alta">ALTA</span></td></tr>
+  <tr><td><code>Esta es la instancia de PRUEBA</code></td><td>un cliente real cayó en staging y está esperando</td><td><span class="sev s-alta">ALTA</span></td></tr>
+  <tr><td><code>503</code> · <code>ETIMEDOUT</code> · <code>ECONNRESET</code></td><td>se cayó AFIP. No es nuestro</td><td><span class="sev s-media">MEDIA</span></td></tr>
+  <tr><td><code>[FASE2_MISMATCH]</code></td><td>la factura <b>sí</b> tiene CAE. Informativo</td><td><span class="sev s-baja">BAJA</span></td></tr>
+</table>
+
+<h3 class="salto">Los seis casos más probables</h3>
+
+<h4><span class="sev s-alta">ALTA</span> &nbsp; A · El número se lo llevó otra emisión</h4>
+<p>Llega como <code>[RECOVERY_MISMATCH]</code>. El número que un ítem tenía reservado ya
+existe en AFIP <b>pero es de otro comprobante</b>: esa factura <b>no se emitió</b>.</p>
+<div class="peligro">
+  <span class="etq">Y hay una segunda parte, peor</span>
+  <p>El sistema sacó esa fila de la cola de reintentos <b>para siempre</b>. Si nadie actúa,
+  la venta queda sin facturar y <b>nadie se entera</b>.</p>
+</div>
+<p><b>Qué hacer:</b> nada técnico. Documentarlo y avisar a Pamela y a Martín el mismo día.
+<b>Nunca</b> re-emitir ni copiar el CAE que aparece en el mensaje.</p>
+
+<figure>
+  <img src="capturas/02-recovery-mismatch.png" alt="Alerta de RECOVERY_MISMATCH"
+       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;CAPTURA 2&lt;/b&gt;La alerta de [RECOVERY_MISMATCH] en Slack.&lt;br&gt;&lt;code&gt;capturas/02-recovery-mismatch.png&lt;/code&gt;&lt;/div&gt;'">
+</figure>
+
+<h4><span class="sev s-alta">ALTA</span> &nbsp; B · Reservó número y AFIP dice que no existe</h4>
+<p>Llega como <code>[ABANDONED]</code>. Durante 8 horas el sistema preguntó 100 veces y AFIP
+siempre dijo que no. Conclusión: <b>la factura realmente no se emitió</b> — esa es la buena
+noticia dentro de la mala.</p>
+<p><b>Ojo con el reloj:</b> la alerta llega 8 horas después del hecho, así que
+<b>el cliente ya se quejó antes</b> por otro lado. Son el mismo caso.</p>
+<p><b>Qué hacer:</b> re-emitir es técnicamente seguro, pero <b>lo autoriza Pamela</b> —
+puede haber cambiado la fecha, o el cliente puede haber facturado a mano mientras tanto.</p>
+
+<h4><span class="sev s-alta">ALTA</span> &nbsp; C · La auditoría nocturna encontró una discrepancia</h4>
+<p>Lo que registramos no coincide con AFIP: importe, número o CAE.</p>
+<div class="cuidado">
+  <span class="etq">Trampa</span>
+  <p>Si el <b>mismo</b> problema aparece 3 noches seguidas, <b>el sistema deja de avisar</b>.
+  No se arregló: se calló.</p>
+</div>
+<p><b>Nunca</b> editar la fila para que "coincida" con AFIP: eso destruye la evidencia, y
+nuestro registro es lo que respalda el PDF que el cliente ya mandó.</p>
+
+<h4><span class="sev s-media">MEDIA</span> &nbsp; D · AFIP está caído <span style="font-weight:400;color:#5b6470">— lo más probable de todo</span></h4>
+<p>Varios ítems de <b>clientes distintos</b> fallan a la vez. <b>El error es de ellos.</b></p>
+<p>Se confirma en 5 segundos con una consulta que <b>no pide autenticación</b>: si
+<code>AppServer</code>, <code>DbServer</code> o <code>AuthServer</code> no dicen
+<code>OK</code>, es AFIP.</p>
+<p><b>Qué hacer:</b> avisar y esperar. <b>No</b> reiniciar, <b>no</b> revertir el deploy,
+<b>no</b> tocar certificados.</p>
+
+<h4><span class="sev s-media">MEDIA</span> &nbsp; E · Una emisión quedó colgada en "Creando"</h4>
+<p>El problema es benigno: la capa 3 lo revisa cada 5 minutos. <b>El peligro es la
+reacción.</b></p>
+<div class="peligro">
+  <span class="etq">Lo más importante de todo el documento</span>
+  <p>No re-dispares la receta. No cambies el estado a mano. No hagas un <code>UPDATE</code>.
+  <b>Cualquiera de esas cosas puede generar dos CAE para una sola venta</b>, y eso solo se
+  corrige con una nota de crédito.</p>
+  <p style="margin-top:8px"><b>Esperá 15 minutos y volvé a mirar.</b></p>
+</div>
+
+<h4><span class="sev s-baja">BAJA</span> &nbsp; F · El cliente cargó algo mal <span style="font-weight:400;color:#5b6470">— el más frecuente</span></h4>
+<p>Falta o está mal un dato del ítem. <b>La app ya se lo explicó al cliente</b> en un
+comentario, con la causa y cómo arreglarlo, en su idioma. Hay 232 mensajes distintos y
+todos dicen qué hacer.</p>
+<p><b>Qué hacer:</b> copiarle al cliente lo que dice el comentario. Nada más.</p>
+
+<figure>
+  <img src="capturas/03-error-en-item.png" alt="Comentario de error en un ítem de monday"
+       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;CAPTURA 3&lt;/b&gt;Un ítem de monday con el comentario de error que deja la app.&lt;br&gt;&lt;code&gt;capturas/03-error-en-item.png&lt;/code&gt;&lt;/div&gt;'">
+  <figcaption>Así ve el cliente el error: con la causa y cómo resolverlo.</figcaption>
+</figure>
+
+<h2 class="salto">4 · Cómo se hace un cambio, de punta a punta</h2>
+
+<p>Ejemplo real: <b>hay que corregir un mensaje de error que quedó confuso.</b></p>
+
+<div class="peligro">
+  <span class="etq">Regla que no se negocia</span>
+  <p><b>Nunca se pushea directo a <code>main</code>.</b> Ahí están los clientes reales
+  facturando. Todo pasa primero por <code>develop</code> y por staging.</p>
+</div>
+
+<div class="paso">
+  <h3><span class="num">1</span>Trabajar en develop</h3>
+  <pre><code>git checkout develop
+git pull origin develop</code></pre>
+</div>
+
+<div class="paso">
+  <h3><span class="num">2</span>Hacer el cambio y probarlo local</h3>
+  <pre><code>cd backend-repo
+npm test</code></pre>
+  <p>Cinco bancos de prueba, menos de un segundo. <b>No necesita AFIP, ni monday, ni base
+  de datos.</b> Si cambiaste un mensaje a propósito, refrescá el corpus con
+  <code>node test/mensajes.test.js --actualizar</code>.</p>
+</div>
+
+<div class="paso">
+  <h3><span class="num">3</span>Subir a staging</h3>
+  <pre><code>git add .
+git commit -m "fix: descripción del cambio"
+git push origin develop</code></pre>
+  <p>GitHub Actions corre los tests y deploya a staging solo. <b>Si un test falla, el deploy
+  se frena</b> y no llega a ningún lado.</p>
+  <figure>
+    <img src="capturas/04-github-actions.png" alt="GitHub Actions con el deploy en verde"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;CAPTURA 4&lt;/b&gt;La pestaña Actions de GitHub con los pasos del deploy.&lt;br&gt;&lt;code&gt;capturas/04-github-actions.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Los pasos del deploy. El de tests corre <b>antes</b> de tocar el servidor.</figcaption>
+  </figure>
+</div>
+
+<div class="paso">
+  <h3><span class="num">4</span>Probarlo de verdad, en el tablero de pruebas</h3>
+  <p>Hay un tablero hecho para esto: <b>"Facturación con errores de test"</b>, con 12 ítems
+  cargados con datos mal a propósito, uno por cada error.</p>
+  <div class="ok">
+    <span class="etq">Ahí se puede romper tranquilo</span>
+    <p>Ese tablero tiene <b>certificado de homologación</b>: <b>no puede emitir un
+    comprobante real</b>, aunque quieras.</p>
+  </div>
+  <p>Cambiá la columna de estado a <b>"Crear Comprobante"</b> y leé el comentario que deja
+  la app.</p>
+  <figure>
+    <img src="capturas/05-tablero-pruebas.png" alt="Tablero de pruebas con los 12 ítems"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;CAPTURA 5&lt;/b&gt;El tablero de pruebas con los 12 ítems de error.&lt;br&gt;&lt;code&gt;capturas/05-tablero-pruebas.png&lt;/code&gt;&lt;/div&gt;'">
+  </figure>
+  <div class="cuidado">
+    <span class="etq">Ojo</span>
+    <p>Ese tablero apunta a <b>producción</b>. Lo que lo hace seguro no es el entorno, es el
+    <b>certificado de homologación</b>. Para probar contra staging habría que crear una
+    versión Draft en monday — y <b>esta semana eso está prohibido</b>, porque una Draft
+    activa rutea clientes reales a la instancia de pruebas.</p>
+  </div>
+</div>
+
+<div class="paso">
+  <h3><span class="num">5</span>Pasar a producción</h3>
+  <pre><code>git checkout main
+git merge develop --ff-only
+git push origin main</code></pre>
+  <p>En unos 2 minutos está arriba y los clientes lo ven.</p>
+</div>
+
+<div class="paso">
+  <h3><span class="num">6</span>Confirmar que llegó de verdad</h3>
+  <div class="cuidado">
+    <span class="etq">Que GitHub esté en verde no alcanza</span>
+    <p>Ya pasó <b>dos veces</b> que el deploy terminó bien y el código <b>nunca llegó al
+    servidor</b>.</p>
+  </div>
+  <pre><code>ssh root@134.122.5.114 "cd /opt/apps/App-monday && git log --oneline -1"</code></pre>
+  <p>Ese commit tiene que ser el tuyo. Si no coincide, el deploy falló aunque diga OK. La
+  causa más común: <b>alguien dejó un archivo suelto en el servidor</b> y el
+  <code>git pull</code> se niega a pisarlo.</p>
+</div>
+
+<h3>Si algo salió mal</h3>
+<pre><code>git checkout main && git revert HEAD && git push origin main</code></pre>
+<div class="ok">
+  <span class="etq">Revertir nunca necesita permiso</span>
+  <p>No hace falta entender el bug para revertir. <b>Revertí primero, investigá después.</b></p>
+</div>
+<p><b>Nunca</b> <code>git reset --hard</code> con <code>--force</code>, y <b>nunca</b>
+edites archivos directo en el servidor: el próximo deploy falla y rompe todos los
+siguientes.</p>
+
+<h2 class="salto">5 · Lo que hay que saber sí o sí</h2>
+
+<h3>Quién decide qué</h3>
+<table>
+  <tr><th style="width:150px">Quién</th><th>Decide sobre</th></tr>
+  <tr>
+    <td><b>Pamela</b> <span style="color:#5b6470">(contadora)</span></td>
+    <td>Todo lo fiscal: emitir una nota de crédito, re-emitir algo dudoso, hablar con un
+    cliente, cualquier cosa que cambie un importe, un CAE o un número de comprobante</td>
+  </tr>
+  <tr><td><b>Martín</b> <span style="color:#5b6470">(líder técnico)</span></td><td>Lo técnico. Y es el único con acceso a DigitalOcean y Cloudflare</td></tr>
+  <tr><td>Cualquier dev</td><td>Reiniciar, leer logs, <b>revertir un deploy</b>, consultas de solo lectura</td></tr>
+</table>
+
+<h3>Reglas de esta semana</h3>
+<ol>
+  <li>A <code>main</code> solo van <b>reverts y arreglos urgentes</b>. Ninguna feature.</li>
+  <li><b>Nadie crea versiones Draft en monday.</b> Una Draft activa rutea clientes reales a
+  la instancia de pruebas.</li>
+  <li><b>Ninguna migración de base de datos.</b></li>
+</ol>
+
+<h3>Accesos</h3>
+<table>
+  <tr><th style="width:230px">Qué</th><th>Quién lo tiene</th></tr>
+  <tr><td>SSH al servidor</td><td>cada dev con su propia clave</td></tr>
+  <tr><td>Centro de Desarrollo de monday</td><td>todos, con la cuenta de dev</td></tr>
+  <tr><td>Slack <code>#make-errores-</code></td><td>todos los devs</td></tr>
+  <tr><td><b>Panel de DigitalOcean</b></td><td><b>solo Martín</b></td></tr>
+  <tr><td><b>Cloudflare</b></td><td><b>solo Martín</b></td></tr>
+  <tr><td><b>Clave fiscal de AFIP</b></td><td><b>nadie de nosotros</b> — la tiene cada cliente</td></tr>
+</table>
+
+<div class="cuidado">
+  <span class="etq">Dos consecuencias prácticas</span>
+  <p><b>Si el servidor no responde ni por SSH, hay que llamar a Martín.</b> Es el único que
+  puede entrar por la consola de DigitalOcean.</p>
+  <p><b>Nunca vamos a poder entrar a AFIP por un cliente.</b> Cuando algo dice "verificar en
+  AFIP web", eso lo hace <b>el cliente</b>, o Pamela con él.</p>
+</div>
+
+<h3>Los comandos que más se usan</h3>
+<pre><code>ssh root@134.122.5.114              # entrar al servidor
+
+pm2 list                            # ¿está vivo?
+pm2 logs tap-monday --lines 100     # ¿qué está pasando?
+pm2 reload tap-monday --update-env  # reiniciar suave
+
+curl -s https://arca.theautomationpartner.com/api/health</code></pre>
+
+<h3>Chequeo diario de 5 minutos</h3>
+<ol>
+  <li><b>¿Llegó el aviso nocturno a Slack?</b> Tiene que estar todas las mañanas.</li>
+  <li><b>¿Está vivo el proceso?</b> <code>pm2 list</code> — online, sin restarts nuevos.</li>
+  <li><b>¿Los procesos automáticos corren?</b> Buscar <code>[reconcile-cron]</code> en los
+  logs: tiene que ser de hace minutos, no de hace horas.</li>
+  <li><b>¿Hay algo trabado?</b> Emisiones en <code>processing</code> de más de una hora.</li>
+  <li><b>¿Hay discrepancias acumuladas?</b> Tienen que dar cero.</li>
+  <li><b>¿Se vence algún certificado?</b> Si falta menos de 15 días, avisarle a Pamela.</li>
+</ol>
+
+<div class="dato">
+  <span class="etq">Dónde seguir</span>
+  <p>El detalle completo —12 fichas de incidentes con comandos, entrando por el síntoma—
+  está en <b>RUNBOOK.md</b>, en la raíz del repositorio. Este documento es el panorama;
+  el runbook es la herramienta cuando ya hay un problema.</p>
+</div>
+
+<p class="meta" style="margin-top:34px; border-top:1px solid var(--linea); padding-top:12px">
+  Factura ARCA · Guía técnica · 6 de agosto de 2026<br>
+  Los datos de uso salen de la base de producción, no de estimaciones.
+</p>
+
+</body>
+</html>
