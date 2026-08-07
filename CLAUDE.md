@@ -46,8 +46,8 @@ CLOUDFLARE (DNS + TLS + CDN)
 
 | Entorno | URL | Backend en droplet | DB | Quién la ve |
 |---|---|---|---|---|
-| **Producción** | `https://arca.theautomationpartner.com` | pm2 `tap-monday` (3000) | `defaultdb` | TODOS los clientes (versión Live actual: **v18**) |
-| **Staging** | `https://staging.theautomationpartner.com` | pm2 `tap-monday-staging` (3001) | `stagingdb` | Solo TAP (versión Draft, v19+ según feature) |
+| **Producción** | `https://arca.theautomationpartner.com` | pm2 `tap-monday` (3000) | `defaultdb` | TODOS los clientes (versión Live: **v40**, del 04/08/2026) |
+| **Staging** | `https://staging.theautomationpartner.com` | pm2 `tap-monday-staging` (3001) | `stagingdb` | Solo TAP (versión Draft, la siguiente que haya) |
 
 ---
 
@@ -74,8 +74,8 @@ GitHub Actions automáticamente:
 ### Paso 2 — Crear una versión Draft en monday (solo si no existe ya)
 
 Esto se hace UNA VEZ por feature. Si ya existe una versión Draft apuntando a
-staging, saltá al paso 3. (La versión Live actual es **v18**; cada feature crea
-la siguiente Draft — v19, v20, etc. Los números suben, el flujo es el mismo.)
+staging, saltá al paso 3. (Cada feature crea la siguiente Draft. Los números suben
+cada semana: no los busques acá, miralos en Gestiona → Versiones de la aplicación.)
 
 1. Abrí monday Centro de Desarrollo → app **Factura ARCA**
 2. Click en **"+ Versión nueva"** → queda como Borrador
@@ -378,10 +378,15 @@ nada real.
 
 ## Estado actual de las versiones en monday
 
-(Snapshot 2026-05-21 — los números de versión suben en cada feature.)
+**No confíes en los números que estén escritos acá** — suben cada semana y este doc
+queda viejo solo. La lista real está en el Centro de Desarrollo: **Gestiona → Versiones
+de la aplicación**, y ahí se ve cuál dice *En vivo*.
 
-- **v18 (Live)** — la usan TAP, Polifroni, Sofia. URL: `arca.theautomationpartner.com`
-- **Draft (v19+)** — solo TAP la ve. URL: `staging.theautomationpartner.com`. Se crea y elimina por feature.
+- La que dice **En vivo** es la que usan todos los clientes. URL: `arca.theautomationpartner.com`
+- La que dice **Borrador** solo la ve TAP. URL: `staging.theautomationpartner.com`. Se
+  crea y se elimina por feature (ver el workflow de arriba).
+
+(Al 07/08/2026: v40 En vivo, v41 Borrador.)
 
 ---
 

@@ -273,6 +273,8 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
   <figure>
     <img src="capturas/staging-1-centro-desarrollo.png" alt="Centro de Desarrollo de monday"
          onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El Centro de Desarrollo con la app Factura ARCA.&lt;br&gt;&lt;code&gt;capturas/staging-1-centro-desarrollo.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Es la única con estado <i>Mercado</i>. Las otras nueve son de otros proyectos:
+    no se tocan.</figcaption>
   </figure>
 </div>
 
@@ -289,6 +291,14 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
   <figure>
     <img src="capturas/staging-2-version-nueva.png" alt="Crear una versión nueva"
          onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El botón de crear versión nueva y la Draft ya creada.&lt;br&gt;&lt;code&gt;capturas/staging-2-version-nueva.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Justo arriba del botón se lee el cartel <i>"La versión está bloqueada para
+    cambios"</i>: esa es la que está En vivo.</figcaption>
+  </figure>
+  <figure>
+    <img src="capturas/staging-3-version-creada.png" alt="La versión Borrador ya creada"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La lista de versiones con la nueva en estado Borrador.&lt;br&gt;&lt;code&gt;capturas/staging-3-version-creada.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Así queda: la nueva en <b>Borrador</b> y <b>Activo</b>; la de abajo sigue
+    <b>En vivo</b> — esa es la que ven los clientes y no se toca.</figcaption>
   </figure>
 </div>
 
@@ -297,6 +307,11 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
   <p>En el menú de la izquierda: <b>Crea → Funciones</b>. De las 5 funciones de la lista,
   hay que tocar <b>dos</b>. En las dos se cambia <code>arca.</code> por
   <code>staging.</code> y nada más.</p>
+  <figure>
+    <img src="capturas/staging-4-funciones.png" alt="Lista de funciones de la app"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La lista de Funciones, con las dos que hay que tocar marcadas.&lt;br&gt;&lt;code&gt;capturas/staging-4-funciones.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Las dos marcadas. Las otras tres son plantillas de tablero: no llevan URL.</figcaption>
+  </figure>
   <table>
     <tr><th style="width:38%">Función</th><th>Campo</th><th>Qué poner</th></tr>
     <tr>
@@ -320,14 +335,19 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
     abajo a la derecha.</p>
   </div>
   <figure>
-    <img src="capturas/staging-3-url-receta.png" alt="URL de ejecucion de la receta"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «1-Click Voucher Generation», con un círculo en el campo «URL de ejecución».&lt;br&gt;&lt;code&gt;capturas/staging-3-url-receta.png&lt;/code&gt;&lt;/div&gt;'">
-    <figcaption>Esta es la que importa: es la URL que monday llama al emitir.</figcaption>
+    <img src="capturas/staging-5-url-receta.png" alt="URL de ejecucion de la receta"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «1-Click Voucher Generation», con un círculo en el campo «URL de ejecución».&lt;br&gt;&lt;code&gt;capturas/staging-5-url-receta.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption><b>1-Click Voucher Generation.</b> En la captura la URL dice
+    <code>arca.</code> — o sea, producción. Hay que dejarla en <code>staging.</code> y darle
+    <b>Guardar cambios</b> (el otro círculo). La línea punteada es un pedazo de pantalla
+    vacío que se sacó para que se lea.</figcaption>
   </figure>
   <figure>
-    <img src="capturas/staging-4-url-vista.png" alt="URL de la vista del tablero"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «Electronic Invoicing», con un círculo en «Establecer la URL que se va a mostrar».&lt;br&gt;&lt;code&gt;capturas/staging-4-url-vista.png&lt;/code&gt;&lt;/div&gt;'">
-    <figcaption>La de la vista — lo que se ve al abrir la app en un tablero.</figcaption>
+    <img src="capturas/staging-6-url-vista.png" alt="URL de la vista del tablero"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «Electronic Invoicing», con un círculo en «Establecer la URL que se va a mostrar».&lt;br&gt;&lt;code&gt;capturas/staging-6-url-vista.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption><b>Electronic Invoicing.</b> Está adentro de <b>Deployment</b>, con
+    <i>Alojamiento externo</i> ya elegido. Esta va sin nada atrás: solo el dominio. El botón
+    de guardar queda más abajo, hay que scrollear.</figcaption>
   </figure>
 </div>
 
@@ -353,9 +373,10 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
     versión".</b></p>
   </div>
   <figure>
-    <img src="capturas/staging-5-eliminar-version.png" alt="Menú para eliminar la versión Draft"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El menú «…» abierto en la fila del Borrador, con un círculo en «Eliminar versión».&lt;br&gt;&lt;code&gt;capturas/staging-5-eliminar-version.png&lt;/code&gt;&lt;/div&gt;'">
-    <figcaption>Cuidado: «Publicar» está justo arriba de «Eliminar versión».</figcaption>
+    <img src="capturas/staging-7-eliminar-version.png" alt="Menú para eliminar la versión Draft"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El menú «…» abierto en la fila del Borrador, con un círculo en «Eliminar versión».&lt;br&gt;&lt;code&gt;capturas/staging-7-eliminar-version.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>El menú se abre en la fila del <b>Borrador</b>, no en la de En vivo. Y
+    <b>"Publicar"</b> está justo arriba de la opción correcta.</figcaption>
   </figure>
   <div class="ok">
     <span class="etq">Por qué es seguro borrarla</span>

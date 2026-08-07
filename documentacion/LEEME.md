@@ -37,18 +37,23 @@ se entiende igual.
 > Para **A, B y C** hay que buscar la alerta en el historial de Slack — son las que no se
 > pueden forzar a voluntad.
 
-### Cómo pasar a staging
+### Cómo pasar a staging — ✅ ya están
 
-Estas son las que más ayudan. **Poneles un círculo rojo donde hay que hacer click** —
-en Windows se hace con la Herramienta Recortes, o con Paint.
+Las 7 están hechas, recortadas y con el círculo rojo puesto. Los originales sin recortar
+quedaron en `capturas/originales/`.
 
-| Archivo | Qué mostrar · dónde va el círculo |
+| Archivo | Dónde está el círculo |
 |---|---|
-| `staging-1-centro-desarrollo.png` | `apps/manage` → **Mis apps**. Círculo en la fila "Factura ARCA" |
-| `staging-2-version-nueva.png` | Círculo en el botón **"+ Versión nueva"** (arriba a la izquierda) |
-| `staging-3-url-receta.png` | La función **1-Click Voucher Generation**. Círculo en el campo **"URL de ejecución"** |
-| `staging-4-url-vista.png` | La función **Electronic Invoicing**. Círculo en **"Establecer la URL que se va a mostrar"** |
-| `staging-5-eliminar-version.png` | El menú **"…"** abierto en la fila del Borrador. Círculo en **"Eliminar versión"** |
+| `staging-1-centro-desarrollo.png` | La fila **"Factura ARCA"** en Mis apps |
+| `staging-2-version-nueva.png` | El botón **"+ Versión nueva"** |
+| `staging-3-version-creada.png` | La versión nueva en estado **Borrador** |
+| `staging-4-funciones.png` | Las **dos funciones** que hay que tocar |
+| `staging-5-url-receta.png` | El campo **"URL de ejecución"** y el botón **Guardar cambios** |
+| `staging-6-url-vista.png` | El campo **"Establecer la URL que se va a mostrar"** |
+| `staging-7-eliminar-version.png` | La opción **"Eliminar versión"** del menú "…" |
+
+> Si alguna hay que rehacerla, el script que las recorta y les dibuja el círculo está en
+> `hacer-circulos.ps1`: se editan las coordenadas ahí y se corre de nuevo.
 
 ### El deploy
 
