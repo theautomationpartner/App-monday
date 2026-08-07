@@ -696,14 +696,49 @@ curl -s https://arca.theautomationpartner.com/api/health</code></pre>
 
 <h3>Trabajar con Claude Code</h3>
 
-<p>Es como se viene trabajando acá: se le pide en castellano y arma los comandos. <b>El
-repositorio ya está preparado</b> — el <code>CLAUDE.md</code> de la raíz lo lee solo al
-abrirse, con las reglas del proyecto y qué no se toca.</p>
+<p>Es como se viene trabajando acá: se le pide en castellano y arma los comandos. Para una
+semana de guardia sirve sobre todo para lo que no se hace todos los días —leer logs, buscar
+en la base, entender por qué falló algo.</p>
 
-<pre><code>npm install -g @anthropic-ai/claude-code   # una vez, necesita Node 18+
+<div class="dato">
+  <span class="etq">Lo primero que hay que entender</span>
+  <p><b>No tiene accesos propios: usa los tuyos.</b> Corre en tu terminal, así que puede
+  hacer exactamente lo que vos podés hacer desde tu máquina, ni más ni menos. Por eso el
+  paso 3 es el único que importa de verdad.</p>
+</div>
 
-cd App-monday
-claude                                     # y se le habla en castellano</code></pre>
+<div class="paso">
+  <h3><span class="num">1</span>Bajar el repositorio</h3>
+  <pre><code>git clone https://github.com/theautomationpartner/App-monday.git
+cd App-monday</code></pre>
+  <p>Ahí adentro ya está el <code>CLAUDE.md</code>, que Claude Code lee solo al abrirse: las
+  reglas del proyecto, qué no se toca y cómo se hace un cambio. <b>No hay que explicarle el
+  proyecto.</b></p>
+</div>
+
+<div class="paso">
+  <h3><span class="num">2</span>Instalar Claude Code</h3>
+  <pre><code>npm install -g @anthropic-ai/claude-code   # necesita Node 18 o mayor
+claude                                    # la primera vez pide loguearse</code></pre>
+</div>
+
+<div class="paso">
+  <h3><span class="num">3</span>Darle acceso al servidor</h3>
+  <p>Es el único acceso que hay que agregar, y no se le da a él: se lo pone uno en su
+  máquina. Probá esto en tu terminal:</p>
+  <pre><code>ssh root@134.122.5.114 "pm2 list"</code></pre>
+  <p><b>Si te devuelve la lista de procesos, ya está</b> — Claude Code va a poder mirar
+  logs, consultar la base y diagnosticar. Si te pide contraseña o te rechaza, todavía no
+  tenés la clave: pedísela a Martín.</p>
+</div>
+
+<div class="paso">
+  <h3><span class="num">4</span>Comprobar que quedó andando</h3>
+  <pre><code>cd backend-repo
+npm test</code></pre>
+  <p>Cinco bancos, menos de un segundo. <b>No hace falta instalar dependencias</b>: los
+  tests no usan ninguna. Si pasan, el repo está listo.</p>
+</div>
 
 <div class="cuidado">
   <span class="etq">Dos cosas, igual</span>
