@@ -88,6 +88,53 @@ Nunca reservó número, así que jamás llegó a AFIP y ningún cron la mira. Es
 
 ---
 
+## Chequeo diario — 5 minutos, una vez por día
+
+El sistema tiene tres puntos ciegos conocidos: **no avisa si un proceso automático se
+muere**, **un mismatch repetido se auto-silencia a la tercera noche**, y **un certificado
+vencido no tiene alerta propia**. Este chequeo los tapa. Son 6 preguntas.
+
+**1. ¿Llegó el aviso nocturno a Slack?**
+Tiene que estar, todas las mañanas. Si no está → ficha 10.
+
+**2. ¿Está vivo el proceso?**
+```bash
+ssh root@134.122.5.114 "pm2 list"
+```
+`online`, y que los `restarts` no hayan subido de golpe desde ayer.
+
+**3. ¿Los procesos automáticos siguen corriendo?**
+```bash
+pm2 logs tap-monday --nostream --lines 2000 | grep -E "\[reconcile-cron\]|\[audit-backfill\]" | tail -3
+```
+Tienen que ser de hace minutos, no de hace horas. **Esto es lo que el health no verifica.**
+
+**4. ¿Hay algo trabado?**
+```sql
+SELECT status, COUNT(*) FROM invoice_emissions
+WHERE created_at > NOW() - INTERVAL '24 hours' GROUP BY 1;
+```
+Algún `processing` es normal. Muchos, o uno de ayer, no.
+
+**5. ¿Hay discrepancias acumuladas?**
+```sql
+SELECT audit_status, COUNT(*) FROM invoice_emissions WHERE status='success' GROUP BY 1;
+```
+`mismatch` y `not_found_in_afip` tienen que dar **0**. Si hay y no llegó alerta, es porque
+se auto-silenciaron → ficha 3.
+
+**6. ¿Se vence algún certificado esta semana?**
+```sql
+SELECT company_id, expiration_date FROM afip_credentials ORDER BY expiration_date LIMIT 3;
+```
+Si alguno vence en menos de 15 días, avisale a Pamela **antes** de que el cliente no pueda
+facturar → ficha 12.
+
+> Anotá lo raro en algún lado, aunque no hagas nada. Si algo aparece tres días seguidos,
+> deja de ser ruido.
+
+---
+
 ## Diccionario mínimo
 
 Diez palabras. Sin esto no se entiende el resto.
@@ -576,6 +623,110 @@ SELECT id, cuit, monday_account_id, workspace_id FROM companies;
 
 ⚠️ **`companies.business_name` está cifrado en la base** y vas a ver `U2FsdGVkX1...`. Es
 normal. Identificá por `cuit` o `monday_account_id`.
+
+---
+
+# Procedimientos
+
+## Leer los logs sin ahogarse
+
+Todo lo que loguea el sistema lleva un prefijo entre corchetes. **Grepear por el prefijo es
+la diferencia entre encontrar algo y leer 3000 líneas.**
+
+| Prefijo | Qué es |
+|---|---|
+| `[emit]` | Emisión de una factura, paso a paso |
+| `[nc]` · `[fe]` | Nota de crédito/débito · Factura de exportación |
+| `[wsfe]` · `[wsfex]` | El diálogo crudo con AFIP (mercado interno · exportación) |
+| `[wsaa]` | El login contra AFIP. Los tokens duran 12 h |
+| `[padron-cron]` · `[padron-rec-cron]` | Refresco del padrón (emisor · receptores) |
+| `[reconcile-cron]` | El que rescata emisiones trabadas, **cada 5 min** |
+| `[nightly-audit]` | La auditoría de las 3 AM |
+| `[orphan-detector]` | Busca comprobantes que AFIP tiene y nosotros no |
+| `[audit-backfill]` | Rellena el tablero "Comp Emitidos", cada 15 min |
+| `[staging-proxy]` · `[guard-staging]` | El ruteo de staging hacia producción |
+| `[migrations]` | Solo al arrancar |
+
+```bash
+# Todo lo de un ítem puntual (el más útil cuando un cliente reporta algo)
+pm2 logs tap-monday --nostream --lines 3000 | grep "12717334630"
+
+# Qué pasó con una emisión
+pm2 logs tap-monday --nostream --lines 3000 | grep -E "\[emit\]|\[wsfe\]" | tail -40
+
+# Errores de verdad, sin el ruido
+pm2 logs tap-monday --nostream --lines 2000 | grep -iE "error|falló|rechaz" | tail -30
+```
+
+⚠️ **Cada request tiene un `X-Request-ID`** de 12 caracteres. Si lo tenés, grepealo: te
+trae toda la cadena de esa operación de una.
+
+---
+
+## Reiniciar sin romper nada
+
+```bash
+pm2 reload tap-monday --update-env
+```
+
+`reload` es gradual: el proceso viejo sigue atendiendo hasta que el nuevo está listo.
+
+⚠️ **Nunca uses `pm2 delete` + `pm2 start`.** Perdés la configuración de
+`ecosystem.config.js` (límites de memoria, rutas de log) y el proceso queda mal levantado.
+
+⚠️ **Reiniciar reprograma todos los procesos automáticos desde cero.** Si reiniciás a las
+2 AM, la auditoría de las 3 AM de esa noche no corre. No reinicies "por las dudas".
+
+Y un detalle que ya nos mordió: **el `reload` es gradual, así que un cambio no se ve al
+instante.** Si querés confirmar que el código nuevo está corriendo, mirá el `uptime`:
+
+```bash
+pm2 describe tap-monday | grep uptime     # tiene que ser de segundos, no de horas
+```
+
+---
+
+## Verificar que un deploy llegó de verdad
+
+**No alcanza con que GitHub Actions esté en verde.** Ya pasó dos veces que el workflow
+terminó bien y el código nunca llegó al servidor.
+
+```bash
+ssh root@134.122.5.114 "cd /opt/apps/App-monday && git log --oneline -1"
+```
+
+Ese commit tiene que ser el que pusheaste. Si no coincide, el deploy falló aunque diga OK.
+La causa más común: **alguien dejó un archivo suelto en el droplet** y el `git pull` se
+niega a pisarlo.
+
+```bash
+cd /opt/apps/App-monday && git status --porcelain    # archivos sueltos que van a chocar
+```
+
+---
+
+## Backup y restore
+
+**Sacar una copia** (tarda menos de un segundo):
+
+```bash
+D=$(grep ^DATABASE_URL= /opt/apps/App-monday/backend-repo/.env | cut -d= -f2-)
+pg_dump "$D" > /root/backups/defaultdb-$(date +%F-%H%M).sql
+```
+
+**Verificar que sirva** — que el archivo exista no alcanza:
+
+```bash
+F=$(ls -t /root/backups/*.sql | head -1)
+grep -c "^CREATE TABLE" "$F"                      # tienen que ser 17
+awk '/^COPY public.invoice_emissions/,/^\\\.$/' "$F" | wc -l
+psql "$D" -t -A -c "SELECT count(*) FROM invoice_emissions;"   # tiene que dar parecido
+```
+
+**Restaurar: NO lo hagas solo.** Restaurar pisa datos de clientes reales y es de las pocas
+cosas irreversibles del lado nuestro. Requiere Pamela **y** Martín. Si igual llega ese
+momento, lo mínimo: sacar un dump del estado actual **antes** de restaurar nada, para poder
+volver.
 
 ---
 
