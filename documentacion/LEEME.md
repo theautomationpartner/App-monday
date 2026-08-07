@@ -1,43 +1,74 @@
 # Cómo agregarle las capturas al PDF
 
-El PDF ya está hecho: **`Guia-Tecnica-Factura-ARCA.pdf`**. Tiene 5 lugares reservados para
-capturas, que hoy se ven como recuadros punteados.
+El PDF ya está hecho: **`Guia-Tecnica-Factura-ARCA.pdf`**. Tiene lugares reservados para
+capturas, que hoy se ven como recuadros punteados con el nombre del archivo que va ahí.
 
-## Los 5 lugares
+**Sacá la captura, guardala en `capturas/` con ese nombre exacto, y regenerá el PDF.**
 
-Sacá cada captura, guardala en la carpeta `capturas/` **con ese nombre exacto**, y listo.
+**No hace falta ponerlas todas.** Las que falten siguen mostrando el recuadro y el documento
+se entiende igual.
+
+---
+
+## Las capturas
+
+### Lo normal y el canal
 
 | Archivo | Qué mostrar |
 |---|---|
-| `capturas/01-slack-canal.png` | El canal `#make-errores-` con alertas reales |
-| `capturas/02-recovery-mismatch.png` | Una alerta de `[RECOVERY_MISMATCH]` en Slack |
-| `capturas/03-error-en-item.png` | Un ítem de monday con el comentario de error que deja la app |
-| `capturas/04-github-actions.png` | La pestaña **Actions** de GitHub con los pasos del deploy |
-| `capturas/05-tablero-pruebas.png` | El tablero de pruebas con los 12 ítems de error |
+| `exito-comprobante.png` | Un ítem con una **factura emitida bien**: el comentario con el CAE y el PDF adjunto |
+| `slack-canal.png` | El canal `#make-errores-` con alertas reales |
 
-**No hace falta poner las cinco.** Las que falten siguen mostrando el recuadro punteado y
-el documento se entiende igual.
+### Un error por tipo
 
-> Para la 03 y la 05, el tablero de pruebas ya tiene los 12 ítems cargados:
-> [Facturación con errores de test](https://the-automation-partner.monday.com/boards/18425062980)
+| Archivo | Qué mostrar |
+|---|---|
+| `error-a-recovery-mismatch.png` | La alerta de `[RECOVERY_MISMATCH]` en Slack |
+| `error-b-abandoned.png` | La alerta de `[ABANDONED]` en Slack |
+| `error-c-discrepancia.png` | La alerta `DISCREPANCIA AFIP` de la auditoría nocturna |
+| `error-d-afip-caido.png` | El comentario en el ítem cuando AFIP no responde |
+| `error-e-processing.png` | Un ítem con el estado en "Creando Comprobante" |
+| `error-f-dato-mal.png` | El comentario cuando el cliente cargó un dato mal |
+
+> Para los errores **D, E y F** tenés todo servido en el
+> [tablero de pruebas](https://the-automation-partner.monday.com/boards/18425062980):
+> los 12 ítems ya están cargados con sus errores y sus comentarios.
+>
+> Para **A, B y C** hay que buscar la alerta en el historial de Slack — son las que no se
+> pueden forzar a voluntad.
+
+### Cómo pasar a staging
+
+| Archivo | Qué mostrar |
+|---|---|
+| `staging-1-centro-desarrollo.png` | El Centro de Desarrollo con la app Factura ARCA |
+| `staging-2-version-nueva.png` | El botón "+ Versión nueva" y la Draft creada |
+| `staging-3-url-vista.png` | La pantalla de la **Vista del tablero** con el campo "URL externa" |
+| `staging-4-url-receta.png` | La receta **Crear Comprobante** con el campo "URL de ejecución" |
+
+### El deploy
+
+| Archivo | Qué mostrar |
+|---|---|
+| `github-actions.png` | La pestaña **Actions** de GitHub con los pasos del deploy |
+| `tablero-pruebas.png` | El tablero de pruebas con los 12 ítems de error |
+
+---
 
 ## Regenerar el PDF
 
 Doble click en **`generar-pdf.bat`**.
 
-Si no anda, la alternativa manual: abrí `guia-tecnica.html` en Chrome, `Ctrl+P`,
-destino **"Guardar como PDF"**, y guardalo encima del anterior.
+Si no anda: abrí `guia-tecnica.html` en Chrome, `Ctrl+P`, destino **"Guardar como PDF"**.
 
-## Si querés cambiarle el texto
+## Cambiar el texto
 
-Editá `guia-tecnica.html` —es texto plano, se entiende— y volvé a generar el PDF.
+Editá `guia-tecnica.html` —es texto plano— y volvé a generar el PDF.
 
 ---
 
 ## Los otros documentos
 
-Este PDF es **el panorama**: se lee entero una vez, en 15 minutos.
-
-Cuando ya hay un problema concreto, el documento es **`RUNBOOK.md`** (en la raíz del
-repositorio): 12 fichas de incidentes, se entra por el síntoma, con los comandos para
-copiar y pegar.
+Este PDF es **el panorama**. Cuando ya hay un problema concreto, el documento es
+**`RUNBOOK.md`** (en la raíz del repositorio): 12 fichas de incidentes, se entra por el
+síntoma, con los comandos para copiar y pegar.
