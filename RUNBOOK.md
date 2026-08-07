@@ -579,16 +579,111 @@ normal. Identificá por `cuit` o `monday_account_id`.
 
 ---
 
-# Para completar antes del lunes
+# Quién es quién
 
-Estos datos solo los tiene Martín. **Sin ellos el runbook queda cojo.**
+Sacado de la base de producción el 06/08/2026. **Toda consulta de diagnóstico empieza acá:
+"¿de quién es esta fila?"**
 
-- **Clientes:** ?? — quién es cada uno (nombre, CUIT, cuenta de monday, tablero, punto de
-  venta), quién es el contacto de cada uno, y por qué canal se le escribe.
-- **Slack:** ?? — a qué canal llegan estas alertas y quiénes están adentro.
-- **Credenciales:** ?? — quién tiene DigitalOcean, Cloudflare, monday, y la clave fiscal
-  de AFIP. Titular y suplente de cada una.
-- **Backups:** ?? — si el cluster de PostgreSQL tiene backups automáticos y cada cuánto.
-  *(La base pesa 15 MB: un `pg_dump` tarda segundos y conviene tener uno a mano.)*
-- **Contacto de emergencia de Martín:** ?? — cómo se lo ubica y qué califica como
-  emergencia.
+⚠️ Recordá que `business_name` está cifrado. **Identificá siempre por `cuit`** — esta tabla
+es la traducción.
+
+| Quién | CUIT | Cuenta monday | PV | Tableros | Emitidas |
+|---|---|---|---|---|---|
+| **Polifroni Puertas Srl** | `30637662755` | **30446835** ← otra cuenta | 7 | `18414569460` Fact Local<br>`18411065225` Facturación obra | **290** |
+| **eGrowers** (Sofía Alewarts) | `27333439692` | 28569993 | 2 | `18411071561` | **123** |
+| **The Automation Partner SA** | `30719434505` | 28569993 | 1 | `18415550350` | 38 |
+| **Martin Meliendrez** (dev) | `20327446348` | 28569993 | 5 | `18410634614` | 37 |
+| **Pamela Martinez** | `23329811484` | 28569993 | 4 | `18411959800` | 5 |
+| **test** (pruebas de error) | `20327446348` | 28569993 | 1 | `18425062980` | 0 · homologación |
+
+**Los dos que importan son Polifroni y eGrowers:** entre los dos son el 80% de la
+facturación real, y son los que van a escribir si algo falla.
+
+Cosas que conviene saber antes de diagnosticar:
+
+- **Polifroni está en OTRA cuenta de monday** (`30446835`). No la ves desde la cuenta de
+  ustedes. Y tiene **dos tableros** que facturan contra la misma numeración de AFIP, uno
+  local y uno de obra: que un número "falte" en un tablero no significa nada, puede estar
+  en el otro.
+- **La Batea todavía no existe** en el sistema. Si preguntan, no está dada de alta.
+- **Las plantillas ES/EN del Marketplace no son clientes**: son los tableros que se copian
+  cuando alguien instala la app.
+- Hay empresas repetidas con el mismo CUIT en workspaces distintos (Martín, TAP SA). Es
+  conocido y no es un error: cada workspace lleva su propia configuración.
+
+**Contacto de cada cliente:** ?? *(completar: quién le escribe a Polifroni y a eGrowers, y
+por qué canal).*
+
+---
+
+# El canal `#make-errores-` — qué llega y qué significa
+
+Es donde están todos los devs. **No todo lo que llega ahí es un problema.**
+
+| Lo que ves | Qué es | Acción |
+|---|---|---|
+| ✅ `Auditoria nocturna AFIP` | **La señal de vida diaria.** Llega todas las noches a las 3 AM, incluso si no hubo nada que auditar | Ninguna. **Que NO llegue sí es un problema** → ficha 10 |
+| 🚨 `Error sistema en facturación` | ⚠️ **Un mismo título rojo tapa 6 cosas distintas** | leé la línea `Error:` ↓ |
+| 🚨 `DISCREPANCIA AFIP` | Lo que registramos no coincide con AFIP | ficha 3 🔴 |
+| 🟡 `Conciliación AFIP — sin registrar` | AFIP tiene comprobantes que nosotros no | ficha 8 🟡 |
+| ⚠️ `Condición de IVA no reconocida` | La factura **salió bien**. Es una nota para después | ninguna ⚪ |
+
+**El `Error sistema` se abre por la línea `Error:`.** Es lo más importante de esta página,
+porque el mismo título va desde "esperá" hasta "esto es plata":
+
+| Si `Error:` empieza con… | Qué es | Ficha |
+|---|---|---|
+| `[RECOVERY_MISMATCH]` | 🔴 **La factura NO se emitió** y el sistema no la va a reintentar nunca | 1 |
+| `[ABANDONED]` | 🔴 Reservó número y AFIP dice que no existe | 2 |
+| `Esta es la instancia de PRUEBA (staging)` | 🔴 Un cliente real cayó en staging y está esperando respuesta | 9 |
+| `503` · `ETIMEDOUT` · `ECONNRESET` | 🟡 Se cayó AFIP. No es nuestro | 5 |
+| `[FASE2_MISMATCH]` | ⚪ La factura **sí** tiene CAE. Informativo | 11 |
+
+---
+
+# Accesos — quién tiene qué
+
+| | Quién |
+|---|---|
+| **SSH al servidor** | Cada dev con su clave → [cómo pedirlo](EMPEZA-ACA.md#conseguir-acceso-al-servidor) |
+| **Centro de Desarrollo de monday** | Todos, con la cuenta de dev |
+| **Slack `#make-errores-`** | Todos los devs |
+| **Panel de DigitalOcean** | ⚠️ **Solo Martín (el jefe)** |
+| **Cloudflare** | ⚠️ Solo Martín |
+| **Clave fiscal de AFIP** | **Nadie de nosotros.** Cada cliente tiene la suya |
+
+Dos consecuencias prácticas:
+
+**Si el servidor no responde ni por SSH, hay que llamar a Martín.** Es el único que puede
+entrar por la consola web de DigitalOcean o reiniciar el droplet.
+
+**Nunca vamos a poder entrar a AFIP por un cliente.** Cuando una ficha dice "verificar en
+AFIP web", eso lo hace **el cliente**, o Pamela con él. Nosotros solo consultamos por la
+API — que es lo que hacen los endpoints de administración.
+
+---
+
+# Backups
+
+**Estado: ?? — confirmar con Martín**, el único con acceso al panel de DigitalOcean.
+
+Pero **no dependemos de eso**: la base entera pesa 15 MB y podemos sacar nuestra propia
+copia con las credenciales que ya tenemos en el servidor.
+
+```bash
+ssh root@134.122.5.114
+DATABASE_URL=$(grep ^DATABASE_URL= /opt/apps/App-monday/backend-repo/.env | cut -d= -f2-)
+pg_dump "$DATABASE_URL" > /root/backup-$(date +%F).sql
+ls -lh /root/backup-*.sql
+```
+
+Tarda segundos. **Bajate el archivo a tu máquina**: un backup que vive en el mismo servidor
+no te salva si el servidor se muere.
+
+---
+
+# Falta completar
+
+- **Contacto de Polifroni y de eGrowers:** ?? — quién les escribe y por dónde
+- **Backups automáticos:** ?? — confirmar con Martín si el cluster los tiene
+- **Contacto de emergencia del creador:** ?? — cómo se lo ubica
