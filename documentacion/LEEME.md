@@ -39,12 +39,16 @@ se entiende igual.
 
 ### Cómo pasar a staging
 
-| Archivo | Qué mostrar |
+Estas son las que más ayudan. **Poneles un círculo rojo donde hay que hacer click** —
+en Windows se hace con la Herramienta Recortes, o con Paint.
+
+| Archivo | Qué mostrar · dónde va el círculo |
 |---|---|
-| `staging-1-centro-desarrollo.png` | El Centro de Desarrollo con la app Factura ARCA |
-| `staging-2-version-nueva.png` | El botón "+ Versión nueva" y la Draft creada |
-| `staging-3-url-vista.png` | La pantalla de la **Vista del tablero** con el campo "URL externa" |
-| `staging-4-url-receta.png` | La receta **Crear Comprobante** con el campo "URL de ejecución" |
+| `staging-1-centro-desarrollo.png` | `apps/manage` → **Mis apps**. Círculo en la fila "Factura ARCA" |
+| `staging-2-version-nueva.png` | Círculo en el botón **"+ Versión nueva"** (arriba a la izquierda) |
+| `staging-3-url-receta.png` | La función **1-Click Voucher Generation**. Círculo en el campo **"URL de ejecución"** |
+| `staging-4-url-vista.png` | La función **Electronic Invoicing**. Círculo en **"Establecer la URL que se va a mostrar"** |
+| `staging-5-eliminar-version.png` | El menú **"…"** abierto en la fila del Borrador. Círculo en **"Eliminar versión"** |
 
 ### El deploy
 

@@ -172,8 +172,8 @@ entorno de AFIP.</p>
     <text x="515" y="192" text-anchor="middle" font-size="9.5">pm2 "tap-monday-staging" · 3001</text>
     <text x="515" y="208" text-anchor="middle" font-size="9.5">branch develop</text>
     <text x="515" y="230" text-anchor="middle" font-size="10" font-weight="600">base: stagingdb</text>
-    <text x="515" y="248" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e7e46">AFIP de prueba SOLO para</text>
-    <text x="515" y="262" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e7e46">los tableros de Martín</text>
+    <text x="515" y="248" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e7e46">AFIP de prueba SOLO para el</text>
+    <text x="515" y="262" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e7e46">tablero de pruebas</text>
     <text x="515" y="276" text-anchor="middle" font-size="8.5" fill="#c0392b">todo lo demás lo reenvía a producción</text>
 
     <text x="350" y="326" text-anchor="middle" font-size="10.5" font-weight="600">Se deploya solo</text>
@@ -183,15 +183,26 @@ entorno de AFIP.</p>
 </svg>
 
 <div class="peligro">
-  <span class="etq">Cuidado con "staging es de prueba" — no siempre</span>
-  <p>Staging apunta al AFIP de homologación, <b>pero solo procesa los tableros de un puñado
-  de workspaces de desarrollo, que son todos del CUIT de Martín.</b></p>
-  <p><b>Cualquier otro tablero que llegue a staging NO va a homologación: se reenvía a
-  producción y emite un CAE real.</b> Es a propósito — así, si un cliente cae ahí por error,
-  su factura sale igual y no se pierde.</p>
-  <p style="margin-top:8px">Consecuencia práctica: <b>no alcanza con "estar en staging" para
-  probar tranquilo.</b> Lo que hace seguro al tablero de pruebas es que tiene
-  <b>certificado de homologación</b>, no el entorno.</p>
+  <span class="etq">Cuidado — "estar en staging" NO alcanza para probar tranquilo</span>
+  <p>Staging apunta al AFIP de homologación, <b>pero solo procesa localmente los tableros de
+  tres workspaces de desarrollo.</b> Hoy, en la práctica, son estos dos:</p>
+  <table style="margin:8px 0">
+    <tr><th style="width:150px">Tablero</th><th>Qué pasa si emite estando en staging</th></tr>
+    <tr>
+      <td><b>Tablero de pruebas</b><br><code>18425062980</code></td>
+      <td>✅ va a <b>homologación</b>. Y además tiene certificado de homologación, así que no
+      puede emitir nada real ni queriendo</td>
+    </tr>
+    <tr>
+      <td>Plantilla ES<br><code>18410634614</code></td>
+      <td>va a homologación, pero <b>no se usa para facturar</b></td>
+    </tr>
+  </table>
+  <p><b>Cualquier otro tablero —incluido el de facturación de Martín— NO va a homologación:
+  se reenvía a producción y emite un CAE real.</b> Es a propósito: si un cliente cae ahí por
+  error, su factura sale igual en vez de perderse.</p>
+  <p style="margin-top:8px"><b>Para probar, usá siempre el tablero de pruebas.</b> Es el
+  único donde no se puede romper nada.</p>
 </div>
 
 <h3>Qué pasa cuando alguien emite una factura</h3>
@@ -245,16 +256,20 @@ busca comprobantes que <b>AFIP tiene y nosotros no</b>.</p>
 monday sigue mandando todo a producción. Hay que decirle a monday que apunte a staging, y
 eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
 
-<div class="cuidado">
-  <span class="etq">Esta semana esto está prohibido</span>
-  <p>Una Draft activa afecta a <b>todos los tableros de la cuenta de TAP</b>, no solo al
-  tuyo. Queda documentado para cuando haga falta, pero mientras Martín no esté,
-  <b>nadie crea Drafts</b>.</p>
+<div class="dato">
+  <span class="etq">Cuándo se hace esto</span>
+  <p>Solo cuando estás <b>probando un cambio o resolviendo un error</b> y querés verlo
+  funcionar antes de que lo vean los clientes. Se crea la Draft, se prueba, y
+  <b>cuando el arreglo está listo se pasa a producción y se borra la Draft</b>.</p>
+  <p style="margin-top:8px">No es algo que quede puesto: mientras la Draft exista,
+  <b>todos los tableros de la cuenta de TAP</b> apuntan a staging, no solo el tuyo.</p>
 </div>
 
 <div class="paso">
   <h3><span class="num">1</span>Entrar al Centro de Desarrollo</h3>
-  <p>En monday: <b>tu avatar → Desarrolladores</b>, y abrí la app <b>Factura ARCA</b>.</p>
+  <p><code>the-automation-partner.monday.com/apps/manage</code> → <b>Mis apps</b> → abrí
+  <b>"Factura ARCA: Factura Electrónica Argentina"</b> (la primera de la lista, con estado
+  <i>Mercado</i>).</p>
   <figure>
     <img src="capturas/staging-1-centro-desarrollo.png" alt="Centro de Desarrollo de monday"
          onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El Centro de Desarrollo con la app Factura ARCA.&lt;br&gt;&lt;code&gt;capturas/staging-1-centro-desarrollo.png&lt;/code&gt;&lt;/div&gt;'">
@@ -263,8 +278,14 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
 
 <div class="paso">
   <h3><span class="num">2</span>Crear una versión nueva</h3>
-  <p>Click en <b>"+ Versión nueva"</b>. Queda como <b>Borrador (Draft)</b> — no la promuevas
-  a Live.</p>
+  <p>Arriba a la izquierda, debajo del nombre de la app, click en <b>"+ Versión nueva"</b>.</p>
+  <p>Se crea la siguiente (v41, v42…) con estado <b>Borrador</b>, y queda seleccionada como
+  <b>Activo</b>. <b>No toques el botón azul "Publicar"</b> — eso la mandaría a producción.</p>
+  <div class="dato">
+    <span class="etq">Por qué hace falta una versión nueva</span>
+    <p>La versión que está <b>En vivo</b> aparece como <i>"bloqueada para cambios"</i>: no se
+    le pueden editar las URLs. Por eso el flujo empieza creando una.</p>
+  </div>
   <figure>
     <img src="capturas/staging-2-version-nueva.png" alt="Crear una versión nueva"
          onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El botón de crear versión nueva y la Draft ya creada.&lt;br&gt;&lt;code&gt;capturas/staging-2-version-nueva.png&lt;/code&gt;&lt;/div&gt;'">
@@ -273,30 +294,40 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
 
 <div class="paso">
   <h3><span class="num">3</span>Cambiar las dos URLs a staging</h3>
-  <p>Dentro de la Draft hay que cambiar <b>dos cosas</b>, las dos de
-  <code>arca.</code> a <code>staging.</code>:</p>
+  <p>En el menú de la izquierda: <b>Crea → Funciones</b>. De las 5 funciones de la lista,
+  hay que tocar <b>dos</b>. En las dos se cambia <code>arca.</code> por
+  <code>staging.</code> y nada más.</p>
   <table>
-    <tr><th style="width:44%">Dónde</th><th>Qué poner</th></tr>
+    <tr><th style="width:38%">Función</th><th>Campo</th><th>Qué poner</th></tr>
     <tr>
-      <td><b>Crea → Funciones → Vista del tablero</b><br>
-      <span style="color:#5b6470">campo "URL externa"</span></td>
+      <td><b>1-Click Voucher Generation</b><br>
+      <span style="color:#5b6470">Bloque de automatización</span></td>
+      <td>Configuración de API →<br><b>URL de ejecución</b></td>
+      <td><code>https://staging.theautomationpartner.com/api/comprobantes/emit</code></td>
+    </tr>
+    <tr>
+      <td><b>Electronic Invoicing</b><br>
+      <span style="color:#5b6470">Vista del tablero</span></td>
+      <td>Deployment →<br><b>Establecer la URL que se va a mostrar</b></td>
       <td><code>https://staging.theautomationpartner.com</code></td>
     </tr>
-    <tr>
-      <td><b>Crea → Funciones → Crear Comprobante</b><br>
-      <span style="color:#5b6470">campo "URL de ejecución"</span></td>
-      <td><code>https://staging.theautomationpartner.com/api/invoices/emit</code></td>
-    </tr>
   </table>
+  <div class="cuidado">
+    <span class="etq">La que importa es la primera</span>
+    <p><b>1-Click Voucher Generation</b> es la que se llama al emitir: si no la cambiás, la
+    factura sigue saliendo por producción aunque la vista apunte a staging.</p>
+    <p style="margin-top:6px">En cada función, después de editar, <b>"Guardar cambios"</b>
+    abajo a la derecha.</p>
+  </div>
   <figure>
-    <img src="capturas/staging-3-url-vista.png" alt="Dónde se cambia la URL de la vista"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La pantalla de la Vista del tablero con el campo URL externa.&lt;br&gt;&lt;code&gt;capturas/staging-3-url-vista.png&lt;/code&gt;&lt;/div&gt;'">
-    <figcaption>La URL de la vista — lo que se ve al abrir la app en un tablero.</figcaption>
+    <img src="capturas/staging-3-url-receta.png" alt="URL de ejecucion de la receta"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «1-Click Voucher Generation», con un círculo en el campo «URL de ejecución».&lt;br&gt;&lt;code&gt;capturas/staging-3-url-receta.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Esta es la que importa: es la URL que monday llama al emitir.</figcaption>
   </figure>
   <figure>
-    <img src="capturas/staging-4-url-receta.png" alt="Dónde se cambia la URL de la receta"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La receta «Crear Comprobante» con el campo URL de ejecución.&lt;br&gt;&lt;code&gt;capturas/staging-4-url-receta.png&lt;/code&gt;&lt;/div&gt;'">
-    <figcaption>La URL de la receta — la que se llama al emitir. Es la que importa.</figcaption>
+    <img src="capturas/staging-4-url-vista.png" alt="URL de la vista del tablero"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «Electronic Invoicing», con un círculo en «Establecer la URL que se va a mostrar».&lt;br&gt;&lt;code&gt;capturas/staging-4-url-vista.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>La de la vista — lo que se ve al abrir la app en un tablero.</figcaption>
   </figure>
 </div>
 
@@ -310,10 +341,22 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
 </div>
 
 <div class="paso">
-  <h3><span class="num">5</span>Borrar la Draft cuando terminaste</h3>
-  <p><b>Este paso no es opcional.</b> Mientras la Draft exista, los tableros de la cuenta
-  siguen apuntando a staging.</p>
-  <p>Centro de Desarrollo → Factura ARCA → la versión Draft → menú <b>"…"</b> → Eliminar.</p>
+  <h3><span class="num">5</span>Pasar a producción y borrar la Draft</h3>
+  <p>Cuando el arreglo está probado, se mergea a <code>main</code> (paso 5 de la sección
+  siguiente) y <b>se borra la Draft</b>.</p>
+  <p><b>Gestiona → Versiones de la aplicación</b> → en la fila de la versión
+  <b>Borrador</b>, el menú <b>"…"</b> de la derecha → <b>Eliminar versión</b>.</p>
+  <div class="peligro">
+    <span class="etq">Ojo con ese menú</span>
+    <p>En el mismo menú está <b>"Publicar"</b>, que pone esa versión En vivo — con las URLs
+    apuntando a <b>staging</b>, para todos los clientes. <b>La opción es "Eliminar
+    versión".</b></p>
+  </div>
+  <figure>
+    <img src="capturas/staging-5-eliminar-version.png" alt="Menú para eliminar la versión Draft"
+         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El menú «…» abierto en la fila del Borrador, con un círculo en «Eliminar versión».&lt;br&gt;&lt;code&gt;capturas/staging-5-eliminar-version.png&lt;/code&gt;&lt;/div&gt;'">
+    <figcaption>Cuidado: «Publicar» está justo arriba de «Eliminar versión».</figcaption>
+  </figure>
   <div class="ok">
     <span class="etq">Por qué es seguro borrarla</span>
     <p>Una vez que el código está en producción, la versión Live ya sirve el código nuevo
