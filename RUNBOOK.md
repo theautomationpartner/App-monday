@@ -48,6 +48,10 @@ Mientras Martín no está, estas tres cosas eliminan la mitad de los incidentes 
 
 ## ¿Está sano? — chequeo de 2 minutos
 
+> **¿No entrás al servidor?** El acceso se pide una sola vez y son 3 pasos:
+> ver **[EMPEZA-ACA.md → Conseguir acceso al servidor](EMPEZA-ACA.md#conseguir-acceso-al-servidor)**.
+> Hacelo **antes** de que haya un incidente, no durante.
+
 ```bash
 ssh root@134.122.5.114
 

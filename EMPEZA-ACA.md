@@ -88,6 +88,49 @@ Los mejores para entender el sistema: `src/modules/recoveryGuard.js` y
 
 ---
 
+## Conseguir acceso al servidor
+
+Sin esto no podés hacer nada de lo que dice el runbook. Son 3 pasos y se hace una sola vez.
+
+**1. Generá tu clave** (en tu máquina):
+
+```bash
+ssh-keygen -t ed25519 -C "tunombre@theautomationpartner.com"
+```
+Enter en todas las preguntas. Te crea dos archivos en `~/.ssh/`.
+
+**2. Copiá tu clave pública y mandásela a quien administra el servidor:**
+
+```bash
+cat ~/.ssh/id_ed25519.pub
+```
+
+Eso empieza con `ssh-ed25519 AAAA...`. **Es pública: se puede mandar por Slack tranquilo.**
+
+⚠️ El otro archivo, el que **NO** termina en `.pub`, es tu clave privada. **Esa no se
+comparte nunca, con nadie.**
+
+**3. Probá que entrás:**
+
+```bash
+ssh root@134.122.5.114 "pm2 list"
+```
+
+Si te devuelve la lista de procesos, ya está.
+
+> **Para quien agrega la clave** (una línea por persona):
+> ```bash
+> ssh root@134.122.5.114
+> echo "ssh-ed25519 AAAA... nombre@theautomationpartner.com" >> /root/.ssh/authorized_keys
+> ```
+> ⚠️ **`>>` agrega. `>` borra todo.** Si te equivocás de signo se quedan todos afuera y hay
+> que entrar por la consola web de DigitalOcean.
+
+Todos entran como `root`, así que **cualquiera puede romper cualquier cosa**. Por eso la
+regla de "ante la duda no toques" vale doble acá adentro.
+
+---
+
 ## Los 4 comandos que más vas a usar
 
 ```bash
