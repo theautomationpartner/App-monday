@@ -71,7 +71,7 @@
              text-transform:uppercase; color:var(--suave); padding-top:2.5px}
   .fila .txt{flex:1}
   .fila.no .rot, .fila.no .txt{color:var(--rojo)}
-  table, figure, .caja, pre{page-break-inside:avoid}
+  table, figure, pre, .peligro, .cuidado, .ok, .dato, ul, ol{page-break-inside:avoid}
   h3, h4{page-break-after:avoid}
   .salto{page-break-before:always}
   h2,h3{page-break-after:avoid} pre,table,.caja{page-break-inside:avoid}
@@ -123,17 +123,12 @@
   </tr>
 </table>
 
-<div class="cuidado">
-  <span class="etq">Dos tableros que NO son de clientes</span>
-  <ul>
-    <li><b>Plantilla en español</b> (<code>18410634614</code>) — es el tablero que se copia
-    cuando alguien instala la app. <b>No debería usarse para facturar.</b> Tiene emisiones
-    viejas de cuando se lo usó para probar.</li>
-    <li><b>Tablero de pruebas</b> —
-    <a href="https://the-automation-partner.monday.com/boards/18425062980">Facturación con
-    errores de test</a>. Este sí es el que hay que usar para probar. Tiene certificado de
-    homologación: <b>no puede emitir nada real</b>.</li>
-  </ul>
+<div class="ok">
+  <span class="etq">Y un tablero que no es de ningún cliente</span>
+  <p><b><a href="https://the-automation-partner.monday.com/boards/18425062980">Facturación
+  con errores de test</a></b> — el tablero donde se prueba. Es el único que staging procesa
+  contra el <b>AFIP de homologación</b>, y además tiene certificado de homologación:
+  <b>no puede emitir nada real</b>.</p>
 </div>
 
 <div class="dato">
@@ -199,19 +194,8 @@ entorno de AFIP.</p>
 <div class="peligro">
   <span class="etq">Cuidado — "estar en staging" NO alcanza para probar tranquilo</span>
   <p>Staging apunta al AFIP de homologación, <b>pero solo procesa localmente los tableros de
-  tres workspaces de desarrollo.</b> Hoy, en la práctica, son estos dos:</p>
-  <table style="margin:8px 0">
-    <tr><th style="width:150px">Tablero</th><th>Qué pasa si emite estando en staging</th></tr>
-    <tr>
-      <td><b>Tablero de pruebas</b><br><code>18425062980</code></td>
-      <td>✅ va a <b>homologación</b>. Y además tiene certificado de homologación, así que no
-      puede emitir nada real ni queriendo</td>
-    </tr>
-    <tr>
-      <td>Plantilla ES<br><code>18410634614</code></td>
-      <td>va a homologación, pero <b>no se usa para facturar</b></td>
-    </tr>
-  </table>
+  tres workspaces de desarrollo.</b> Hoy, en la práctica, hay uno solo que importe: el
+  <b>tablero de pruebas</b> (<code>18425062980</code>).</p>
   <p><b>Cualquier otro tablero —incluido el de facturación de Martín— NO va a homologación:
   se reenvía a producción y emite un CAE real.</b> Es a propósito: si un cliente cae ahí por
   error, su factura sale igual en vez de perderse.</p>
@@ -478,14 +462,6 @@ devs.</p>
   lo resuelve Pamela con una nota de crédito.</figcaption>
 </figure>
 
-<div class="dato">
-  <span class="etq">Sobre las imágenes de alertas de este documento</span>
-  <p>Las rojas aparecen cada varios meses: no se pudo esperar a que pasaran, ni provocarlas
-  sin romper una emisión real. Están <b>reconstruidas</b> — el texto sale literal de las
-  plantillas del código, los datos son inventados. Se regeneran con
-  <code>node documentacion/hacer-capturas-slack.js</code>.</p>
-</div>
-
 <h3>Las seis fichas</h3>
 
 <p>Cada una se lee en 20 segundos. <b>La línea roja es la que importa</b>: es lo que no
@@ -667,7 +643,8 @@ siguientes.</p>
 <h3>Accesos</h3>
 <table>
   <tr><th style="width:230px">Qué</th><th>Quién lo tiene</th></tr>
-  <tr><td>SSH al servidor</td><td>cada dev con su propia clave</td></tr>
+  <tr><td>SSH al servidor</td><td><code>root@134.122.5.114</code> — <b>una sola clave para
+  todos</b>, la reparte Martín</td></tr>
   <tr><td>Centro de Desarrollo de monday</td><td>todos, con la cuenta de dev</td></tr>
   <tr><td>Slack <code>#make-errores-</code></td><td>todos los devs</td></tr>
   <tr><td><b>Panel de DigitalOcean</b></td><td><b>solo Martín</b></td></tr>
@@ -676,11 +653,12 @@ siguientes.</p>
 </table>
 
 <div class="cuidado">
-  <span class="etq">Dos consecuencias prácticas</span>
-  <p><b>Si el servidor no responde ni por SSH, hay que llamar a Martín.</b> Es el único que
-  puede entrar por la consola de DigitalOcean.</p>
-  <p><b>Nunca vamos a poder entrar a AFIP por un cliente.</b> Cuando algo dice "verificar en
-  AFIP web", eso lo hace <b>el cliente</b>, o Pamela con él.</p>
+  <span class="etq">Todos entran como root</span>
+  <p>No hay un usuario por persona: es la misma clave para todos, y <b>root puede romper
+  cualquier cosa</b>. Por eso lo de "ante la duda no toques" vale doble adentro del
+  servidor.</p>
+  <p style="margin-top:8px"><b>Si el servidor no responde ni por SSH, hay que llamar a
+  Martín.</b> Es el único que puede entrar por la consola de DigitalOcean.</p>
 </div>
 
 <h3>Los comandos que más se usan</h3>
@@ -696,21 +674,46 @@ curl -s https://arca.theautomationpartner.com/api/health</code></pre>
 <ol>
   <li><b>¿Llegó el aviso nocturno a Slack?</b> Tiene que estar todas las mañanas.</li>
   <li><b>¿Está vivo el proceso?</b> <code>pm2 list</code> — online, sin restarts nuevos.</li>
-  <li><b>¿Los procesos automáticos corren?</b> Buscar <code>[reconcile-cron]</code> en los
-  logs: tiene que ser de hace minutos, no de hace horas.</li>
+  <li><b>¿Corren los procesos automáticos?</b> <code>[reconcile-cron]</code> en los logs, de hace minutos y no de hace horas.</li>
   <li><b>¿Hay algo trabado?</b> Emisiones en <code>processing</code> de más de una hora.</li>
   <li><b>¿Hay discrepancias acumuladas?</b> Tienen que dar cero.</li>
-  <li><b>¿Se vence algún certificado?</b> Si falta menos de 15 días, avisarle a Pamela.</li>
 </ol>
 
-<div class="dato">
-  <span class="etq">Dónde seguir</span>
-  <p>El detalle completo —12 fichas de incidentes con comandos, entrando por el síntoma—
-  está en <b>RUNBOOK.md</b>, en la raíz del repositorio. Este documento es el panorama;
-  el runbook es la herramienta cuando ya hay un problema.</p>
+<h3>Los otros documentos</h3>
+
+<p>Están todos en el repositorio:
+<a href="https://github.com/theautomationpartner/App-monday"><code>github.com/theautomationpartner/App-monday</code></a></p>
+
+<table>
+  <tr><th style="width:150px">Archivo</th><th>Para qué</th></tr>
+  <tr>
+    <td><b>RUNBOOK.md</b></td>
+    <td><b>Se rompió algo y hay un cliente esperando.</b> 12 fichas, se entra por el síntoma</td>
+  </tr>
+  <tr><td>EMPEZA-ACA.md</td><td>Primer día en el proyecto: cómo conseguir los accesos y los primeros comandos</td></tr>
+  <tr><td>CLAUDE.md</td><td>Vas a tocar código. El detalle fino de cada parte</td></tr>
+</table>
+
+<h3>Trabajar con Claude Code</h3>
+
+<p>Es como se viene trabajando acá: se le pide en castellano y arma los comandos. <b>El
+repositorio ya está preparado</b> — el <code>CLAUDE.md</code> de la raíz lo lee solo al
+abrirse, con las reglas del proyecto y qué no se toca.</p>
+
+<pre><code>npm install -g @anthropic-ai/claude-code   # una vez, necesita Node 18+
+
+cd App-monday
+claude                                     # y se le habla en castellano</code></pre>
+
+<div class="cuidado">
+  <span class="etq">Dos cosas, igual</span>
+  <p><b>Lo que propone se lee antes de aceptarlo</b>, sobre todo si toca la base o AFIP. Las
+  reglas de este documento no cambian porque el comando lo haya escrito otro.</p>
+  <p style="margin-top:8px">Para investigar sin riesgo, pedile modo de solo lectura: mirar
+  logs, consultar la base y explicar qué pasó no necesita permiso de escritura.</p>
 </div>
 
-<p class="meta" style="margin-top:34px; border-top:1px solid var(--linea); padding-top:12px">
+<p class="meta" style="margin-top:16px; border-top:1px solid var(--linea); padding-top:9px">
   Factura ARCA · Guía técnica · 7 de agosto de 2026<br>
   Los datos de uso salen de la base de producción, no de estimaciones.
 </p>
