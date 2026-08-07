@@ -42,6 +42,7 @@ To Delete after do/
 /*_00000*.pdf
 /board_automations_*.csv
 
-# El PDF se regenera con documentacion/generar-pdf.bat
-documentacion/*.pdf
+# El PDF de la guia tecnica SI va versionado, aunque sea generado: es el
+# entregable. Quien lo necesita —el equipo, la jefa— tiene que poder bajarlo
+# del repo sin instalar Chrome ni correr un .bat.
 .tmp-slack/
