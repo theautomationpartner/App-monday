@@ -1,12 +1,9 @@
-# Cómo agregarle las capturas al PDF
+# La guía técnica
 
-El PDF ya está hecho: **`Guia-Tecnica-Factura-ARCA.pdf`**. Tiene lugares reservados para
-capturas, que hoy se ven como recuadros punteados con el nombre del archivo que va ahí.
+**`Guia-Tecnica-Factura-ARCA.pdf`** — 17 páginas, con las 13 capturas puestas.
+**Está terminada**: se puede entregar así.
 
-**Sacá la captura, guardala en `capturas/` con ese nombre exacto, y regenerá el PDF.**
-
-**No hace falta ponerlas todas.** Las que falten siguen mostrando el recuadro y el documento
-se entiende igual.
+Este archivo explica de dónde salió cada imagen, por si hay que rehacer alguna.
 
 ---
 
@@ -38,21 +35,20 @@ cd documentacion
 node hacer-capturas-slack.js && powershell -File recortar-slack.ps1
 ```
 
-### Las que faltan — estas sí hay que sacarlas
+### El canal
 
-| Archivo | Qué mostrar |
-|---|---|
-| `error-d-afip-caido.png` | El comentario en el ítem cuando AFIP no responde |
-| `error-e-processing.png` | Un ítem con el estado en "Creando Comprobante" |
-| `error-f-dato-mal.png` | El comentario cuando el cliente cargó un dato mal |
-| `slack-canal.png` | El canal `#make-errores-` con varias alertas seguidas |
-| `github-actions.png` | La pestaña **Actions** de GitHub con los pasos del deploy |
-| `tablero-pruebas.png` | El tablero de pruebas con los 12 ítems de error |
+`slack-canal.png` — el canal `#make-errores-` con el aviso nocturno y un error de Make.
 
-> **D, E y F** los tenés servidos en el
-> [tablero de pruebas](https://the-automation-partner.monday.com/boards/18425062980):
-> los 12 ítems ya están cargados con sus errores y sus comentarios. Son 3 capturas de la
-> pantalla, sin emitir nada.
+### Si algún día se quieren agregar
+
+Las fichas **D, E y F** (AFIP caído, trabado en "Creando", dato mal cargado) no llevan
+imagen: el texto se entiende solo. Si se quiere agregarla, las tres se sacan del
+[tablero de pruebas](https://the-automation-partner.monday.com/boards/18425062980), que ya
+tiene los 12 ítems cargados con sus errores y sus comentarios. Son capturas de pantalla,
+**sin emitir nada**.
+
+El slot se agrega en `guia-tecnica.html`, adentro del `<div class="cuerpo">` de la ficha,
+copiando el `<figure>` de cualquier otra.
 
 ### Cómo pasar a staging — ✅ ya están
 

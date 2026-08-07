@@ -59,18 +59,20 @@
   .num{background:var(--tinta); color:#fff; width:21px; height:21px; border-radius:50%;
        display:inline-flex; align-items:center; justify-content:center; font-size:9pt;
        font-weight:700; margin-right:7px; vertical-align:middle}
-  .ficha{border:1px solid var(--linea); border-radius:7px; margin:0 0 18px;
+  .ficha{border:1px solid var(--linea); border-radius:7px; margin:0 0 13px;
          page-break-inside:avoid; overflow:hidden}
-  .ficha h4{margin:0; padding:8px 14px; background:#f4f6f8; font-size:11pt;
+  .ficha h4{margin:0; padding:6px 14px; background:#f4f6f8; font-size:11pt;
             border-bottom:1px solid var(--linea)}
-  .ficha .cuerpo{padding:4px 14px 10px}
-  .ficha figure{margin:11px 0 4px}
-  .fila{display:flex; gap:13px; padding:7px 0; border-top:1px solid #eff1f4}
+  .ficha .cuerpo{padding:2px 14px 6px}
+  .ficha figure{margin:8px 0 3px}
+  .fila{display:flex; gap:13px; padding:5px 0; border-top:1px solid #eff1f4}
   .fila:first-child{border-top:0}
   .fila .rot{flex:0 0 84px; font-weight:700; font-size:8pt; letter-spacing:.6px;
              text-transform:uppercase; color:var(--suave); padding-top:2.5px}
   .fila .txt{flex:1}
   .fila.no .rot, .fila.no .txt{color:var(--rojo)}
+  table, figure, .caja, pre{page-break-inside:avoid}
+  h3, h4{page-break-after:avoid}
   .salto{page-break-before:always}
   h2,h3{page-break-after:avoid} pre,table,.caja{page-break-inside:avoid}
   @page{size:A4; margin:15mm 13mm}
@@ -83,7 +85,7 @@
   <h1>Factura ARCA</h1>
   <p class="sub">Guía técnica — cómo funciona y cómo resolver un problema</p>
   <p class="meta">
-    App de facturación electrónica AFIP para monday.com · Versión del 6 de agosto de 2026<br>
+    App de facturación electrónica AFIP para monday.com · Versión del 7 de agosto de 2026<br>
     Escrita para el equipo técnico.
   </p>
 </div>
@@ -339,13 +341,6 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
       <td><code>https://staging.theautomationpartner.com</code></td>
     </tr>
   </table>
-  <div class="cuidado">
-    <span class="etq">La que importa es la primera</span>
-    <p><b>1-Click Voucher Generation</b> es la que se llama al emitir: si no la cambiás, la
-    factura sigue saliendo por producción aunque la vista apunte a staging.</p>
-    <p style="margin-top:6px">En cada función, después de editar, <b>"Guardar cambios"</b>
-    abajo a la derecha.</p>
-  </div>
   <figure>
     <img src="capturas/staging-5-url-receta.png" alt="URL de ejecucion de la receta"
          onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La función «1-Click Voucher Generation», con un círculo en el campo «URL de ejecución».&lt;br&gt;&lt;code&gt;capturas/staging-5-url-receta.png&lt;/code&gt;&lt;/div&gt;'">
@@ -361,6 +356,13 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
     <i>Alojamiento externo</i> ya elegido. Esta va sin nada atrás: solo el dominio. El botón
     de guardar queda más abajo, hay que scrollear.</figcaption>
   </figure>
+  <div class="cuidado">
+    <span class="etq">La que importa es la primera</span>
+    <p><b>1-Click Voucher Generation</b> es la que se llama al emitir: si no la cambiás, la
+    factura sigue saliendo por producción aunque la vista apunte a staging.</p>
+    <p style="margin-top:6px">En cada función, después de editar, <b>"Guardar cambios"</b>
+    abajo a la derecha.</p>
+  </div>
 </div>
 
 <div class="paso">
@@ -534,10 +536,6 @@ tiene vuelta atrás.</p>
 <div class="ficha">
   <h4><span class="sev s-media">MEDIA</span> &nbsp; D · AFIP está caído <span style="font-weight:400;color:#5b6470">— lo más probable de todo</span></h4>
   <div class="cuerpo">
-  <figure>
-    <img src="capturas/error-d-afip-caido.png" alt="Error de AFIP caído en un ítem"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El comentario que ve el cliente cuando AFIP no responde.&lt;br&gt;&lt;code&gt;capturas/error-d-afip-caido.png&lt;/code&gt;&lt;/div&gt;'">
-  </figure>
     <div class="fila"><div class="rot">Cómo se ve</div><div class="txt">Fallan a la vez ítems de <b>clientes distintos</b>.</div></div>
     <div class="fila"><div class="rot">Confirmalo</div><div class="txt">Con el <code>FEDummy</code>, que no pide autenticación: si <code>AppServer</code>, <code>DbServer</code> o <code>AuthServer</code> no dicen <code>OK</code>, es AFIP. Tarda 5 segundos.</div></div>
     <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Avisar y esperar. La app ya le aclaró al cliente que el problema no es suyo.</div></div>
@@ -548,10 +546,6 @@ tiene vuelta atrás.</p>
 <div class="ficha">
   <h4><span class="sev s-media">MEDIA</span> &nbsp; E · Una emisión quedó colgada en "Creando"</h4>
   <div class="cuerpo">
-  <figure>
-    <img src="capturas/error-e-processing.png" alt="Ítem trabado en Creando Comprobante"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem con la columna de estado en «Creando Comprobante».&lt;br&gt;&lt;code&gt;capturas/error-e-processing.png&lt;/code&gt;&lt;/div&gt;'">
-  </figure>
     <div class="fila"><div class="rot">Qué pasó</div><div class="txt">Casi nada. La capa 3 revisa estos casos <b>cada 5 minutos</b> y los destraba sola.</div></div>
     <div class="fila"><div class="rot">Qué hacés</div><div class="txt"><b>Esperar 15 minutos y volver a mirar.</b> Eso es todo.</div></div>
     <div class="fila no"><div class="rot">Nunca</div><div class="txt">Re-disparar la receta, cambiar el estado a mano ni hacer un <code>UPDATE</code>. Cualquiera de las tres puede generar <b>dos CAE para una sola venta</b>, y eso solo se corrige con una nota de crédito.</div></div>
@@ -561,10 +555,6 @@ tiene vuelta atrás.</p>
 <div class="ficha">
   <h4><span class="sev s-baja">BAJA</span> &nbsp; F · El cliente cargó algo mal <span style="font-weight:400;color:#5b6470">— el más frecuente</span></h4>
   <div class="cuerpo">
-  <figure>
-    <img src="capturas/error-f-dato-mal.png" alt="Comentario de error en un ítem de monday"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem de monday con el comentario de error que deja la app.&lt;br&gt;&lt;code&gt;capturas/error-f-dato-mal.png&lt;/code&gt;&lt;/div&gt;'">
-  </figure>
     <div class="fila"><div class="rot">Qué pasó</div><div class="txt">Falta o está mal un dato del ítem.</div></div>
     <div class="fila"><div class="rot">Qué hacés</div><div class="txt">Nada. La app ya le explicó al cliente en un comentario, en su idioma, con la causa y cómo resolverlo. Hay 232 mensajes distintos y todos dicen qué hacer.</div></div>
     <div class="fila"><div class="rot">Si pregunta</div><div class="txt">Copiarle lo que dice el comentario.</div></div>
@@ -603,11 +593,6 @@ git commit -m "fix: descripción del cambio"
 git push origin develop</code></pre>
   <p>GitHub Actions corre los tests y deploya a staging solo. <b>Si un test falla, el deploy
   se frena</b> y no llega a ningún lado.</p>
-  <figure>
-    <img src="capturas/github-actions.png" alt="GitHub Actions con el deploy en verde"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La pestaña Actions de GitHub con los pasos del deploy.&lt;br&gt;&lt;code&gt;capturas/github-actions.png&lt;/code&gt;&lt;/div&gt;'">
-    <figcaption>Los pasos del deploy. El de tests corre <b>antes</b> de tocar el servidor.</figcaption>
-  </figure>
 </div>
 
 <div class="paso">
@@ -616,23 +601,13 @@ git push origin develop</code></pre>
   <b><a href="https://the-automation-partner.monday.com/boards/18425062980">Facturación con
   errores de test</a></b>, con 12 ítems cargados con datos mal a propósito, uno por cada
   error.</p>
-  <div class="ok">
-    <span class="etq">Ahí se puede romper tranquilo</span>
-    <p>Ese tablero tiene <b>certificado de homologación</b>: <b>no puede emitir un
-    comprobante real</b>, aunque quieras.</p>
-  </div>
   <p>Cambiá la columna de estado a <b>"Crear Comprobante"</b> y leé el comentario que deja
   la app.</p>
-  <figure>
-    <img src="capturas/tablero-pruebas.png" alt="Tablero de pruebas con los 12 ítems"
-         onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El tablero de pruebas con los 12 ítems de error.&lt;br&gt;&lt;code&gt;capturas/tablero-pruebas.png&lt;/code&gt;&lt;/div&gt;'">
-  </figure>
   <div class="cuidado">
     <span class="etq">Ojo</span>
-    <p>Ese tablero apunta a <b>producción</b>. Lo que lo hace seguro no es el entorno, es el
-    <b>certificado de homologación</b>. Para probar contra staging habría que crear una
-    versión Draft en monday — y <b>esta semana eso está prohibido</b>, porque una Draft
-    activa rutea clientes reales a la instancia de pruebas.</p>
+    <p>Por defecto ese tablero pega contra <b>producción</b>: lo que lo hace seguro no es el
+    entorno, es su <b>certificado de homologación</b>. Si además querés que corra el código
+    nuevo, hay que crear la versión Draft — el paso a paso está en la <b>sección 3</b>.</p>
   </div>
 </div>
 
@@ -684,8 +659,8 @@ siguientes.</p>
 <h3>Reglas de esta semana</h3>
 <ol>
   <li>A <code>main</code> solo van <b>reverts y arreglos urgentes</b>. Ninguna feature.</li>
-  <li><b>Nadie crea versiones Draft en monday.</b> Una Draft activa rutea clientes reales a
-  la instancia de pruebas.</li>
+  <li><b>Si creás una versión Draft, borrala al terminar.</b> Mientras exista, todos los
+  tableros de la cuenta de TAP apuntan a staging (sección 3).</li>
   <li><b>Ninguna migración de base de datos.</b></li>
 </ol>
 
@@ -736,7 +711,7 @@ curl -s https://arca.theautomationpartner.com/api/health</code></pre>
 </div>
 
 <p class="meta" style="margin-top:34px; border-top:1px solid var(--linea); padding-top:12px">
-  Factura ARCA · Guía técnica · 6 de agosto de 2026<br>
+  Factura ARCA · Guía técnica · 7 de agosto de 2026<br>
   Los datos de uso salen de la base de producción, no de estimaciones.
 </p>
 
