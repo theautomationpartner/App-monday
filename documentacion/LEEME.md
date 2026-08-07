@@ -12,30 +12,47 @@ se entiende igual.
 
 ## Las capturas
 
-### Lo normal y el canal
+### Las alertas de Slack — ✅ ya están, generadas
+
+Estas cuatro **no se sacan con una captura**: la alerta de `[RECOVERY_MISMATCH]` aparece
+cada varios meses y la de `[ABANDONED]` tarda 8 horas en salir. Esperarlas no era viable,
+provocarlas significaba romper una emisión real, y mandarlas al canal de prod tampoco: un
+webhook no puede borrar lo que manda, así que quedarían alertas rojas falsas para siempre
+en el canal del que depende el equipo.
+
+Están **reconstruidas** con `hacer-capturas-slack.js`: el texto sale literal de las
+plantillas de `server.js` y los datos son inventados. El PDF lo aclara.
+
+| Archivo | Qué es |
+|---|---|
+| `slack-todo-bien.png` | El resumen nocturno con todo OK — la señal de vida diaria |
+| `error-a-recovery-mismatch.png` | La alerta de `[RECOVERY_MISMATCH]` |
+| `error-b-abandoned.png` | La alerta de `[ABANDONED]` |
+| `error-c-discrepancia.png` | `DISCREPANCIA AFIP` de la auditoría nocturna |
+| `error-g-conciliacion.png` | `🟡 Conciliación AFIP` — comprobantes sin registrar |
+
+Para rehacerlas o agregar una alerta nueva:
+
+```bash
+cd documentacion
+node hacer-capturas-slack.js && powershell -File recortar-slack.ps1
+```
+
+### Las que faltan — estas sí hay que sacarlas
 
 | Archivo | Qué mostrar |
 |---|---|
-| `exito-comprobante.png` | Un ítem con una **factura emitida bien**: el comentario con el CAE y el PDF adjunto |
-| `slack-canal.png` | El canal `#make-errores-` con alertas reales |
-
-### Un error por tipo
-
-| Archivo | Qué mostrar |
-|---|---|
-| `error-a-recovery-mismatch.png` | La alerta de `[RECOVERY_MISMATCH]` en Slack |
-| `error-b-abandoned.png` | La alerta de `[ABANDONED]` en Slack |
-| `error-c-discrepancia.png` | La alerta `DISCREPANCIA AFIP` de la auditoría nocturna |
 | `error-d-afip-caido.png` | El comentario en el ítem cuando AFIP no responde |
 | `error-e-processing.png` | Un ítem con el estado en "Creando Comprobante" |
 | `error-f-dato-mal.png` | El comentario cuando el cliente cargó un dato mal |
+| `slack-canal.png` | El canal `#make-errores-` con varias alertas seguidas |
+| `github-actions.png` | La pestaña **Actions** de GitHub con los pasos del deploy |
+| `tablero-pruebas.png` | El tablero de pruebas con los 12 ítems de error |
 
-> Para los errores **D, E y F** tenés todo servido en el
+> **D, E y F** los tenés servidos en el
 > [tablero de pruebas](https://the-automation-partner.monday.com/boards/18425062980):
-> los 12 ítems ya están cargados con sus errores y sus comentarios.
->
-> Para **A, B y C** hay que buscar la alerta en el historial de Slack — son las que no se
-> pueden forzar a voluntad.
+> los 12 ítems ya están cargados con sus errores y sus comentarios. Son 3 capturas de la
+> pantalla, sin emitir nada.
 
 ### Cómo pasar a staging — ✅ ya están
 
@@ -54,13 +71,6 @@ quedaron en `capturas/originales/`.
 
 > Si alguna hay que rehacerla, el script que las recorta y les dibuja el círculo está en
 > `hacer-circulos.ps1`: se editan las coordenadas ahí y se corre de nuevo.
-
-### El deploy
-
-| Archivo | Qué mostrar |
-|---|---|
-| `github-actions.png` | La pestaña **Actions** de GitHub con los pasos del deploy |
-| `tablero-pruebas.png` | El tablero de pruebas con los 12 ítems de error |
 
 ---
 

@@ -44,3 +44,4 @@ To Delete after do/
 
 # El PDF se regenera con documentacion/generar-pdf.bat
 documentacion/*.pdf
+.tmp-slack/

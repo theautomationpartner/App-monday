@@ -390,14 +390,25 @@ eso se hace con una <b>versión Draft</b> en el Centro de Desarrollo.</p>
 
 <h3>Primero: cómo se ve cuando sale bien</h3>
 
-<p>Para reconocer un problema hay que saber cómo se ve lo normal. Cuando una factura sale
-bien, la app deja un comentario en el ítem con el CAE y adjunta el PDF.</p>
+<p>Para reconocer un problema hay que saber cómo se ve lo normal. <b>Todas las noches a
+las 3 AM</b> el sistema audita contra AFIP lo que emitió, y manda esto al canal:</p>
 
 <figure>
-  <img src="capturas/exito-comprobante.png" alt="Comentario de éxito en un ítem"
-       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;Un ítem con la factura emitida bien: el comentario con el CAE y el PDF adjunto.&lt;br&gt;&lt;code&gt;capturas/exito-comprobante.png&lt;/code&gt;&lt;/div&gt;'">
-  <figcaption>Así se ve una emisión exitosa: número, CAE y el PDF en el ítem.</figcaption>
+  <img src="capturas/slack-todo-bien.png" alt="Resumen nocturno de la auditoría, sin problemas"
+       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;El resumen nocturno con todo OK.&lt;br&gt;&lt;code&gt;capturas/slack-todo-bien.png&lt;/code&gt;&lt;/div&gt;'">
+  <figcaption>Este mensaje diario significa que está todo bien: lo que emitimos coincide
+  con lo que AFIP tiene registrado, comprobante por comprobante.</figcaption>
 </figure>
+
+<div class="cuidado">
+  <span class="etq">Lo que importa de este mensaje no es lo que dice</span>
+  <p>Es <b>que llegue</b>. Sale todas las noches aunque no haya habido nada que auditar —en
+  ese caso dice <i>"Auditadas esta noche: 0"</i>— justamente para que el silencio signifique
+  una sola cosa.</p>
+  <p style="margin-top:8px"><b>Si una mañana no está, algo dejó de funcionar</b>, y eso hay
+  que mirarlo aunque ningún cliente se haya quejado todavía. Es la única señal de vida
+  diaria que tiene el sistema.</p>
+</div>
 
 <h3>Dónde llegan los avisos</h3>
 
@@ -428,6 +439,26 @@ devs.</p>
   <tr><td>🟡 <b>Conciliación AFIP</b></td><td>AFIP tiene comprobantes que nosotros no</td><td>Preguntar, no arreglar</td></tr>
   <tr><td>⚠️ <b>Condición de IVA no reconocida</b></td><td>la factura <b>salió bien</b></td><td>No</td></tr>
 </table>
+
+<figure>
+  <img src="capturas/error-g-conciliacion.png" alt="Alerta de conciliación AFIP"
+       onerror="this.outerHTML='&lt;div class=falta&gt;&lt;b&gt;La captura&lt;/b&gt;La alerta 🟡 Conciliación AFIP.&lt;br&gt;&lt;code&gt;capturas/error-g-conciliacion.png&lt;/code&gt;&lt;/div&gt;'">
+  <figcaption><b>🟡 Conciliación AFIP.</b> Casi siempre es que alguien emitió a mano desde
+  el portal de AFIP, cosa que es perfectamente legítima: la app no puede saberlo y avisa.
+  <b>Se pregunta antes de tocar nada</b> — la otra explicación posible es un duplicado, y
+  eso lo resuelve Pamela con una nota de crédito, no un dev.</figcaption>
+</figure>
+
+<div class="dato">
+  <span class="etq">Sobre las imágenes de alertas de este documento</span>
+  <p>Las alertas rojas aparecen cada varios meses, así que <b>no se pudo esperar a que
+  pasaran para fotografiarlas</b>, ni provocarlas a propósito sin romper una emisión real.
+  Están <b>reconstruidas</b>: el texto y el formato salen literal de las plantillas del
+  código, y los datos —cliente, importes, números— son inventados.</p>
+  <p style="margin-top:8px">Se regeneran con
+  <code>node documentacion/hacer-capturas-slack.js</code>. Si alguien cambia el formato de
+  una alerta, hay que cambiarlo también ahí.</p>
+</div>
 
 <div class="cuidado">
   <span class="etq">Lo más importante de esta página</span>
