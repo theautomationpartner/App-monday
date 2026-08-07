@@ -91,41 +91,42 @@
 <p>Emisiones exitosas de los <b>últimos 30 días</b>, medido sobre la base de producción:</p>
 
 <table>
-  <tr><th>Cliente</th><th>CUIT</th><th style="width:110px">Últimos 30 días</th><th>Ritmo de uso</th></tr>
+  <tr><th>Cliente</th><th>CUIT</th><th style="width:130px">Últimos 30 días</th><th>Tableros</th></tr>
   <tr>
     <td><b>Polifroni Puertas</b></td><td><code>30637662755</code></td>
-    <td><b>134 · 63%</b></td><td>5,4 por día · <b>25 de los 30 días</b></td>
+    <td><b>134 · 63%</b></td>
+    <td>
+      <a href="https://polifronipuertas.monday.com/boards/18414569460">Fact Local</a> ·
+      <a href="https://polifronipuertas.monday.com/boards/18411065225">Facturación obra</a>
+    </td>
   </tr>
   <tr>
     <td><b>eGrowers</b> <span style="color:#5b6470">(Sofía Alewarts)</span></td><td><code>27333439692</code></td>
-    <td><b>49 · 23%</b></td><td>6,1 por día, pero solo <b>8 días</b></td>
+    <td><b>49 · 23%</b></td>
+    <td><a href="https://the-automation-partner.monday.com/boards/18411071561">Facturación</a></td>
   </tr>
-  <tr><td>The Automation Partner SA</td><td><code>30719434505</code></td><td>29 · 14%</td><td>4,1 por día · 7 días</td></tr>
-  <tr><td>Martin Meliendrez <span style="color:#5b6470">(dev)</span></td><td><code>20327446348</code></td><td>2 · 1%</td><td>casi no se usa</td></tr>
-  <tr><td>Pamela Martinez</td><td><code>23329811484</code></td><td>0</td><td>último uso: 05/07</td></tr>
+  <tr>
+    <td>The Automation Partner SA</td><td><code>30719434505</code></td><td>29 · 14%</td>
+    <td><a href="https://the-automation-partner.monday.com/boards/18415550350">Facturación TAP SA</a></td>
+  </tr>
+  <tr>
+    <td>Martin Meliendrez <span style="color:#5b6470">(dev)</span></td><td><code>20327446348</code></td><td>2 · 1%</td>
+    <td><a href="https://the-automation-partner.monday.com/boards/18410634614">Facturación</a></td>
+  </tr>
+  <tr>
+    <td>Pamela Martinez</td><td><code>23329811484</code></td><td>0</td>
+    <td><a href="https://the-automation-partner.monday.com/boards/18411959800">Facturación</a></td>
+  </tr>
 </table>
 
 <div class="dato">
   <span class="etq">Polifroni y eGrowers son el 85% del uso real</span>
-  <p>Si algo falla, son los que van a escribir. Y <b>cada uno usa la app distinto</b>, lo
-  que sirve para saber si algo anda mal:</p>
-  <ul>
-    <li><b>Polifroni factura casi todos los días.</b> Si pasa <b>un día hábil sin emitir
-    nada</b>, algo está pasando. Es la señal más temprana que tenemos.</li>
-    <li><b>eGrowers factura en tandas</b> — 49 comprobantes concentrados en 8 días. Que
-    estén 3 días sin facturar es <b>normal</b>, no es un síntoma.</li>
-  </ul>
+  <p>Si algo falla, son los que van a escribir.</p>
+  <p><b>Polifroni está en otra cuenta de monday</b> (<code>30446835</code>), así que no se
+  ve desde la cuenta de ustedes. Y tiene <b>dos tableros que facturan contra la misma
+  numeración de AFIP</b>: que un número "falte" en uno no significa nada, puede estar en el
+  otro.</p>
 </div>
-
-<h4>Detalles que conviene saber antes de un incidente</h4>
-<ul>
-  <li><b>Polifroni está en otra cuenta de monday</b> (<code>30446835</code>): no se ve
-  desde la cuenta de ustedes. Y tiene <b>dos tableros</b> que facturan contra la misma
-  numeración de AFIP — uno local y uno de obra. Que un número "falte" en un tablero no
-  significa nada: puede estar en el otro.</li>
-  <li><b>eGrowers</b> usa un solo tablero, punto de venta 2.</li>
-  <li><b>La Batea todavía no existe</b> en el sistema. Nunca se dio de alta.</li>
-</ul>
 
 <h2 class="salto">2 · Cómo está armado</h2>
 
@@ -168,14 +169,27 @@ entorno de AFIP.</p>
     <text x="515" y="192" text-anchor="middle" font-size="9.5">pm2 "tap-monday-staging" · 3001</text>
     <text x="515" y="208" text-anchor="middle" font-size="9.5">branch develop</text>
     <text x="515" y="230" text-anchor="middle" font-size="10" font-weight="600">base: stagingdb</text>
-    <text x="515" y="248" text-anchor="middle" font-size="10" font-weight="700" fill="#1e7e46">AFIP DE MENTIRA</text>
-    <text x="515" y="264" text-anchor="middle" font-size="9" fill="#5b6470">acá no se puede romper nada</text>
+    <text x="515" y="248" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e7e46">AFIP de prueba SOLO para</text>
+    <text x="515" y="262" text-anchor="middle" font-size="9.5" font-weight="700" fill="#1e7e46">los tableros de Martín</text>
+    <text x="515" y="276" text-anchor="middle" font-size="8.5" fill="#c0392b">todo lo demás lo reenvía a producción</text>
 
     <text x="350" y="326" text-anchor="middle" font-size="10.5" font-weight="600">Se deploya solo</text>
     <text x="350" y="346" text-anchor="middle" font-size="10">push a <tspan font-weight="700">develop</tspan> → staging      ·      push a <tspan font-weight="700">main</tspan> → producción</text>
     <text x="350" y="364" text-anchor="middle" font-size="9" fill="#5b6470">tarda unos 2 minutos</text>
   </g>
 </svg>
+
+<div class="peligro">
+  <span class="etq">Cuidado con "staging es de prueba" — no siempre</span>
+  <p>Staging apunta al AFIP de homologación, <b>pero solo procesa los tableros de un puñado
+  de workspaces de desarrollo, que son todos del CUIT de Martín.</b></p>
+  <p><b>Cualquier otro tablero que llegue a staging NO va a homologación: se reenvía a
+  producción y emite un CAE real.</b> Es a propósito — así, si un cliente cae ahí por error,
+  su factura sale igual y no se pierde.</p>
+  <p style="margin-top:8px">Consecuencia práctica: <b>no alcanza con "estar en staging" para
+  probar tranquilo.</b> Lo que hace seguro al tablero de pruebas es que tiene
+  <b>certificado de homologación</b>, no el entorno.</p>
+</div>
 
 <h3>Qué pasa cuando alguien emite una factura</h3>
 
@@ -189,6 +203,10 @@ entorno de AFIP.</p>
  8.  verifica que el CAE sea el correcto
  9.  genera el PDF y lo sube al ítem
 10.  registra en el tablero de auditoría</code></pre>
+
+<p>El paso 10 escribe en <b><a href="https://the-automation-partner.monday.com/boards/18409500030">Comp
+Emitidos</a></b>, que es el registro de <b>todas</b> las emisiones de todos los clientes.
+Es el mejor lugar para ver de un vistazo qué pasó en el día.</p>
 
 <div class="dato">
   <span class="etq">Por qué el paso 6 es el que importa</span>
@@ -377,8 +395,10 @@ git push origin develop</code></pre>
 
 <div class="paso">
   <h3><span class="num">4</span>Probarlo de verdad, en el tablero de pruebas</h3>
-  <p>Hay un tablero hecho para esto: <b>"Facturación con errores de test"</b>, con 12 ítems
-  cargados con datos mal a propósito, uno por cada error.</p>
+  <p>Hay un tablero hecho para esto:
+  <b><a href="https://the-automation-partner.monday.com/boards/18425062980">Facturación con
+  errores de test</a></b>, con 12 ítems cargados con datos mal a propósito, uno por cada
+  error.</p>
   <div class="ok">
     <span class="etq">Ahí se puede romper tranquilo</span>
     <p>Ese tablero tiene <b>certificado de homologación</b>: <b>no puede emitir un

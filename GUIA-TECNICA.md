@@ -84,10 +84,21 @@ CUIT de dev).
          ▼                                      ▼
     defaultdb                              stagingdb          ← mismo cluster PostgreSQL
     AFIP PRODUCCIÓN                        AFIP HOMOLOGACIÓN
-    (CAE de verdad)                        (CAE de mentira)
+    (CAE de verdad)                        pero SOLO para los tableros de Martín;
+                                           todo lo demás lo reenvía a producción
 ```
 
 **Un solo servidor, dos copias de la app.** Cada una con su base y su entorno de AFIP.
+
+> ⚠️ **Cuidado con "staging es de prueba" — no siempre.**
+> Staging apunta al AFIP de homologación, **pero solo procesa los tableros de unos pocos
+> workspaces de desarrollo, todos del CUIT de Martín.** Cualquier otro tablero que llegue
+> ahí **NO va a homologación: se reenvía a producción y emite un CAE real.** Es a propósito:
+> así, si un cliente cae ahí por error, su factura sale igual y no se pierde.
+>
+> Consecuencia práctica: **no alcanza con "estar en staging" para probar tranquilo.** Lo
+> que hace seguro al tablero de pruebas es que tiene **certificado de homologación**, no el
+> entorno.
 
 Se deploya solo: **push a `develop` → staging**, **push a `main` → producción**. Tarda unos
 2 minutos.

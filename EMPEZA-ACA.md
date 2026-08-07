@@ -40,8 +40,13 @@ DROPLET  134.122.5.114
 ├── /opt/apps/App-monday          → PRODUCCIÓN · branch main    · puerto 3000
 │                                   base defaultdb · AFIP de verdad
 └── /opt/apps/App-monday-staging  → PRUEBAS    · branch develop · puerto 3001
-                                    base stagingdb · AFIP de mentira
+                                    base stagingdb · AFIP de homologación
 ```
+
+⚠️ **Staging no es un lugar seguro por sí solo.** Solo procesa los tableros de unos pocos
+workspaces de desarrollo (todos del CUIT de Martín). **Cualquier otro tablero que llegue
+ahí se reenvía a producción y emite un CAE real.** Lo que hace seguro al tablero de pruebas
+es su **certificado de homologación**, no el entorno.
 
 Se deploya solo: **push a `develop` → staging**, **push a `main` → producción**. Tarda
 unos 2 minutos.
