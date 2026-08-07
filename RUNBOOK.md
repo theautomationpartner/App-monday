@@ -3,6 +3,10 @@
 **Si algo se rompió, este es el documento.** Buscá con `Ctrl+F` el texto de la alerta que
 te llegó, o lo que te dijo el cliente.
 
+> **¿Nunca viste este sistema?** Leé primero **[GUIA-TECNICA.md](GUIA-TECNICA.md)** —
+> arquitectura, clientes y qué puede fallar, en 15 minutos. Este runbook asume que ya
+> sabés qué es un CAE.
+
 > Última revisión: **06/08/2026** · Escrito para la semana del 11 al 15 de agosto.
 
 ---

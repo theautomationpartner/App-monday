@@ -4,9 +4,13 @@ App de facturación electrónica AFIP para clientes en el marketplace de monday.
 
 > ## 🚨 ¿Se rompió algo? No leas esto: andá a **[RUNBOOK.md](RUNBOOK.md)**
 >
-> Este archivo explica **cómo funciona** el sistema y cómo hacerle cambios.
-> El runbook explica **qué hacer cuando algo falla**, entrando por el síntoma.
-> Si hay un cliente esperando, el runbook es el documento.
+> Si hay un cliente esperando, el runbook es el documento: se entra por el síntoma.
+>
+> **¿Es tu primera semana en el proyecto?** Empezá por
+> **[GUIA-TECNICA.md](GUIA-TECNICA.md)** — arquitectura, clientes, qué puede fallar y cómo
+> se hace un cambio. 15 minutos, se lee entera una vez.
+>
+> Este archivo (CLAUDE.md) es el detalle fino: las reglas del código y cómo tocarlo.
 
 > **⚠️ Si vas a hacer un cambio (feature nuevo o fix), LEÉ EL WORKFLOW DE CAMBIOS abajo antes de tocar código.** No es opcional. Si pusheás directo a `main` impactás 3 clientes reales en producción.
 

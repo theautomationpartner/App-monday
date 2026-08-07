@@ -74,9 +74,10 @@ deploy si algo se rompió.
 
 | Documento | Cuándo |
 |---|---|
+| **[GUIA-TECNICA.md](GUIA-TECNICA.md)** | **Leelo hoy.** Arquitectura, clientes, qué puede fallar y cómo se hace un cambio. 15 minutos. |
 | **[RUNBOOK.md](RUNBOOK.md)** | **Se rompió algo y hay un cliente esperando.** Entrás por el síntoma. |
-| [CLAUDE.md](CLAUDE.md) | Vas a hacer un cambio. Explica cómo funciona y el workflow para no romper producción. |
-| Este archivo | Es tu primer día. |
+| [CLAUDE.md](CLAUDE.md) | Vas a tocar código. El detalle fino de cada subsistema. |
+| Este archivo | Cómo conseguir acceso y los primeros comandos. |
 | `README.md` | Nada. Está viejo, no menciona staging. |
 
 **El código está bien comentado, y no es adorno.** Los comentarios largos cuentan qué
