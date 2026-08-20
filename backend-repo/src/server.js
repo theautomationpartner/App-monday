@@ -13087,9 +13087,16 @@ async function backfillAuditBoard() {
             JOIN companies c ON c.id = ie.company_id
             LEFT JOIN audit_log_items ali
               ON ali.monday_account_id = c.monday_account_id
+             -- El sufijo tiene que replicar EXACTO el auditKey que arma
+             -- logEmissionToAuditBoard: alla esNotaCredito/esNotaDebito incluyen
+             -- las de exportacion, asi que una NCE se guarda con sufijo :NC y una
+             -- NDE con :ND. Cuando aca mirabamos solo NC/ND, las de exportacion se
+             -- buscaban SIN sufijo, el join no matcheaba nunca y quedaban marcadas
+             -- como no logueadas para siempre: el backfill las re-logueaba cada 15
+             -- minutos (1.680 veces la misma emision en prod antes de que se notara).
              AND ali.client_item_id = ie.item_id
-                 || (CASE WHEN ie.invoice_type = 'NC' THEN ':NC'
-                          WHEN ie.invoice_type = 'ND' THEN ':ND'
+                 || (CASE WHEN ie.invoice_type IN ('NC','NCE') THEN ':NC'
+                          WHEN ie.invoice_type IN ('ND','NDE') THEN ':ND'
                           ELSE '' END)
             WHERE ie.status = 'success'
               AND (ali.audit_item_id IS NULL OR ali.audit_item_id = '')
