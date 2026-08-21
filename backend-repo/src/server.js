@@ -4052,6 +4052,12 @@ app.get('/onboarding', (req, res) => {
     res.sendFile(path.join(__dirname, 'onboarding.html'));
 });
 
+// Demo para mostrar a los jefes la idea de "Custom Object" (formulario propio en vez de columnas de board).
+// Estatica, sin llamados a AFIP ni a la DB - solo simula el flujo visual. Sacar cuando termine la demo.
+app.get('/demo-factura', (req, res) => {
+    res.sendFile(path.join(__dirname, 'demo-factura.html'));
+});
+
 // Paginas legales publicas requeridas por el marketplace review (developer.monday.com/apps/docs/legal).
 // Deben ser publicas (sin login), HTTPS y bajo el dominio propio (domain ownership).
 // Van a los campos "Privacy Policy" y "Terms of Service" del form de submission:

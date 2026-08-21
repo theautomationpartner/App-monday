@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Demo — Emitir Factura</title>
+<style>
+  :root {
+    --primary: #0073ea;
+    --primary-dark: #0060b9;
+    --ink: #323338;
+    --muted: #676879;
+    --border: #d0d4e4;
+    --bg: #f6f7fb;
+    --success: #00854d;
+    --success-bg: #e6f9f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    padding: 24px;
+  }
+  .demo-badge {
+    max-width: 640px;
+    margin: 0 auto 16px;
+    background: #fff4e5;
+    border: 1px solid #ffcb00;
+    color: #7a5b00;
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    text-align: center;
+  }
+  .card {
+    max-width: 640px;
+    margin: 0 auto;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    padding: 28px 32px 32px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 0 0 24px;
+  }
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin: 16px 0 6px;
+  }
+  input, select {
+    width: 100%;
+    padding: 9px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--ink);
+    background: #fff;
+  }
+  input:focus, select:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(0,115,234,0.15);
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .lines {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-top: 8px;
+    overflow: hidden;
+  }
+  .line {
+    display: grid;
+    grid-template-columns: 1fr 70px 100px 32px;
+    gap: 8px;
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+  }
+  .line:last-child { border-bottom: none; }
+  .line input { padding: 6px 8px; font-size: 13px; }
+  .line-remove {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+  }
+  .line-remove:hover { color: #d83a52; }
+  .add-line {
+    background: none;
+    border: none;
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    padding: 8px 4px;
+  }
+  .add-line:hover { text-decoration: underline; }
+  .actions {
+    margin-top: 28px;
+    display: flex;
+    justify-content: flex-end;
+  }
+  button.submit {
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    padding: 11px 22px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  button.submit:hover { background: var(--primary-dark); }
+  button.submit:disabled { opacity: 0.6; cursor: default; }
+  .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: none;
+  }
+  .submit.loading .spinner { display: inline-block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .result {
+    display: none;
+    margin-top: 20px;
+    background: var(--success-bg);
+    border: 1px solid #a9e5c8;
+    border-radius: 10px;
+    padding: 18px 20px;
+  }
+  .result.show { display: block; }
+  .result-title {
+    color: var(--success);
+    font-weight: 700;
+    font-size: 15px;
+    margin: 0 0 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .result dl {
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    font-size: 13px;
+  }
+  .result dt { color: var(--muted); }
+  .result dd { margin: 0; font-weight: 600; }
+  .result-note {
+    margin-top: 12px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+
+  <div class="demo-badge">🧪 Demo — esta pantalla no emite comprobantes reales ni escribe en ningún board o base de datos. Solo simula el flujo visual.</div>
+
+  <div class="card">
+    <h1>Emitir Factura</h1>
+    <p class="subtitle">Custom Object — carga directa, sin depender de columnas de un tablero</p>
+
+    <form id="facturaForm">
+      <div class="row">
+        <div>
+          <label>Tipo de comprobante</label>
+          <select id="tipoComprobante">
+            <option>Factura A</option>
+            <option>Factura B</option>
+            <option>Factura C</option>
+          </select>
+        </div>
+        <div>
+          <label>CUIT / DNI receptor</label>
+          <input type="text" id="receptor" placeholder="Consumidor Final">
+        </div>
+      </div>
+
+      <label>Líneas del comprobante</label>
+      <div class="lines" id="lines"></div>
+      <button type="button" class="add-line" id="addLine">+ Agregar línea</button>
+
+      <div class="actions">
+        <button type="submit" class="submit" id="submitBtn">
+          <span class="spinner"></span>
+          <span class="label">Emitir Factura</span>
+        </button>
+      </div>
+    </form>
+
+    <div class="result" id="result">
+      <p class="result-title">✅ Factura emitida</p>
+      <dl>
+        <dt>CAE</dt><dd id="resCae"></dd>
+        <dt>Vencimiento CAE</dt><dd id="resVto"></dd>
+        <dt>Comprobante</dt><dd id="resTipo"></dd>
+        <dt>Total</dt><dd id="resTotal"></dd>
+      </dl>
+      <p class="result-note">Detrás de escena, esta pantalla crearía el item y los subitems en el board igual que hoy, y seguiría el mismo flujo de emisión ya existente. (Simulado para esta demo — sin llamado real a AFIP.)</p>
+    </div>
+  </div>
+
+<script>
+  const linesEl = document.getElementById('lines');
+
+  function addLine(concepto = '', cantidad = 1, precio = '') {
+    const row = document.createElement('div');
+    row.className = 'line';
+    row.innerHTML = `
+      <input type="text" placeholder="Concepto" value="${concepto}">
+      <input type="number" placeholder="Cant." value="${cantidad}" min="1">
+      <input type="number" placeholder="Precio unit." value="${precio}">
+      <button type="button" class="line-remove" title="Quitar">×</button>
+    `;
+    row.querySelector('.line-remove').addEventListener('click', () => row.remove());
+    linesEl.appendChild(row);
+  }
+
+  addLine('Servicio de consultoría', 1, '10000');
+
+  document.getElementById('addLine').addEventListener('click', () => addLine());
+
+  document.getElementById('facturaForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    const result = document.getElementById('result');
+
+    let total = 0;
+    linesEl.querySelectorAll('.line').forEach(row => {
+      const [, cantIn, precioIn] = row.querySelectorAll('input');
+      total += (parseFloat(cantIn.value) || 0) * (parseFloat(precioIn.value) || 0);
+    });
+
+    btn.classList.add('loading');
+    btn.disabled = true;
+    result.classList.remove('show');
+
+    setTimeout(() => {
+      btn.classList.remove('loading');
+      btn.disabled = false;
+
+      const cae = Array.from({length: 14}, () => Math.floor(Math.random() * 10)).join('');
+      const vto = new Date(Date.now() + 10 * 86400000).toLocaleDateString('es-AR');
+
+      document.getElementById('resCae').textContent = cae + ' (simulado)';
+      document.getElementById('resVto').textContent = vto;
+      document.getElementById('resTipo').textContent = document.getElementById('tipoComprobante').value;
+      document.getElementById('resTotal').textContent = '$ ' + total.toLocaleString('es-AR', {minimumFractionDigits: 2});
+
+      result.classList.add('show');
+      result.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 900);
+  });
+</script>
+
+</body>
+</html>
