@@ -612,6 +612,16 @@ const upload = multer({
 // devuelve la empresa CONFIGURADA en ese board, sin importar cuántas empresas
 // distintas tenga la cuenta. Si el board no tiene config (caso edge), cae al
 // fallback legacy de getCompanyByMondayAccountId.
+// ⚠️ El desempate NO es por fecha. Cuando la vista de tablero abre sin
+// workspace_id (pasa ~5% de las veces), /api/setup resuelve la empresa por el
+// fallback "la más vieja de la cuenta" y el frontend auto-guarda una config a
+// nombre de ESA empresa — con workspace_id en NULL. Esa fila queda más nueva
+// que la buena, y con "ORDER BY updated_at DESC" se llevaba la emisión puesta:
+// el comprobante salía con el CUIT equivocado, sin error y sin que la pantalla
+// lo delatara (la UI resuelve por workspace, la emisión por board).
+// Pasó el 24/08/2026 en el board de TAP SA. Por eso gana primero la config que
+// TIENE workspace cargado, y recién después la más reciente. Mismo criterio que
+// VISUAL_MAPPING_PICK_ORDER, que blindó los mapeos y dejó esto sin blindar.
 async function getCompanyForBoard(mondayAccountId, boardId) {
     if (!mondayAccountId || !boardId) return null;
     const r = await db.query(
@@ -627,7 +637,8 @@ async function getCompanyForBoard(mondayAccountId, boardId) {
          JOIN board_automation_configs bac ON bac.company_id = c.id
          WHERE c.monday_account_id::text = $1
            AND bac.board_id = $2
-         ORDER BY bac.updated_at DESC
+         ORDER BY (bac.workspace_id IS NOT NULL AND bac.workspace_id <> '') DESC,
+                  bac.updated_at DESC
          LIMIT 1`,
         [String(mondayAccountId), String(boardId)]
     );
@@ -4192,7 +4203,15 @@ app.get('/api/setup/:mondayAccountId', requireMondaySession, async (req, res) =>
 
     try {
         await ensureCompaniesExtraColumns();
-        let company = await getCompanyByMondayAccountId(mondayAccountId, workspaceId);
+        // Sin workspace_id resolvemos por BOARD, igual que la emisión. La vista de
+        // tablero no siempre lo manda (~5% de las aperturas), y el fallback por
+        // cuenta devuelve "la empresa más vieja" — que en una cuenta multi-empresa
+        // es cualquiera. Así la pantalla y la emisión contestan lo mismo: antes la
+        // UI resolvía por workspace y la emisión por board, y podían diferir sin
+        // que nadie lo notara (24/08/2026, board de TAP SA).
+        let company = (!workspaceId && board_id)
+            ? await getCompanyForBoard(mondayAccountId, board_id)
+            : await getCompanyByMondayAccountId(mondayAccountId, workspaceId);
 
         // Fallback legacy: si la request trae workspaceId y no hay match, pero
         // existe UNA sola company legacy (workspace_id NULL) para esta cuenta
