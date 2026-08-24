@@ -1253,6 +1253,19 @@ const App = () => {
 
     // Evitar postear múltiples veces (el useEffect se vuelve a ejecutar por
     // cualquier cambio de dependencias). Usamos un ref como guard.
+    // No auto-guardar sin workspace confirmado. La detección del workspace tiene
+    // un safety timeout de 5s (más arriba): si vence, /setup sale con
+    // workspace_id nulo y el backend resuelve la empresa por fallback — que en
+    // una cuenta multi-empresa devuelve cualquiera. Guardar en ese estado crea
+    // mapeo y board-config a nombre de OTRA empresa: pasó el 24/08/2026 en el
+    // board de TAP SA y lo dejó con dos dueños, y la emisión se quedaba con el
+    // CUIT equivocado. Sin workspace mostramos el mapeo detectado en pantalla,
+    // pero NO lo persistimos.
+    if (!workspaceId) {
+      console.warn("[auto-mapeo] sin workspace_id — no se auto-guarda (evitamos crear config de otra empresa)");
+      return;
+    }
+
     if (autoMappingPostedRef.current) return;
     autoMappingPostedRef.current = true;
 
