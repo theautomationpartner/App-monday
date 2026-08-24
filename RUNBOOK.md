@@ -96,7 +96,7 @@ Nunca reservó número, así que jamás llegó a AFIP y ningún cron la mira. Es
 
 El sistema tiene tres puntos ciegos conocidos: **no avisa si un proceso automático se
 muere**, **un mismatch repetido se auto-silencia a la tercera noche**, y **un certificado
-vencido no tiene alerta propia**. Este chequeo los tapa. Son 6 preguntas.
+vencido no tiene alerta propia**. Este chequeo los tapa. Son 7 preguntas.
 
 **1. ¿Llegó el aviso nocturno a Slack?**
 Tiene que estar, todas las mañanas. Si no está → ficha 10.
@@ -134,6 +134,25 @@ SELECT company_id, expiration_date FROM afip_credentials ORDER BY expiration_dat
 Si alguno vence en menos de 15 días, avisale a Pamela **antes** de que el cliente no pueda
 facturar → ficha 12.
 
+
+**7. ¿Algún tablero quedó con dos dueños?**
+```sql
+SELECT board_id, workspace_id, company_id FROM board_automation_configs
+WHERE workspace_id IS NULL OR workspace_id = '';
+```
+Tiene que dar **0 filas**. Cualquier fila acá es una config que la app guardó sin saber de
+qué empresa era: el tablero queda con dos empresas anotadas y la emisión puede salir con el
+**CUIT equivocado**, sin error y sin que la pantalla lo muestre (la app resuelve por
+workspace y la emisión por tablero). Pasó el 24/08/2026 en el board de TAP SA. Se arregló en
+el código, pero el chequeo queda: si vuelve a dar algo, es el mismo bug de nuevo.
+
+Para ver quién es el dueño real de un tablero, la misma consulta que usa la emisión:
+```sql
+SELECT c.cuit FROM companies c JOIN board_automation_configs bac ON bac.company_id = c.id
+WHERE c.monday_account_id::text = '<accountId>' AND bac.board_id = '<boardId>'
+ORDER BY (bac.workspace_id IS NOT NULL AND bac.workspace_id <> '') DESC, bac.updated_at DESC
+LIMIT 1;
+```
 > Anotá lo raro en algún lado, aunque no hagas nada. Si algo aparece tres días seguidos,
 > deja de ser ruido.
 
