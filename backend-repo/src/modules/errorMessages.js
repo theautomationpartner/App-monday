@@ -627,6 +627,33 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
             solucion: 'Para emitir otro, creá un item nuevo en el tablero.',
         },
         {
+            // AFIP [10119]: la cotizacion que mandamos no entra en el rango que AFIP
+            // acepta contra el tipo de cambio oficial del Banco Nacion. Va ANTES de
+            // la generica de rechazo porque la accion es concreta y esta en el item.
+            // Se vuelve alcanzable con las notas de moneda propia: una NC sobre una
+            // factura en dolares vieja hereda la cotizacion de esa factura, y si el
+            // dolar se movio lo suficiente desde entonces, AFIP la rechaza.
+            match: /AFIP rechaz[oó] (la factura|el comprobante|la Nota)[^\n]*\[10119\]/i,
+            title: 'El tipo de cambio no coincide con el oficial de AFIP',
+            accion: 'Cargá un tipo de cambio cercano al oficial en la columna de <b>Tipo de Cambio</b> del item — o dejala vacía para que la app le pregunte la cotización a AFIP. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada y no se gastó ningún número.',
+            detalle: 'AFIP compara el tipo de cambio que mandás contra el oficial del Banco Nación del día y rechaza el comprobante si se aparta demasiado. En una Nota de Crédito o Débito sobre una factura vieja en dólares, el tipo de cambio que se hereda puede haber quedado lejos del de hoy. Lo que contestó AFIP está acá abajo.',
+            detail: mainMsg,
+            solucion: 'Cargá un tipo de cambio cercano al oficial del Banco Nación, o dejá la columna vacía para que la app consulte la cotización a AFIP.',
+        },
+        {
+            // La nota va en moneda extranjera pero el board no mapeo la columna de
+            // precio en dolares. Cortamos antes de emitir: sin esa columna leeriamos
+            // el precio en pesos y lo declarariamos como dolares.
+            match: /no tiene mapeada la columna de Precio Unitario en d[oó]lares|doesn.t have the USD Unit Price column mapped/i,
+            title: 'Falta mapear la columna de precio en dólares',
+            accion: 'Abrí la app parada en este tablero → <b>Mapeo Visual</b> y elegí la columna de <b>Precio Unitario (USD)</b> de los subítems. Si la nota tenía que ir en pesos, escribí "Pesos" en la columna de Moneda del item. Después volvé a poner ${columna_estado} en "${estado_disparo}".',
+            estado: 'No se emitió nada.',
+            detalle: 'Sin esa columna la app leería el precio cargado en pesos y lo declararía como dólares — el comprobante saldría por el valor del tipo de cambio de más. Por eso corta antes de emitir.',
+            detail: mainMsg,
+            solucion: 'Mapeá la columna de Precio Unitario en dólares en el Mapeo Visual, o poné "Pesos" en la columna de Moneda del item.',
+        },
+        {
             // AFIP rechazó el comprobante y dijo por qué, con un código entre corchetes.
             // Antes esto caía al fallback y mostraba el texto crudo de AFIP en mayúsculas
             // + "Revisá los datos del item", que no dice qué revisar.
@@ -1040,6 +1067,20 @@ function buildErrorComment(err, displayKind = 'comprobante', language = 'es', me
     // cuando el detail es `mainMsg`: ahí va el texto crudo de AFIP, que viene en
     // español de AFIP mismo y no hay nada que traducir.
     const EN_TEXT = {
+        'El tipo de cambio no coincide con el oficial de AFIP': {
+            title: 'The exchange rate does not match AFIP official rate',
+            accion: 'Enter an exchange rate close to the official one in the item\u2019s <b>Exchange Rate</b> column \u2014 or leave it empty so the app asks AFIP for the rate. Then set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued and no number was used up.',
+            detalle: 'AFIP compares the rate you send against the Banco Naci\u00f3n official rate for the day and rejects the voucher if it is too far off. On a Credit or Debit Note over an old invoice in dollars, the inherited rate may be far from today\u2019s. AFIP\u2019s answer is below.',
+            solucion: 'Enter a rate close to the Banco Naci\u00f3n official one, or leave the column empty so the app asks AFIP.',
+        },
+        'Falta mapear la columna de precio en dólares': {
+            title: 'The USD price column is not mapped',
+            accion: 'Open the app on this board \u2192 <b>Visual Mapping</b> and pick the subitem <b>Unit Price (USD)</b> column. If the note was meant to be in pesos, write "Pesos" in the item\u2019s Currency column. Then set ${columna_estado} back to "${estado_disparo}".',
+            estado: 'Nothing was issued.',
+            detalle: 'Without that column the app would read the price loaded in pesos and declare it as dollars \u2014 the voucher would go out inflated by the exchange rate. That is why it stops before issuing.',
+            solucion: 'Map the USD Unit Price column in the Visual Mapping, or write "Pesos" in the item\u2019s Currency column.',
+        },
         'Faltan datos en el item': {
             accion: 'Fill in what is marked with ❌ below. Then set ${columna_estado} back to "${estado_disparo}".',
             // El `estado` de esta regla lleva los bullets del propio error, así que
