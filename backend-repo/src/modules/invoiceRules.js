@@ -257,6 +257,36 @@ function parseMoneda(raw) {
     return null; // no reconocido
 }
 
+
+// Lleva un importe de una nota (NC/ND) a la moneda de la factura que ajusta, para
+// poder sumarlas entre si en el control de saldo.
+//
+// AFIP permite emitir la nota en PESOS aunque la factura sea en otra moneda (es
+// como se documenta una diferencia de tipo de cambio). Cuando eso pasa, sumar
+// importes crudos da cualquier cosa: hay que convertir.
+//
+// ⚠️ La nota en PES se convierte con la cotizacion de la FACTURA, no con la de la
+// nota. Una nota en pesos tiene cotizacion 1 (pesos a pesos), asi que dividir por
+// ella no convierte nada — es el bug que hacia leer ARS 8.976 como USD 8.976. La
+// factura se valuo a SU cotizacion, y ese es el tipo de cambio contra el que hay
+// que medir cuanto de ella se esta acreditando. Usar la de la factura ademas hace
+// que el saldo sea estable: no se mueve con el dolar de hoy.
+function convertirAMonedaFactura({ importe, monedaNota, ctzNota, monedaFactura, ctzFactura }) {
+    const mF = String(monedaFactura || 'PES').toUpperCase();
+    const m  = String(monedaNota || '').toUpperCase();
+    const cF = Number(ctzFactura) || 1;
+    const n  = Number(importe) || 0;
+    // Notas viejas (anteriores a que se guardara la moneda en el draft) vienen sin
+    // monedaNota. En esa epoca la nota SIEMPRE heredaba la de la factura, asi que
+    // "sin moneda" significa "la misma que la factura": se deja el importe como esta.
+    if (!m) return n;
+    if (m === mF) return n;
+    // Nota en pesos sobre factura en moneda extranjera.
+    if (m === 'PES' && mF !== 'PES') return n / (cF || 1);
+    // Nota en moneda extranjera sobre factura en pesos: aca si manda la de la nota.
+    if (mF === 'PES' && m !== 'PES') return n * (Number(ctzNota) || 1);
+    return n;
+}
 module.exports = {
     determineInvoiceType,
     validateInvoiceType,
@@ -266,4 +296,5 @@ module.exports = {
     condicionLabel,
     toTitleCase,
     parseMoneda,
+    convertirAMonedaFactura,
 };

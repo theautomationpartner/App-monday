@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "test": "node test/mensajes.test.js && node test/textos-al-usuario.test.js && node test/recovery-ajeno.test.js && node test/cuit-digito.test.js && node test/pdf-doc-receptor.test.js",
+    "test": "node test/mensajes.test.js && node test/textos-al-usuario.test.js && node test/recovery-ajeno.test.js && node test/cuit-digito.test.js && node test/pdf-doc-receptor.test.js && node test/moneda-conversion.test.js",
     "copy-frontend": "node -e \"const fs=require('fs');const path=require('path');const src=path.join(__dirname,'..','frontend-repo','dist');const dst=path.join(__dirname,'public');if(fs.existsSync(dst))fs.rmSync(dst,{recursive:true,force:true});function cp(s,d){fs.mkdirSync(d,{recursive:true});for(const f of fs.readdirSync(s)){const sp=path.join(s,f),dp=path.join(d,f);fs.statSync(sp).isDirectory()?cp(sp,dp):fs.copyFileSync(sp,dp)}}if(fs.existsSync(src)){cp(src,dst);console.log('Frontend copied to public/')}else{console.log('No dist found, skipping')}\""
   },
   "dependencies": {

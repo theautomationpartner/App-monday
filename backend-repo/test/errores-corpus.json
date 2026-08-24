@@ -1320,5 +1320,34 @@
   "origen": "server.js:6601",
   "mensaje": "El CUIT del receptor (doc 20215005962) está mal escrito: no pasa el dígito verificador de AFIP. Corregilo en la columna del item. Reintentar sin cambiarlo va a dar lo mismo.",
   "esperado": "❌ Corregí el CUIT del cliente en la columna del CUIT: son 11 dígitos, sin puntos ni guiones. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
+ },
+ {
+  "origen": "server.js:8086",
+  "mensaje": "La columna de Moneda del item de Nota de Crédito tiene un valor que no entiendo (\"…\"). Escribí \"Pesos\" o \"Dólares\", o dejala vacía para usar la misma moneda que la factura.",
+  "esperado": "❌ Escribí \"Pesos\" o \"Dólares\", o dejala vacía para usar la misma moneda que la factura.",
+  "tiene_traduccion": true
+ },
+ {
+  "origen": "server.js:8099",
+  "mensaje": "La columna de Tipo de Cambio del item de Nota de Crédito tiene que ser un número mayor a 0 (actual \"…\"). Dejala vacía y la app resuelve la cotización sola.",
+  "esperado": "❌ Dejala vacía y la app resuelve la cotización sola.",
+  "tiene_traduccion": true
+ },
+ {
+  "origen": "server.js:8131",
+  "mensaje": "No se pudo consultar la cotización de AFIP para la Nota de Crédito (DOL). Cargala en la columna de Tipo de Cambio del item y reintentá. (Detalle: …)",
+  "esperado": "❌ Cargala en la columna de Tipo de Cambio del item y reintentá. (Detalle: 12345)",
+  "tiene_traduccion": true
+ },
+ {
+  "origen": "server.js:8149",
+  "mensaje": "La Nota de Crédito va en DOL, pero el tablero no tiene mapeada la columna de Precio Unitario en dólares. Mapeala en el Mapeo Visual de la app, o escribí \"Pesos\" en la columna de Moneda del item.",
+  "esperado": "❌ Abrí la app parada en este tablero → Mapeo Visual y elegí la columna de Precio Unitario (USD) de los subítems. Si la nota tenía que ir en pesos, escribí \"Pesos\" en la columna de Moneda del item. Después volvé a poner la columna de estado en \"Crear Comprobante\".",
+  "tiene_traduccion": true
+ },
+ {
+  "origen": "server.js:2242",
+  "mensaje": "AFIP rechazó la factura: [10119] La cotizacion informada no se corresponde con la cotizacion oficial de AFIP para la fecha del comprobante",
+  "esperado": "❌ Cargá un tipo de cambio cercano al oficial en la columna de Tipo de Cambio del item — o dejala vacía para que la app le pregunte la cotización a AFIP. Después volvé a poner la columna de estado en \"Crear Comprobante\"."
  }
 ]

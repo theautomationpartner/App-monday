@@ -8055,10 +8055,95 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                       `las líneas de lo que querés ${esND ? 'debitar' : 'acreditar'} (concepto, cantidad y precio).`
                 );
             }
-            // Columna de precio: si la factura era en moneda extranjera, la NC
-            // hereda esa moneda → lee la misma columna de precio que la factura.
-            const facturaMoneda = facturaDraft.moneda || 'PES';
-            const ncPrecioColId = (facturaMoneda === 'DOL' && ncMapping.precio_unitario_usd)
+            // ── Moneda y cotización de la nota ─────────────────────────────────
+            // Por defecto se heredan de la factura: con las columnas del item
+            // vacías el draft sale idéntico al de siempre. Pero la nota puede
+            // llevar las suyas — AFIP acepta una NC/ND en PESOS contra una factura
+            // en dólares, que es como se documenta una diferencia de tipo de cambio.
+            // Confirmado el 20/08/2026 con CAE real (86349121352630). La regla de
+            // "misma moneda que el comprobante asociado" es SOLO del régimen FCE
+            // MiPyME (tipos 202/203/207/208): WSFEv1 no compara MonId contra
+            // CbtesAsoc — de hecho el bloque CbtesAsoc ni siquiera lleva la moneda.
+            const facturaMoneda = String(facturaDraft.moneda || 'PES').toUpperCase();
+            const ncMonedaRaw = ncMapping.moneda
+                ? (getColumnTextById(ncItemColumns, ncMapping.moneda) || '').trim() : '';
+            let ncMoneda = facturaMoneda;
+            if (ncMonedaRaw) {
+                // OJO: acá NO se cae a 'PES' como hace la factura (parseMoneda(x) || 'PES').
+                // En una nota, un valor mal escrito que caiga a pesos cambiaría la moneda
+                // del comprobante en silencio contra la factura que ajusta. Se corta.
+                const parsed = invoiceRules.parseMoneda(ncMonedaRaw);
+                if (!parsed) {
+                    throw new Error(ncLanguage === 'en'
+                        ? `The Currency column on the ${docLabel} item has a value I don't understand ("${ncMonedaRaw}"). ` +
+                          `Write "Pesos" or "Dollars", or leave it empty to use the same currency as the invoice.`
+                        : `La columna de Moneda del item de ${docLabel} tiene un valor que no entiendo ("${ncMonedaRaw}"). ` +
+                          `Escribí "Pesos" o "Dólares", o dejala vacía para usar la misma moneda que la factura.`);
+                }
+                ncMoneda = parsed;
+            }
+
+            const ncCotizRaw = ncMapping.cotizacion
+                ? (getColumnTextById(ncItemColumns, ncMapping.cotizacion) || '').trim() : '';
+            const ncCotizItem = ncCotizRaw ? toNumberOrNull(ncCotizRaw) : null;
+            if (ncCotizRaw && (ncCotizItem === null || ncCotizItem <= 0)) {
+                throw new Error(ncLanguage === 'en'
+                    ? `The Exchange Rate column on the ${docLabel} item must be a number greater than 0 (currently "${ncCotizRaw}"). ` +
+                      `Leave it empty and the app resolves the rate on its own.`
+                    : `La columna de Tipo de Cambio del item de ${docLabel} tiene que ser un número mayor a 0 (actual "${ncCotizRaw}"). ` +
+                      `Dejala vacía y la app resuelve la cotización sola.`);
+            }
+            // Precedencia de la cotización. Las tres primeras ramas no tocan la red;
+            // la última sólo se alcanza con una nota en moneda extranjera sobre una
+            // factura en otra moneda, que hoy no le pasa a ningún cliente.
+            let ncCotizacion = 1;
+            if (ncMoneda !== 'PES') {
+                if (ncCotizItem && ncCotizItem > 0) {
+                    ncCotizacion = ncCotizItem;
+                    console.log(`[nc] cotización del item: ${ncMoneda}=${ncCotizacion}`);
+                } else if (ncMoneda === facturaMoneda && Number(facturaDraft.cotizacion) > 0) {
+                    // El default histórico: la nota se valúa igual que la factura.
+                    ncCotizacion = Number(facturaDraft.cotizacion);
+                    console.log(`[nc] cotización heredada de la factura: ${ncMoneda}=${ncCotizacion}`);
+                } else {
+                    try {
+                        const tokenForCot = await afipAuthModule.getToken({
+                            certPem: emisorCertPem, keyPem: emisorKeyPem,
+                            cuit: company.cuit, service: 'wsfe', companyId: company.id,
+                        });
+                        const cotResult = await afipGetCotizacion({
+                            token: tokenForCot.token, sign: tokenForCot.sign,
+                            cuit: company.cuit, monId: ncMoneda,
+                        });
+                        ncCotizacion = cotResult.monCotiz;
+                        console.log(`[nc] cotización oficial de AFIP: ${ncMoneda}=${ncCotizacion} (fecha ${cotResult.fchCotiz})`);
+                    } catch (cotErr) {
+                        console.warn(`[nc] no se pudo consultar la cotización de ${ncMoneda}: ${cotErr.message}`);
+                        throw new Error(ncLanguage === 'en'
+                            ? `Couldn't fetch AFIP's exchange rate for the ${docLabel} (${ncMoneda}). ` +
+                              `Enter it in the item's Exchange Rate column and try again. (Detail: ${cotErr.message})`
+                            : `No se pudo consultar la cotización de AFIP para la ${docLabel} (${ncMoneda}). ` +
+                              `Cargala en la columna de Tipo de Cambio del item y reintentá. (Detalle: ${cotErr.message})`);
+                    }
+                }
+            }
+            if (ncMoneda !== facturaMoneda) {
+                console.log(`[nc] ⚠️ la nota va en MONEDA PROPIA: ${ncMoneda} (la factura es ${facturaMoneda})`);
+            }
+
+            // Columna de precio: la decide la moneda de la NOTA, no la de la factura.
+            // Si la nota va en dólares y el board no mapeó la columna en dólares,
+            // antes caía en silencio a la de pesos: leería pesos y los declararía
+            // como dólares. Con la moneda heredada eso no podía pasar; con moneda
+            // propia sí, y sería sobrefacturar por el valor del tipo de cambio.
+            if (ncMoneda !== 'PES' && !ncMapping.precio_unitario_usd) {
+                throw new Error(ncLanguage === 'en'
+                    ? `The ${docLabel} is in ${ncMoneda}, but this board doesn't have the USD Unit Price column mapped. ` +
+                      `Map it in the app's Visual Mapping, or write "Pesos" in the item's Currency column.`
+                    : `La ${docLabel} va en ${ncMoneda}, pero el tablero no tiene mapeada la columna de Precio Unitario en dólares. ` +
+                      `Mapeala en el Mapeo Visual de la app, o escribí "Pesos" en la columna de Moneda del item.`);
+            }
+            const ncPrecioColId = ncMoneda !== 'PES'
                 ? ncMapping.precio_unitario_usd
                 : ncMapping.precio_unitario;
             // OJO: a propósito NO se pasa bonificacionColumnId. La bonificación es
@@ -8139,6 +8224,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // La observación es propia del item de NC (pisa la heredada por spread).
             const ncDraft = {
                 ...facturaDraft,
+                // Moneda y cotización RESUELTAS más arriba: pisan las heredadas por
+                // el spread. Es la única fuente — el SOAP, el PDF y el QR de la RG
+                // 4892 leen todos de acá, así que no pueden desalinearse entre sí.
+                moneda:           ncMoneda,
+                cotizacion:       ncCotizacion,
                 fecha_emision:    ncFechaEmision,
                 lineas:           ncLines.lineas,
                 importe_neto:     ncLines.importeNeto,
@@ -8213,23 +8303,50 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // bloquear la NC con un saldo 0.
             // La ND NO tiene tope de saldo: AFIP no la limita (la ND suma deuda),
             // así que el control entero se saltea para ND y `saldo` queda en null.
+            //
+            // ⚠️ Moneda: la nota puede ir en otra moneda que la factura (una NC en
+            // pesos sobre una factura en dólares es como se documenta la diferencia
+            // de tipo de cambio). Sumar importes de monedas distintas daría
+            // cualquier cosa, así que TODO se lleva a la moneda de la FACTURA con
+            // convertirAMonedaFactura(). El saldo queda expresado en la moneda de la
+            // factura y no se mueve con el dólar de hoy: cada nota se convierte con
+            // la cotización con la que se emitió, no con la de hoy.
+            const facturaCotiz = Number(facturaDraft.cotizacion) || 1;
+            const ncTotalEnMonedaFactura = invoiceRules.convertirAMonedaFactura({
+                importe: ncLines.importeTotal, monedaNota: ncMoneda, ctzNota: ncCotizacion,
+                monedaFactura: facturaMoneda, ctzFactura: facturaCotiz,
+            });
+            // Los importes se muestran con el código de moneda SOLO si la factura no
+            // es en pesos. Así el texto que ve la enorme mayoría de los clientes queda
+            // igual que siempre, carácter por carácter.
+            const fmtM = (n) => facturaMoneda === 'PES'
+                ? Number(n).toFixed(2)
+                : `${facturaMoneda} ${Number(n).toFixed(2)}`;
             let saldo = null;
             if (!esND) {
                 let facturaTotal = Number(facturaDraft.importe_total) || 0;
                 if (!facturaTotal) {
                     facturaTotal = (Number(facturaAfip.imp_neto) || 0) + (Number(facturaAfip.imp_iva) || 0);
                 }
-                const acreditadoRes = await db.query(
-                    `SELECT COALESCE(SUM((draft_json->>'importe_total')::numeric), 0) AS acreditado
+                // Traemos los draft_json enteros en vez de sumar en SQL: la conversión
+                // necesita la moneda y la cotización de CADA nota previa.
+                const previasRes = await db.query(
+                    `SELECT draft_json
                      FROM invoice_emissions
                      WHERE company_id=$1 AND board_id=$2 AND invoice_type=$5
                        AND status IN ('success','processing')
                        AND related_emission_id=$3 AND item_id <> $4`,
                     [company.id, boardId, factura.id, itemId, clase]
                 );
-                const yaAcreditado = Number(acreditadoRes.rows[0]?.acreditado) || 0;
+                const yaAcreditado = previasRes.rows.reduce((acc, r) => {
+                    const d = r.draft_json || {};
+                    return acc + invoiceRules.convertirAMonedaFactura({
+                        importe: d.importe_total, monedaNota: d.moneda, ctzNota: d.cotizacion,
+                        monedaFactura: facturaMoneda, ctzFactura: facturaCotiz,
+                    });
+                }, 0);
                 saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
-                if (ncLines.importeTotal > saldo + 0.01) {
+                if (ncTotalEnMonedaFactura > saldo + 0.01) {
                     // Liberar la reserva: esta NC no se emite, no debe contar al saldo.
                     await db.query(
                         `UPDATE invoice_emissions SET status='error',
@@ -8238,18 +8355,25 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                          WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                         [company.id, boardId, itemId, clase]
                     ).catch(() => {});
+                    // Si la nota va en otra moneda, aclaramos de dónde sale el número
+                    // convertido: si no, el usuario ve un importe que no cargó.
+                    const equiv = ncMoneda !== facturaMoneda
+                        ? (ncLanguage === 'en'
+                            ? `\nThis note is for ${ncMoneda} ${ncLines.importeTotal.toFixed(2)}, which at the invoice rate (${facturaCotiz}) is ${fmtM(ncTotalEnMonedaFactura)}.`
+                            : `\nEsta nota es por ${ncMoneda} ${ncLines.importeTotal.toFixed(2)}, que al tipo de cambio de la factura (${facturaCotiz}) equivale a ${fmtM(ncTotalEnMonedaFactura)}.`)
+                        : '';
                     throw new Error(ncLanguage === 'en'
-                        ? `The Credit Note (${ncLines.importeTotal.toFixed(2)}) exceeds the available ` +
+                        ? `The Credit Note (${fmtM(ncTotalEnMonedaFactura)}) exceeds the available ` +
                           `invoice balance.\n` +
-                          `Invoiced total: ${facturaTotal.toFixed(2)} · Already credited / in progress: ` +
-                          `${yaAcreditado.toFixed(2)} · Available balance: ${saldo.toFixed(2)}.`
-                        : `La Nota de Crédito (${ncLines.importeTotal.toFixed(2)}) supera el saldo ` +
+                          `Invoiced total: ${fmtM(facturaTotal)} · Already credited / in progress: ` +
+                          `${fmtM(yaAcreditado)} · Available balance: ${fmtM(saldo)}.` + equiv
+                        : `La Nota de Crédito (${fmtM(ncTotalEnMonedaFactura)}) supera el saldo ` +
                           `disponible de la factura.\n` +
-                          `Total facturado: ${facturaTotal.toFixed(2)} · Ya acreditado / en curso: ` +
-                          `${yaAcreditado.toFixed(2)} · Saldo disponible: ${saldo.toFixed(2)}.`
+                          `Total facturado: ${fmtM(facturaTotal)} · Ya acreditado / en curso: ` +
+                          `${fmtM(yaAcreditado)} · Saldo disponible: ${fmtM(saldo)}.` + equiv
                     );
                 }
-                console.log(`[nc] saldo OK — factura total=${facturaTotal}, ya acreditado/en curso=${yaAcreditado}, esta NC=${ncLines.importeTotal}`);
+                console.log(`[nc] saldo OK — factura total=${facturaTotal} ${facturaMoneda}, ya acreditado/en curso=${yaAcreditado.toFixed(2)}, esta NC=${ncTotalEnMonedaFactura.toFixed(2)}`);
             }
 
             // Status del item → "Creando Comprobante" (fire-and-forget).
@@ -8412,21 +8536,32 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 : `✅ <b>${docLabel} emitida</b><br/><br/>` +
                   `Comprobante: <b>${docAbbr} ${letra} N° ${pvLargo}-${nroLargo}</b><br/>` +
                   `CAE: ${afipResult.cae} (vto. ${afipResult.cae_vencimiento || '—'})<br/>`;
+            // El importe de la nota va SIEMPRE en su propia moneda (es lo que el
+            // usuario cargó). El saldo va en la de la factura, que es donde se mide.
+            // Cuando difieren se dicen las dos, o el número no se entiende.
+            const fmtNota = (n) => ncMoneda === 'PES'
+                ? Number(n).toFixed(2)
+                : `${ncMoneda} ${Number(n).toFixed(2)}`;
             if (esND) {
                 okBody += isEnNc
-                    ? `Amount: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                    ? `Amount: ${fmtNota(ncLines.importeTotal)}<br/>` +
                       `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`
-                    : `Importe: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                    : `Importe: ${fmtNota(ncLines.importeTotal)}<br/>` +
                       `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
             } else {
-                const saldoRestante = Number((saldo - ncLines.importeTotal).toFixed(2));
+                const saldoRestante = Number((saldo - ncTotalEnMonedaFactura).toFixed(2));
+                const equivOk = ncMoneda !== facturaMoneda
+                    ? (isEnNc
+                        ? ` (${fmtM(ncTotalEnMonedaFactura)} at the invoice rate)`
+                        : ` (${fmtM(ncTotalEnMonedaFactura)} al tipo de cambio de la factura)`)
+                    : '';
                 okBody += isEnNc
-                    ? `Credited amount: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                    ? `Credited amount: ${fmtNota(ncLines.importeTotal)}${equivOk}<br/>` +
                       `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
-                      ` — remaining balance to credit: ${saldoRestante.toFixed(2)}.`
-                    : `Importe acreditado: ${ncLines.importeTotal.toFixed(2)}<br/>` +
+                      ` — remaining balance to credit: ${fmtM(saldoRestante)}.`
+                    : `Importe acreditado: ${fmtNota(ncLines.importeTotal)}${equivOk}<br/>` +
                       `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
-                      ` — saldo restante para acreditar: ${saldoRestante.toFixed(2)}.`;
+                      ` — saldo restante para acreditar: ${fmtM(saldoRestante)}.`;
             }
             await postMondayUpdate({ apiToken: mondayToken, itemId, body: okBody })
                 .catch((e) => console.warn('[nc] no se pudo postear comentario de éxito:', e.message));
