@@ -8545,7 +8545,11 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // El importe de la nota va SIEMPRE en su propia moneda (es lo que el
             // usuario cargó). El saldo va en la de la factura, que es donde se mide.
             // Cuando difieren se dicen las dos, o el número no se entiende.
-            const fmtNota = (n) => ncMoneda === 'PES'
+            // Se prefija la moneda salvo que la nota Y la factura sean las dos en
+            // pesos — el caso de siempre, que queda igual. Si difieren hay que decirlo:
+            // "Importe acreditado: 1210.00 (DOL 0.81)" al lado de un importe en dolares
+            // se lee como si los 1210 tambien fueran dolares.
+            const fmtNota = (n) => (ncMoneda === 'PES' && facturaMoneda === 'PES')
                 ? Number(n).toFixed(2)
                 : `${ncMoneda} ${Number(n).toFixed(2)}`;
             if (esND) {
