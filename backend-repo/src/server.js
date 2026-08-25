@@ -13145,6 +13145,18 @@ async function reconcileStuckEmissions() {
               -- volver a preguntarle a AFIP da siempre lo mismo, y cada vuelta
               -- son una alerta de Slack y una escritura al audit board de más.
               AND COALESCE(error_message, '') NOT LIKE '[RECOVERY_MISMATCH]%'
+              -- AFIP contestó y rechazó: el pedido SÍ llegó y se procesó, así que
+              -- no hay nada que recuperar — no autorizó ningún comprobante y el
+              -- número quedó libre. Volver a preguntarle por ese número es peor
+              -- que inútil: para cuando el cron reintenta, lo normal es que se lo
+              -- haya llevado la factura siguiente (justamente porque quedó libre),
+              -- así que AFIP contesta con los datos de OTRO comprobante y sale una
+              -- alerta de RECOVERY_MISMATCH que suena a incidente grave y no lo es.
+              -- Pasó el 12/08 y el 25/08/2026, las dos veces con el [10016] de
+              -- Polifroni facturando en ráfaga. La reconciliación existe para
+              -- cuando NO sabemos si el pedido llegó (timeout, red cortada), no
+              -- para cuando AFIP nos dijo que no.
+              AND COALESCE(error_message, '') NOT LIKE 'AFIP rechaz%'
               AND updated_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes'
               AND (last_reconciliation_at IS NULL
                    OR last_reconciliation_at < NOW() - INTERVAL '${RECONCILE_STALE_MIN} minutes')
