@@ -8312,6 +8312,20 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             // factura y no se mueve con el dólar de hoy: cada nota se convierte con
             // la cotización con la que se emitió, no con la de hoy.
             const facturaCotiz = Number(facturaDraft.cotizacion) || 1;
+            // Una nota en OTRA moneda que la factura documenta una DIFERENCIA DE TIPO
+            // DE CAMBIO: no devuelve mercadería ni servicios, sólo ajusta a cuántos
+            // pesos equivale la misma deuda. Por eso NO consume el cupo de la factura,
+            // ni para sí misma ni contando hacia atrás. Criterio de Pamela (25/08/2026),
+            // y vale igual para NC y ND.
+            //
+            // OJO con el criterio: la app no puede saber la INTENCIÓN de una nota, sólo
+            // su moneda. "Moneda distinta a la de la factura" es el proxy de "diferencia
+            // de cambio" — en la práctica es el mismo caso, porque una nota en pesos
+            // sobre una factura en dólares no puede ser otra cosa. La contracara es que
+            // una nota en moneda distinta emitida por CUALQUIER otro motivo tampoco va a
+            // tener tope: si algún día hace falta distinguirlas, hay que pedirle al
+            // usuario que lo diga (una columna, o un valor propio en Tipo de Comprobante).
+            const esDifCambio = ncMoneda !== facturaMoneda;
             const ncTotalEnMonedaFactura = invoiceRules.convertirAMonedaFactura({
                 importe: ncLines.importeTotal, monedaNota: ncMoneda, ctzNota: ncCotizacion,
                 monedaFactura: facturaMoneda, ctzFactura: facturaCotiz,
@@ -8323,13 +8337,16 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 ? Number(n).toFixed(2)
                 : `${facturaMoneda} ${Number(n).toFixed(2)}`;
             let saldo = null;
-            if (!esND) {
+            if (esDifCambio) {
+                console.log(`[nc] ${docLabel} en ${ncMoneda} sobre factura en ${facturaMoneda}`
+                    + ` — diferencia de tipo de cambio: NO descuenta del saldo`);
+            } else if (!esND) {
                 let facturaTotal = Number(facturaDraft.importe_total) || 0;
                 if (!facturaTotal) {
                     facturaTotal = (Number(facturaAfip.imp_neto) || 0) + (Number(facturaAfip.imp_iva) || 0);
                 }
-                // Traemos los draft_json enteros en vez de sumar en SQL: la conversión
-                // necesita la moneda y la cotización de CADA nota previa.
+                // Traemos los draft_json enteros en vez de sumar en SQL: hay que mirar
+                // la moneda de CADA nota previa para saber si cuenta o no.
                 const previasRes = await db.query(
                     `SELECT draft_json
                      FROM invoice_emissions
@@ -8340,10 +8357,13 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                 );
                 const yaAcreditado = previasRes.rows.reduce((acc, r) => {
                     const d = r.draft_json || {};
-                    return acc + invoiceRules.convertirAMonedaFactura({
-                        importe: d.importe_total, monedaNota: d.moneda, ctzNota: d.cotizacion,
-                        monedaFactura: facturaMoneda, ctzFactura: facturaCotiz,
-                    });
+                    // Las de diferencia de cambio tampoco cuentan hacia atrás: si no
+                    // consumieron cupo cuando se emitieron, no pueden descontarlo ahora.
+                    // Las notas viejas no tienen moneda en el draft — en esa época todo
+                    // se heredaba de la factura, así que cuentan.
+                    const mNota = String(d.moneda || facturaMoneda).toUpperCase();
+                    if (mNota !== facturaMoneda) return acc;
+                    return acc + (Number(d.importe_total) || 0);
                 }, 0);
                 saldo = Number((facturaTotal - yaAcreditado).toFixed(2));
                 if (ncTotalEnMonedaFactura > saldo + 0.01) {
@@ -8355,22 +8375,15 @@ async function emitNotaHandler(req, res, clase = 'NC') {
                          WHERE company_id=$1 AND board_id=$2 AND item_id=$3 AND invoice_type=$4`,
                         [company.id, boardId, itemId, clase]
                     ).catch(() => {});
-                    // Si la nota va en otra moneda, aclaramos de dónde sale el número
-                    // convertido: si no, el usuario ve un importe que no cargó.
-                    const equiv = ncMoneda !== facturaMoneda
-                        ? (ncLanguage === 'en'
-                            ? `\nThis note is for ${ncMoneda} ${ncLines.importeTotal.toFixed(2)}, which at the invoice rate (${facturaCotiz}) is ${fmtM(ncTotalEnMonedaFactura)}.`
-                            : `\nEsta nota es por ${ncMoneda} ${ncLines.importeTotal.toFixed(2)}, que al tipo de cambio de la factura (${facturaCotiz}) equivale a ${fmtM(ncTotalEnMonedaFactura)}.`)
-                        : '';
                     throw new Error(ncLanguage === 'en'
                         ? `The Credit Note (${fmtM(ncTotalEnMonedaFactura)}) exceeds the available ` +
                           `invoice balance.\n` +
                           `Invoiced total: ${fmtM(facturaTotal)} · Already credited / in progress: ` +
-                          `${fmtM(yaAcreditado)} · Available balance: ${fmtM(saldo)}.` + equiv
+                          `${fmtM(yaAcreditado)} · Available balance: ${fmtM(saldo)}.`
                         : `La Nota de Crédito (${fmtM(ncTotalEnMonedaFactura)}) supera el saldo ` +
                           `disponible de la factura.\n` +
                           `Total facturado: ${fmtM(facturaTotal)} · Ya acreditado / en curso: ` +
-                          `${fmtM(yaAcreditado)} · Saldo disponible: ${fmtM(saldo)}.` + equiv
+                          `${fmtM(yaAcreditado)} · Saldo disponible: ${fmtM(saldo)}.`
                     );
                 }
                 console.log(`[nc] saldo OK — factura total=${facturaTotal} ${facturaMoneda}, ya acreditado/en curso=${yaAcreditado.toFixed(2)}, esta NC=${ncTotalEnMonedaFactura.toFixed(2)}`);
@@ -8546,19 +8559,29 @@ async function emitNotaHandler(req, res, clase = 'NC') {
             const fmtNota = (n) => (ncMoneda === 'PES' && facturaMoneda === 'PES')
                 ? Number(n).toFixed(2)
                 : `${ncMoneda} ${Number(n).toFixed(2)}`;
-            if (esND) {
+            // `saldo` viene en null cuando no hubo tope que controlar: en una ND
+            // (suma deuda, AFIP no la limita) y en una nota por diferencia de tipo
+            // de cambio (no consume cupo). En esos casos no hay saldo restante que
+            // informar — y en el de diferencia de cambio conviene decir POR QUÉ, o
+            // el usuario se pregunta si la app se olvidó de descontar.
+            const equivOk = ncMoneda !== facturaMoneda
+                ? (isEnNc
+                    ? ` (${fmtM(ncTotalEnMonedaFactura)} at the invoice rate)`
+                    : ` (${fmtM(ncTotalEnMonedaFactura)} al tipo de cambio de la factura)`)
+                : '';
+            if (saldo === null) {
+                const nota = esDifCambio
+                    ? (isEnNc
+                        ? ` — exchange-rate difference: it doesn't use up the invoice balance.`
+                        : ` — por diferencia de tipo de cambio: no descuenta del saldo de la factura.`)
+                    : '.';
                 okBody += isEnNc
-                    ? `Amount: ${fmtNota(ncLines.importeTotal)}<br/>` +
-                      `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`
-                    : `Importe: ${fmtNota(ncLines.importeTotal)}<br/>` +
-                      `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}.`;
+                    ? `Amount: ${fmtNota(ncLines.importeTotal)}${equivOk}<br/>` +
+                      `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}${nota}`
+                    : `Importe: ${fmtNota(ncLines.importeTotal)}${equivOk}<br/>` +
+                      `Sobre la Factura ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}${nota}`;
             } else {
                 const saldoRestante = Number((saldo - ncTotalEnMonedaFactura).toFixed(2));
-                const equivOk = ncMoneda !== facturaMoneda
-                    ? (isEnNc
-                        ? ` (${fmtM(ncTotalEnMonedaFactura)} at the invoice rate)`
-                        : ` (${fmtM(ncTotalEnMonedaFactura)} al tipo de cambio de la factura)`)
-                    : '';
                 okBody += isEnNc
                     ? `Credited amount: ${fmtNota(ncLines.importeTotal)}${equivOk}<br/>` +
                       `On Invoice ${letra} N° ${String(facturaPtoVta).padStart(4, '0')}-${facturaNroLargo}` +
