@@ -90,6 +90,22 @@ diga `online`** → ficha 4.
 Nunca reservó número, así que jamás llegó a AFIP y ningún cron la mira. Está así hace
 3 meses y es inofensiva.
 
+⚠️ **Chequeá siempre por el dominio, nunca por la IP.** Desde el 03/09/2026 el servidor
+solo acepta tráfico que venga de Cloudflare. Si curleás la IP directo te va a contestar:
+
+```
+400 Bad Request — No required SSL certificate was sent
+```
+
+**Eso está bien, es la protección funcionando** — no es que el servidor esté caído. Si
+necesitás saltear Cloudflare para debuggear, entrá por SSH y curleá adentro:
+
+```bash
+ssh root@134.122.5.114
+curl -s http://localhost:3000/api/health      # prod
+curl -s http://localhost:3001/api/health      # staging
+```
+
 ---
 
 ## Chequeo diario — 5 minutos, una vez por día

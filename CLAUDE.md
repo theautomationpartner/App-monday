@@ -163,6 +163,37 @@ Para un commit específico no reciente: `git revert <hash>`. Nunca uses `git res
 
    Anti-loop en 3 capas: prod es no-op (`APP_ENV != 'staging'`); un request que llega con el header `x-tap-proxy-hop` responde 502 (nunca re-reenvía ni procesa local); y `getProdForwardUrl()` devuelve null (→ 503) si el destino huele a staging o usa el puerto propio. `assertStagingNotBlocked` (`STAGING_BLOCKED_CUITS`) queda como backstop de último recurso.
 
+9. **El origen solo acepta tráfico de Cloudflare** (desde el 03/09/2026). nginx exige el
+   certificado de cliente de Cloudflare (`ssl_verify_client on` + Authenticated Origin
+   Pulls activado del lado de Cloudflare, opción **Global**). Consecuencias prácticas:
+
+   - **Pegarle directo a la IP devuelve `400 No required SSL certificate was sent`.** Eso
+     es lo correcto, no es una falla. Para debuggear usá el dominio
+     (`https://arca.theautomationpartner.com`) o entrá por SSH y curleá a `localhost:3000`.
+   - **Si algún día se cae TODO de golpe y por Cloudflare da error de TLS**, chequeá que
+     no se haya apagado el toggle en Cloudflare (SSL/TLS → Origin Server → Authenticated
+     Origin Pulls). Si está apagado, Cloudflare deja de mandar el certificado y nginx
+     rechaza todo. Rollback de emergencia: poner `ssl_verify_client optional;` en
+     `/etc/nginx/sites-available/tap-monday` (los 2 bloques) y `nginx -s reload`.
+   - El CA de Cloudflare vive en `/etc/ssl/cloudflare/authenticated_origin_pull_ca.pem`
+     (vence en 2029). No confundir con `origin.crt`/`origin.key`, que son el certificado
+     *de servidor* y son otra cosa.
+   - **El deploy y el proxy de staging no se ven afectados**: el CI chequea salud contra el
+     dominio (pasa por Cloudflare) y el proxy de la regla 8 reenvía a `127.0.0.1:3000`
+     (localhost, ni toca nginx).
+
+   Además nginx ahora resuelve la **IP real del cliente** (`conf.d/cloudflare-realip.conf`,
+   `real_ip_header CF-Connecting-IP`). Antes `req.ip` era la IP del edge de Cloudflare, así
+   que el `apiLimiter` (300 req/15 min **por IP**) metía a todos los clientes en el mismo
+   balde. Si Cloudflare rota rangos hay que actualizar ese archivo
+   (https://www.cloudflare.com/ips-v4 y `/ips-v6`).
+
+   ⚠️ **Al tocar nginx: `sites-enabled/*` carga CUALQUIER archivo, no solo symlinks.** Un
+   `.bak` dejado ahí se aplica igual. Pasó: el bloque de `arca` vivía **solo** en un `.bak`
+   y el archivo "canónico" no lo tenía — sacarlo hubiera tumbado producción en el siguiente
+   reload. Los backups van a `/root/nginx-backups-*/`, nunca a `sites-enabled/`. Y siempre
+   `nginx -t` antes de `nginx -s reload`.
+
 ---
 
 ## Estructura del repo
