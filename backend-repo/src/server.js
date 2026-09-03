@@ -542,8 +542,31 @@ app.use((req, res, next) => {
 });
 
 // Middlewares
+//
+// CORS: la app se sirve same-origin (el backend sirve el build del frontend
+// desde public/), así que el browser normal ni pasa por acá. El '*' de antes
+// era un resabio de dev local (frontend y backend en repos/puertos separados).
+// Lo restringimos: *.monday.com (por si algún widget/receta llama cross-origin
+// desde un contexto de monday.com) + los dominios propios. Auth va por header
+// Authorization (no cookies), así que no hace falta credentials:true acá.
+const CORS_ALLOWED_ORIGIN_PATTERNS = [
+    /^https:\/\/([a-z0-9-]+\.)*monday\.com$/i,
+    'https://arca.theautomationpartner.com',
+    'https://staging.theautomationpartner.com',
+];
+if (process.env.NODE_ENV !== 'production') {
+    // Dev local: frontend (Vite) y backend corren en puertos separados.
+    CORS_ALLOWED_ORIGIN_PATTERNS.push(/^http:\/\/localhost:\d+$/);
+}
 app.use(cors({
-    origin: '*', // Permitir cualquier origen (necesario para repos separados)
+    origin: (origin, callback) => {
+        // Sin header Origin (curl, webhooks server-to-server, health checks) → OK.
+        if (!origin) return callback(null, true);
+        const allowed = CORS_ALLOWED_ORIGIN_PATTERNS.some((pattern) =>
+            typeof pattern === 'string' ? pattern === origin : pattern.test(origin)
+        );
+        callback(null, allowed);
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization']
 }));
