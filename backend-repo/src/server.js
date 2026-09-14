@@ -23,6 +23,7 @@ const { encryptPII, decryptPII, decryptCompanyRow } = piiCrypto;
 // `const config = INVOICE_TYPE_CONFIG[...]` local que lo shadowearía.
 const afipConfig        = require('./config');
 const invoiceRules      = require('./modules/invoiceRules');
+const datosArca         = require('./modules/datosArca');
 const { generateFacturaPdfBuffer, generateFacturaEPdfBuffer } = require('./modules/invoicePdf');
 
 // ─── Validación de inputs (Zod) ─────────────────────────────────────────────
@@ -8733,6 +8734,122 @@ async function emitNotaHandler(req, res, clase = 'NC') {
 }
 app.post('/api/credit-notes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, (req, res) => emitNotaHandler(req, res, 'NC'));
 app.post('/api/debit-notes/emit', emitLimiter, requireAutomationBlock, stagingRouteGuard, (req, res) => emitNotaHandler(req, res, 'ND'));
+
+// ─── Receta "Completar datos de ARCA" ────────────────────────────────────────
+// "Cuando cambie {columna CUIT}, completar razón social en {columna} y condición
+// IVA en {columna}". El usuario escribe un CUIT o DNI y la app le carga lo que
+// figura en el padrón. Las columnas vienen en la receta: no hay mapeo que guardar.
+//
+// Usa la MISMA consulta que la emisión (getOrRefreshReceptorPadron): certificado
+// del padrón de TAP, caché de 24 h por documento y DNI → CUIT. El certificado del
+// cliente no interviene, así que funciona aunque la cuenta todavía no factura.
+//
+// Campos de la receta (Centro de Desarrollo): boardId, itemId, cuitColumnId (el
+// columnId del trigger "cuando cambia una columna"), razonSocialColumnId y
+// condicionIvaColumnId. Lo pure (documento, valores, mensajes) está en
+// modules/datosArca.js, con su test.
+async function writeMondaySimpleValue({ apiToken, boardId, itemId, columnId, value }) {
+    // change_simple_column_value con create_labels_if_missing sirve igual para
+    // texto, texto largo, estado, desplegable y el nombre del ítem ("name"): el
+    // usuario elige el tipo de columna que prefiera. Devuelve el error o null.
+    try {
+        const res = await fetchWithRetry('https://api.monday.com/v2', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: apiToken },
+            body: JSON.stringify({
+                query: `mutation ($b: ID!, $i: ID!, $c: String!, $v: String!) {
+                    change_simple_column_value(board_id: $b, item_id: $i, column_id: $c, value: $v, create_labels_if_missing: true) { id }
+                }`,
+                variables: { b: String(boardId), i: String(itemId), c: columnId, v: String(value).slice(0, 255) },
+            }),
+        }, { attempts: 2, delayMs: 3000, timeoutMs: 15000, label: 'datos-arca-write' });
+        const j = await res.json();
+        return j?.errors?.length ? JSON.stringify(j.errors).slice(0, 300) : null;
+    } catch (err) {
+        return err.message;
+    }
+}
+
+async function completarDatosArcaHandler(req, res) {
+    const { payload } = req.body || {};
+    const inbound       = payload?.inboundFieldValues || {};
+    const inputFields   = payload?.inputFields || {};
+    const triggerOutput = payload?.triggerOutputs || {};
+    const pick = (k) => inbound[k] ?? inputFields[k] ?? triggerOutput[k] ?? payload?.[k];
+
+    const itemId  = String(pick('itemId') || '').trim();
+    let   boardId = String(pick('boardId') || '').trim();
+    const cuitCol = datosArca.leerColumnaId(pick('cuitColumnId') ?? pick('columnId'));
+    const columnas = {
+        razonSocial:  datosArca.leerColumnaId(pick('razonSocialColumnId')),
+        condicionIva: datosArca.leerColumnaId(pick('condicionIvaColumnId')),
+    };
+    // Nunca se escribe sobre la columna del documento: pisaría lo que escribió el
+    // usuario y volvería a disparar la misma receta.
+    for (const k of Object.keys(columnas)) if (columnas[k] === cuitCol) columnas[k] = '';
+
+    // monday necesita respuesta rápida; la consulta al padrón puede tardar (un DNI
+    // prueba hasta 4 CUIT). Se responde y se trabaja después.
+    res.status(200).json({ received: true });
+
+    const apiToken = req.mondayAutomation?.shortLivedToken;
+    console.log(`[datos-arca] item=${itemId || '?'} board=${boardId || '?'} col=${cuitCol || '?'} destinos=${Object.values(columnas).filter(Boolean).length}`);
+    if (!apiToken || !itemId || !cuitCol) {
+        console.warn('[datos-arca] faltan datos de la receta (token / itemId / columna del CUIT) — no se hace nada');
+        return;
+    }
+
+    let language = 'es';
+    try {
+        const data = await mondayGql(apiToken,
+            `query ($i: [ID!]) { items(ids: $i) { board { id } column_values(ids: ["${cuitCol.replace(/[^\w-]/g, '')}"]) { id text } } }`,
+            { i: [itemId] });
+        const item = data?.items?.[0];
+        if (!item) { console.warn(`[datos-arca] item ${itemId} no encontrado`); return; }
+        boardId = boardId || String(item.board?.id || '');
+        const lang = await db.query(
+            `SELECT language FROM board_automation_configs WHERE board_id = $1
+             ORDER BY updated_at DESC NULLS LAST LIMIT 1`, [boardId],
+        ).catch(() => ({ rows: [] }));
+        if (lang.rows[0]?.language === 'en') language = 'en';
+
+        // Columna vacía = el usuario borró el número: no se consulta ni se toca nada.
+        const leido = datosArca.leerDocumento(item.column_values?.[0]?.text);
+        if (leido.vacio) return;
+        const avisar = (caso, vars) => postMondayUpdate({
+            apiToken, itemId, body: datosArca.mensaje(caso, language, vars),
+        }).catch((e) => console.warn(`[datos-arca] no se pudo comentar: ${e.message}`));
+
+        if (!columnas.razonSocial && !columnas.condicionIva) return avisar('sinColumnas');
+        if (leido.error) return avisar(leido.error, leido);
+
+        let info;
+        try {
+            info = await getOrRefreshReceptorPadron(leido.doc);
+        } catch (err) {
+            const caso = datosArca.casoDeError(err);
+            console.warn(`[datos-arca] padrón: ${caso} (${err.errorType || err.message})`);
+            return avisar(caso, { crudo: leido.doc, detalle: err.padronRaw });
+        }
+
+        const aEscribir = datosArca.valoresParaColumnas({ info, columnas, language });
+        const fallas = [];
+        for (const w of aEscribir) {
+            const e = await writeMondaySimpleValue({ apiToken, boardId, itemId, columnId: w.columnId, value: w.valor });
+            if (e) { console.warn(`[datos-arca] escritura ${w.campo} col=${w.columnId}: ${e}`); fallas.push(w.campo); }
+        }
+        if (fallas.length) {
+            const nombres = { razonSocial: language === 'en' ? 'business name' : 'razón social', condicionIva: language === 'en' ? 'VAT condition' : 'condición IVA' };
+            return avisar('escritura', { columnas: fallas.map((f) => nombres[f]).join(', ') });
+        }
+        console.log(`[datos-arca] item=${itemId} OK — ${aEscribir.map((w) => w.campo).join(', ') || 'nada que escribir'}${info?._stale ? ' (dato de caché vieja: ARCA no respondió)' : ''}`);
+    } catch (err) {
+        console.error(`[datos-arca] error inesperado item=${itemId}: ${err.message}`);
+        postMondayUpdate({ apiToken, itemId, body: datosArca.mensaje('arcaCaido', language) }).catch(() => {});
+    }
+}
+
+app.post('/api/padron/completar', emitLimiter, requireAutomationBlock, stagingRouteGuard, completarDatosArcaHandler);
 
 // ════════════════════════════════════════════════════════════════════════════
 // FACTURA E — comprobantes de EXPORTACIÓN de servicios (WSFEXv1)
