@@ -55,6 +55,24 @@ caso('"SIN NOMBRE" del padrón no se escribe', () => {
     const v = valoresParaColumnas({ info: { nombre: 'SIN NOMBRE', condicion: 'EXENTO' }, columnas: cols });
     assert.deepStrictEqual(v.map((x) => x.campo), ['condicionIva']);
 });
+caso('domicilio, localidad y provincia van cada uno a su columna', () => {
+    const v = valoresParaColumnas({
+        info: { nombre: 'X SA', condicion: 'EXENTO', domicilioPartes: { direccion: 'BELGRANO 560', localidad: 'RIO COLORADO', provincia: 'RIO NEGRO' } },
+        columnas: { ...cols, domicilio: 'c_dom', localidad: 'c_loc', provincia: 'c_prov' },
+    });
+    assert.deepStrictEqual(v.filter((x) => x.campo !== 'razonSocial' && x.campo !== 'condicionIva'),
+        [{ campo: 'domicilio', columnId: 'c_dom', valor: 'Belgrano 560' },
+         { campo: 'localidad', columnId: 'c_loc', valor: 'Rio Colorado' },
+         { campo: 'provincia', columnId: 'c_prov', valor: 'Rio Negro' }]);
+});
+caso('sin domicilio (DNI sin CUIT) no se vacía la columna', () => {
+    const v = valoresParaColumnas({ info: { condicion: 'CONSUMIDOR_FINAL', domicilioPartes: {} }, columnas: { ...cols, domicilio: 'c_dom' } });
+    assert.ok(!v.some((x) => x.campo === 'domicilio'));
+});
+caso('si no mapeó columna de domicilio, no se escribe', () => {
+    const v = valoresParaColumnas({ info: { nombre: 'X', condicion: 'EXENTO', domicilioPartes: { direccion: 'CALLE 1' } }, columnas: cols });
+    assert.ok(!v.some((x) => x.campo === 'domicilio'));
+});
 caso('solo la columna que eligió', () => {
     const v = valoresParaColumnas({ info: { nombre: 'X SA', condicion: 'EXENTO' }, columnas: { condicionIva: 'c' } });
     assert.deepStrictEqual(v.map((x) => x.campo), ['condicionIva']);

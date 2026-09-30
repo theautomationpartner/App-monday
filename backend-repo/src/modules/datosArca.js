@@ -68,6 +68,12 @@ function valoresParaColumnas({ info, columnas = {}, language = 'es' }) {
             valor: toTitleCase(condicionLabel(info.condicion, language)),
         });
     }
+    // Domicilio fiscal, en partes: cada una a su columna, y solo si ARCA la trajo
+    // (un DNI sin CUIT no tiene domicilio, y vaciar lo que cargó el usuario sería peor).
+    const dom = info?.domicilioPartes || {};
+    for (const [campo, valor] of [['domicilio', dom.direccion], ['localidad', dom.localidad], ['provincia', dom.provincia]]) {
+        if (columnas[campo] && valor) out.push({ campo, columnId: columnas[campo], valor: toTitleCase(String(valor)) });
+    }
     return out;
 }
 

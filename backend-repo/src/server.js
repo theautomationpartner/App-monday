@@ -221,6 +221,9 @@ async function getOrRefreshReceptorPadron(documento) {
                 cuit_usado   = EXCLUDED.cuit_usado,
                 doc_tipo     = EXCLUDED.doc_tipo,
                 doc_nro      = EXCLUDED.doc_nro,
+                direccion    = EXCLUDED.direccion,
+                localidad    = EXCLUDED.localidad,
+                provincia    = EXCLUDED.provincia,
                 fetched_at   = NOW()`,
             [
                 doc, info.condicion, info.nombre || '', info.tipoPersona || '',
@@ -271,10 +274,14 @@ async function refreshStaleReceptores() {
                 await db.query(
                     `UPDATE padron_receptores_cache
                      SET condicion=$1, nombre=$2, tipo_persona=$3, domicilio=$4,
-                         cuit_usado=$5, doc_tipo=$6, doc_nro=$7, fetched_at=NOW()
+                         cuit_usado=$5, doc_tipo=$6, doc_nro=$7, fetched_at=NOW(),
+                         direccion=$9, localidad=$10, provincia=$11
                      WHERE documento=$8`,
                     [info.condicion, info.nombre || '', info.tipoPersona || '', info.domicilio || '',
-                     info.cuitUsado || null, info.docTipo || 99, info.docNro || null, r.documento]
+                     info.cuitUsado || null, info.docTipo || 99, info.docNro || null, r.documento,
+                     info.domicilioPartes?.direccion || null,
+                     info.domicilioPartes?.localidad || null,
+                     info.domicilioPartes?.provincia || null]
                 );
                 ok++;
             } catch (err) {
@@ -8783,6 +8790,9 @@ async function completarDatosArcaHandler(req, res) {
     const columnas = {
         razonSocial:  datosArca.leerColumnaId(pick('razonSocialColumnId')),
         condicionIva: datosArca.leerColumnaId(pick('condicionIvaColumnId')),
+        domicilio:    datosArca.leerColumnaId(pick('domicilioColumnId')),
+        localidad:    datosArca.leerColumnaId(pick('localidadColumnId')),
+        provincia:    datosArca.leerColumnaId(pick('provinciaColumnId')),
     };
     // Nunca se escribe sobre la columna del documento: pisaría lo que escribió el
     // usuario y volvería a disparar la misma receta.
@@ -8820,7 +8830,7 @@ async function completarDatosArcaHandler(req, res) {
             apiToken, itemId, body: datosArca.mensaje(caso, language, vars),
         }).catch((e) => console.warn(`[datos-arca] no se pudo comentar: ${e.message}`));
 
-        if (!columnas.razonSocial && !columnas.condicionIva) return avisar('sinColumnas');
+        if (!Object.values(columnas).some(Boolean)) return avisar('sinColumnas');
         if (leido.error) return avisar(leido.error, leido);
 
         let info;
@@ -8839,7 +8849,9 @@ async function completarDatosArcaHandler(req, res) {
             if (e) { console.warn(`[datos-arca] escritura ${w.campo} col=${w.columnId}: ${e}`); fallas.push(w.campo); }
         }
         if (fallas.length) {
-            const nombres = { razonSocial: language === 'en' ? 'business name' : 'razón social', condicionIva: language === 'en' ? 'VAT condition' : 'condición IVA' };
+            const nombres = language === 'en'
+                ? { razonSocial: 'business name', condicionIva: 'VAT condition', domicilio: 'address', localidad: 'city', provincia: 'province' }
+                : { razonSocial: 'razón social', condicionIva: 'condición IVA', domicilio: 'domicilio', localidad: 'localidad', provincia: 'provincia' };
             return avisar('escritura', { columnas: fallas.map((f) => nombres[f]).join(', ') });
         }
         console.log(`[datos-arca] item=${itemId} OK — ${aEscribir.map((w) => w.campo).join(', ') || 'nada que escribir'}${info?._stale ? ' (dato de caché vieja: ARCA no respondió)' : ''}`);

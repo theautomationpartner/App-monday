@@ -205,19 +205,20 @@ function parseCondicionFiscal(xml) {
         }
     }
 
-    const domicilio = parseDomicilio(xml);
+    const domParts  = parseDomicilio(xml);
+    const domicilio = domParts.texto;
 
     // 20 = Monotributo
     if (activos.has('20')) {
-        return { condicion: IVA_CONDITION.MONOTRIBUTO, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.MONOTRIBUTO, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
     // 30 = IVA Responsable Inscripto
     if (activos.has('30')) {
-        return { condicion: IVA_CONDITION.RI, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.RI, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
     // 32 = IVA Exento
     if (activos.has('32')) {
-        return { condicion: IVA_CONDITION.EXENTO, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.EXENTO, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
     // 34 = IVA NO ALCANZADO. Va DESPUES de 20/30/32: si el CUIT tuviera ademas
     // una inscripcion real de IVA, esa manda. Sin este caso el receptor caia al
@@ -226,24 +227,24 @@ function parseCondicionFiscal(xml) {
     // como "Consumidor Final" y AFIP la registraba con CondicionIVAReceptorId=5,
     // por lo que el organismo la rechazaba y no podia procesar el pago.
     if (activos.has('34')) {
-        return { condicion: IVA_CONDITION.NO_ALCANZADO, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.NO_ALCANZADO, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
 
     // Fallback: si trae bloques de monotributo pero ningún impuesto id=20 activo
     if (xml.includes('<categoriasMonotributo>') || xml.includes('<categoriaMonotributo>')) {
-        return { condicion: IVA_CONDITION.MONOTRIBUTO, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.MONOTRIBUTO, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
 
     // Fallback final: condicionIva directo (versiones antiguas del WS)
     const condIva = (xmlTag(xml, 'condicionIva') || xmlTag(xml, 'condIva') || '').toUpperCase();
     if (condIva.includes('INSCRIPTO') || condIva.includes('RESPONSABLE')) {
-        return { condicion: IVA_CONDITION.RI, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.RI, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
     if (condIva.includes('MONOTRIBUT')) {
-        return { condicion: IVA_CONDITION.MONOTRIBUTO, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.MONOTRIBUTO, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
     if (condIva.includes('EXENTO')) {
-        return { condicion: IVA_CONDITION.EXENTO, nombre, tipoPersona, domicilio, raw: xml };
+        return { condicion: IVA_CONDITION.EXENTO, nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml };
     }
 
     // Para CUITs observados sin impuestos activos, usar CONSUMIDOR_FINAL
@@ -270,12 +271,15 @@ function parseCondicionFiscal(xml) {
 
     return {
         condicion: IVA_CONDITION.CF,
-        nombre, tipoPersona, domicilio, raw: xml,
+        nombre, tipoPersona, domicilio, domicilioPartes: domParts, raw: xml,
         ivaSinMapear: ivaSinMapear.length ? ivaSinMapear : undefined,
     };
 }
 
-/** Extrae domicilio fiscal del XML de getPersona_v2 */
+/** Extrae domicilio fiscal del XML de getPersona_v2.
+ *  Devuelve { texto, direccion, localidad, provincia }: el texto junto es el que
+ *  usa la emisión (va en el PDF); las partes las usa la receta de datos de ARCA,
+ *  que las carga en columnas separadas del tablero. */
 function parseDomicilio(xml) {
     // El padrón devuelve el domicilio en <domicilioFiscal> (v2 actual).
     // Mantenemos <domicilio> como fallback por compatibilidad.
@@ -283,6 +287,7 @@ function parseDomicilio(xml) {
         ...(xml.match(/<domicilioFiscal>([\s\S]*?)<\/domicilioFiscal>/gi) || []),
         ...(xml.match(/<domicilio>([\s\S]*?)<\/domicilio>/gi) || []),
     ];
+    const vacio = { texto: null, direccion: null, localidad: null, provincia: null };
     let fiscal = null;
     let primero = null;
     for (const block of domBlocks) {
@@ -291,13 +296,19 @@ function parseDomicilio(xml) {
         const loc  = xmlTag(block, 'localidad') || '';
         const prov = xmlTag(block, 'descripcionProvincia') || xmlTag(block, 'idProvincia') || '';
         const full = [dir, loc, prov].filter(Boolean).join(', ').toUpperCase();
-        if (!primero && full) primero = full;
+        const partes = {
+            texto: full || null,
+            direccion: dir ? dir.toUpperCase() : null,
+            localidad: loc ? loc.toUpperCase() : null,
+            provincia: prov ? String(prov).toUpperCase() : null,
+        };
+        if (!primero && full) primero = partes;
         if (tipo === 'FISCAL AFIP' || tipo === 'FISCAL' || tipo.includes('FISCAL')) {
-            fiscal = full;
+            fiscal = partes;
             break;
         }
     }
-    return fiscal || primero || null;
+    return fiscal || primero || vacio;
 }
 
 // ─── API pública ──────────────────────────────────────────────────────────────
@@ -510,6 +521,7 @@ async function getCondicionFiscalByDoc({ documento, certPem, keyPem }) {
         nombre: null,
         tipoPersona: 'FISICA',
         domicilio: null,
+        domicilioPartes: { texto: null, direccion: null, localidad: null, provincia: null },
         docTipo: 96, // 96 = DNI
         docNro: doc,
         cuitUsado: null,
