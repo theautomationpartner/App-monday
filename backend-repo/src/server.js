@@ -180,9 +180,13 @@ async function getOrRefreshReceptorPadron(documento) {
     const fetchedAt = row?.fetched_at ? new Date(row.fetched_at).getTime() : 0;
     const ageMs = fetchedAt ? Date.now() - fetchedAt : Infinity;
     const hasCache = Boolean(row?.condicion);
+    // Fila vieja: tiene el domicilio junto pero no las partes (direccion/localidad/
+    // provincia se agregaron el 30/09/2026). Se re-consulta aunque este fresca, si no
+    // la receta de datos de ARCA dejaria esas columnas vacias hasta que expire.
+    const faltanPartes = Boolean(row?.domicilio) && !row?.direccion;
 
     // HIT: cache fresco
-    if (hasCache && ageMs < PADRON_RECEPTOR_TTL_MS) {
+    if (hasCache && ageMs < PADRON_RECEPTOR_TTL_MS && !faltanPartes) {
         console.log(`[padron-rec] HIT — doc=${doc} condicion=${row.condicion} (edad: ${Math.round(ageMs/1000)}s)`);
         return {
             condicion: row.condicion,
