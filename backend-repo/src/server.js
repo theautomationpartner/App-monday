@@ -8867,6 +8867,67 @@ async function completarDatosArcaHandler(req, res) {
 
 app.post('/api/padron/completar', emitLimiter, requireAutomationBlock, stagingRouteGuard, completarDatosArcaHandler);
 
+// ─── Consulta de padrón para otros sistemas (API simple) ─────────────────────
+// GET /api/padron/:documento  con header  x-api-key: <PADRON_API_KEY>
+// Devuelve lo que ARCA informa de un CUIT o DNI: razón social, condición frente
+// al IVA y domicilio fiscal separado en calle, localidad y provincia.
+//
+// Es la MISMA consulta que usa la emisión: certificado del padrón de TAP, caché
+// de 24 h por documento y, si viene un DNI, prueba los CUIT posibles hasta dar
+// con el que existe. Pensado para que lo consuman Make, otra app o un backend
+// nuestro; no se expone sin la clave porque consulta ARCA con nuestro certificado.
+const padronApiLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => String(req.headers['x-api-key'] || req.ip),
+    message: { error: 'demasiadas consultas, esperá un minuto' },
+});
+
+app.get('/api/padron/:documento', padronApiLimiter, async (req, res) => {
+    const clave = process.env.PADRON_API_KEY;
+    if (!clave) return res.status(503).json({ error: 'servicio_no_configurado' });
+    if (req.headers['x-api-key'] !== clave) return res.status(401).json({ error: 'clave_invalida' });
+
+    const leido = datosArca.leerDocumento(req.params.documento);
+    if (leido.vacio || leido.error) {
+        return res.status(400).json({
+            error: leido.error === 'digito' ? 'digito_verificador' : 'documento_invalido',
+            mensaje: datosArca.mensaje(leido.error || 'forma', 'es', { ...leido, crudo: req.params.documento }).replace(/^⚠️ /, ''),
+        });
+    }
+    try {
+        const info = await getOrRefreshReceptorPadron(leido.doc);
+        const dom = info.domicilioPartes || {};
+        return res.json({
+            documento: leido.doc,
+            cuit: info.cuitUsado || (leido.doc.length === 11 ? leido.doc : null),
+            razon_social: info.nombre || null,
+            condicion_iva: info.condicion,                                   // código interno
+            condicion_iva_texto: invoiceRules.condicionLabel(info.condicion), // como va en la factura
+            tipo_persona: info.tipoPersona || null,
+            domicilio: dom.direccion || null,
+            localidad: dom.localidad || null,
+            provincia: dom.provincia || null,
+            domicilio_completo: info.domicilio || null,
+            // true = ARCA no respondió y se devolvió el último dato conocido.
+            dato_viejo: Boolean(info._stale),
+        });
+    } catch (err) {
+        const caso = datosArca.casoDeError(err);
+        const status = caso === 'arcaCaido' ? 502 : 404;
+        console.warn(`[padron-api] ${leido.doc}: ${caso} (${err.errorType || err.message})`);
+        return res.status(status).json({
+            error: caso === 'arcaCaido' ? 'arca_no_responde'
+                 : caso === 'inactivo' ? 'cuit_inactivo'
+                 : caso === 'constancia' ? 'sin_constancia'
+                 : 'no_encontrado',
+            mensaje: datosArca.mensaje(caso, 'es', { crudo: leido.doc, detalle: err.padronRaw }).replace(/^⚠️ /, ''),
+        });
+    }
+});
+
 // ════════════════════════════════════════════════════════════════════════════
 // FACTURA E — comprobantes de EXPORTACIÓN de servicios (WSFEXv1)
 // ════════════════════════════════════════════════════════════════════════════

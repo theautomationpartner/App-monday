@@ -258,6 +258,7 @@ README.md                        # info pública
 | `MONDAY_AUDIT_BOARD_ID` | board "Comp Emitidos" donde se loggean emisiones (staging y prod comparten el mismo board) |
 | `DEV_MONDAY_TOKEN` | API token del developer (para escribir al audit board) |
 | `SLACK_WEBHOOK_URL` | alertas de errores sistema y auditoría nocturna |
+| `PADRON_API_KEY` | clave para consultar el padrón desde afuera (`GET /api/padron/:documento`, header `x-api-key`). Sin ella el endpoint responde 503 y queda apagado. |
 | `APP_ENV` | `staging` o no seteado (prod). Cuando `staging`: (a) skipea las alertas de Slack (errores sistema + resumen nocturno); (b) activa el proxy de ruteo a prod (regla 8). El audit board SÍ se escribe en staging. |
 | `PORT` | 3000 prod, 3001 staging |
 | `STAGING_DEV_WORKSPACES` | **solo staging**. CSV de workspace_ids que staging procesa local; todo el resto se reenvía a prod (regla 8). Vacío → todo a prod. |
